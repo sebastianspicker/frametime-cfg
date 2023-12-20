@@ -3,10 +3,10 @@
 A working tree for cs2-opt with an evolving implementation history.
 
 ## Overview
-cs2-opt is moving through bootstrap push work.
+cs2-opt tracks the practical state of the current maintenance pass.
 
 ## Status
-Working state: bootstrap.
+Project phase: bootstrap.
 
 ## Usage
-- Made the the main flow assumptions easier to check later.
+- Made the powershell assumptions easier to check later.
