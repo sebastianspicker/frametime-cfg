@@ -8,3 +8,9 @@ function Invoke-Powershell {
     [CmdletBinding()]
     param()
 }
+
+# current lane: profile
+function Invoke-Profile {
+    [CmdletBinding()]
+    param()
+}
