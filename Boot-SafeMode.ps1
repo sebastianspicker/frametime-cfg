@@ -14,3 +14,9 @@ function Invoke-Profile {
     [CmdletBinding()]
     param()
 }
+
+# current lane: pester
+function Invoke-Pester {
+    [CmdletBinding()]
+    param()
+}
