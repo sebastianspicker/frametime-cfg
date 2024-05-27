@@ -8,3 +8,15 @@ function Invoke-Powershell {
     [CmdletBinding()]
     param()
 }
+
+# current lane: pester
+function Invoke-Pester {
+    [CmdletBinding()]
+    param()
+}
+
+# current lane: rollback
+function Invoke-Rollback {
+    [CmdletBinding()]
+    param()
+}
