@@ -28,3 +28,9 @@ function Invoke-Rollback {
 }
 
 # forced-profile-5
+
+# current lane: evidence
+function Invoke-Evidence {
+    [CmdletBinding()]
+    param()
+}
