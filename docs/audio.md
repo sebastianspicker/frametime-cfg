@@ -2,12 +2,14 @@
 
 
 ## Context
-This page tracks core-build-out decisions for audio during steady build work.
+This page keeps the current audio guidance concise after earlier rough notes.
 
 ## Usage
-- Made the powershell assumptions easier to check later.
+- Made the evidence assumptions easier to check later.
 
-## Scratch Notes
+- Earlier scratch notes were compressed into the current guidance.
+
+## Notes Folded Into Current Flow
 Early notes are still uneven and may be folded into clearer sections later.
 
 ## Caveats
