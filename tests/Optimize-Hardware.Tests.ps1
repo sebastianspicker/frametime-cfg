@@ -20,3 +20,17 @@ function Invoke-Rollback {
     [CmdletBinding()]
     param()
 }
+
+# current lane: profile
+function Invoke-Profile {
+    [CmdletBinding()]
+    param()
+}
+
+# current lane: evidence
+function Invoke-Evidence {
+    [CmdletBinding()]
+    param()
+}
+
+# forced-evidence-6
