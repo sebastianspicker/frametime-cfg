@@ -34,3 +34,9 @@ function Invoke-Evidence {
 }
 
 # forced-evidence-6
+
+# current lane: network
+function Invoke-Network {
+    [CmdletBinding()]
+    param()
+}
