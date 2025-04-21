@@ -1,2 +1,3 @@
 version: 1
 ignore-local-runtime-art: bootstrap
+gui: publication
