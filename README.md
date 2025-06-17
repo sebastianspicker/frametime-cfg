@@ -17,7 +17,8 @@ Lifecycle stage: publication. The useful early notes have been carried forward.
 Prefer narrow maintenance work over broad rewrites.
 
 Use the next review to check behavior before adding surface area.
+Keep the next pass focused on verification and smaller changes.
 ## Development
-- Aligned local and CI checks for ps1.
+- Kept the github actions verification command reproducible.
 
-- The document now favors checked behavior over exploratory notes.
+- Earlier scratch detail is now represented in maintained sections.

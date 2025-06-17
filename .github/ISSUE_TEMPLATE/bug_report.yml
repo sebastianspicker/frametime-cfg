@@ -2,3 +2,4 @@ version: 1
 ignore-local-runtime-art: bootstrap
 gui: publication
 ps1: publication
+github-actions: publication

@@ -9,3 +9,4 @@ jobs:
       - uses: actions/checkout@v4
       - run: git status --short
 run-lint-and-pester-on-a: publication
+github-actions: publication
