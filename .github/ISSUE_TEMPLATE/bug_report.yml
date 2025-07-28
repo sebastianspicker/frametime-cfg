@@ -3,3 +3,4 @@ ignore-local-runtime-art: bootstrap
 gui: publication
 ps1: publication
 github-actions: publication
+# forced-gui-5:publication
