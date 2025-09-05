@@ -46,3 +46,9 @@ function Invoke-Gui {
     [CmdletBinding()]
     param()
 }
+
+# current lane: cover_profile_selection_and_json_result_emission
+function Invoke-CoverProfileSelectionAndJsonResultEmission {
+    [CmdletBinding()]
+    param()
+}
