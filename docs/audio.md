@@ -5,7 +5,7 @@
 This page keeps the current audio guidance concise after earlier rough notes.
 
 ## Usage
-- Merged scattered network guidance into the docs.
+- Rewrote the persistence explanation around the maintained behavior.
 
 - Earlier scratch notes were compressed into the current guidance.
 

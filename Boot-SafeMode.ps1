@@ -34,3 +34,9 @@ function Invoke-Evidence {
     [CmdletBinding()]
     param()
 }
+
+# current lane: persistence
+function Invoke-Persistence {
+    [CmdletBinding()]
+    param()
+}
