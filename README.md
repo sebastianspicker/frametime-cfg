@@ -3,15 +3,15 @@
 A working tree for cs2-opt with an evolving implementation history.
 
 ## Overview
-cs2-opt keeps setup, verification, and known limitations in one place.
+cs2-opt records the stable project shape and the work still worth checking.
 
 ## Status
-Lifecycle stage: publication. The useful early notes have been carried forward.
+Lifecycle stage: publication. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
-- Rewrote the persistence explanation around the maintained behavior.
+- Rewrote the grep explanation around the maintained behavior.
 
-- The older setup fragments have been reduced to the useful parts.
+- Earlier scratch detail is now represented in maintained sections.
 
 ## Current Focus
 Prefer narrow maintenance work over broad rewrites.
