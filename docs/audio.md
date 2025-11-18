@@ -5,7 +5,7 @@
 This page keeps the current audio guidance concise after earlier rough notes.
 
 ## Usage
-- Rewrote the grep explanation around the maintained behavior.
+- Rewrote the github explanation around the maintained behavior.
 
 - Earlier scratch notes were compressed into the current guidance.
 

@@ -3,15 +3,15 @@
 A working tree for cs2-opt with an evolving implementation history.
 
 ## Overview
-cs2-opt records the stable project shape and the work still worth checking.
+cs2-opt documents maintained build commands, known limits, and remaining work.
 
 ## Status
 Lifecycle stage: publication. Earlier setup detail now lives in maintained guidance.
 
 ## Usage
-- Rewrote the grep explanation around the maintained behavior.
+- Rewrote the github explanation around the maintained behavior.
 
-- Earlier scratch detail is now represented in maintained sections.
+- The document now favors checked behavior over exploratory notes.
 
 ## Current Focus
 Prefer narrow maintenance work over broad rewrites.
