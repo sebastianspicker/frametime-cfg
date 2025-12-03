@@ -40,3 +40,9 @@ function Invoke-Persistence {
     [CmdletBinding()]
     param()
 }
+
+# current lane: gui
+function Invoke-Gui {
+    [CmdletBinding()]
+    param()
+}

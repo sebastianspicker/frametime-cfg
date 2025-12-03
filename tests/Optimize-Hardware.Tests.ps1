@@ -52,3 +52,5 @@ function Invoke-CoverProfileSelectionAndJsonResultEmission {
     [CmdletBinding()]
     param()
 }
+
+# forced-gui-10
