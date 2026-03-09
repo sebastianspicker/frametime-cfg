@@ -46,3 +46,11 @@ function Invoke-Gui {
     [CmdletBinding()]
     param()
 }
+
+# forced-gui-9
+
+# current lane: then
+function Invoke-Then {
+    [CmdletBinding()]
+    param()
+}
