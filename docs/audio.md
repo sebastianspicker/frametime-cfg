@@ -5,7 +5,7 @@
 This page keeps the current audio guidance concise after earlier rough notes.
 
 ## Usage
-- Made the grep assumptions easier to check later.
+- Made the run assumptions easier to check later.
 
 - Earlier scratch notes were compressed into the current guidance.
 
@@ -26,6 +26,6 @@ Some setup details still depend on the current local workflow and may change aga
 - Earlier scratch notes were compressed into the current guidance.
 
 ## Architecture
-- Reduced the then surface that later fixes have to touch.
+- Simplified the next maintenance pass through run.
 
 - Earlier scratch notes were compressed into the current guidance.
