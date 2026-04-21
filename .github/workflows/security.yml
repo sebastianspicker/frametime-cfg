@@ -1,0 +1,250 @@
+name: Security
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Prevent CI abuse: cancel redundant runs, limit concurrent PR jobs
+concurrency:
+  group: security-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: Secret & credential detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Scan for secrets and credentials
+        shell: bash
+        run: |
+          echo "=== Scanning for hardcoded secrets ==="
+          FOUND=0
+
+          # Patterns that should never appear in committed code
+          PATTERNS=(
+            'AKIA[0-9A-Z]{16}'                          # AWS Access Key
+            'ghp_[a-zA-Z0-9]{36}'                       # GitHub PAT (fine-grained)
+            'github_pat_[a-zA-Z0-9_]{82}'               # GitHub PAT (classic)
+            'gho_[a-zA-Z0-9]{36}'                       # GitHub OAuth
+            'glpat-[a-zA-Z0-9\-_]{20,}'                 # GitLab PAT
+            'sk-[a-zA-Z0-9]{20,}'                       # OpenAI / Stripe secret key
+            'xox[boaprs]-[a-zA-Z0-9\-]+'                # Slack token
+            'hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+' # Slack webhook
+          )
+
+          for pattern in "${PATTERNS[@]}"; do
+            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -v '.git/'; then
+              echo "::error::Potential secret found matching pattern: $pattern"
+              FOUND=$((FOUND + 1))
+            fi
+          done
+
+          # Check for generic password/secret assignments
+          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -v '.git/' | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
+            echo "::error::Potential hardcoded credential assignment found"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # Check for private keys
+          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -v '.git/'; then
+            echo "::error::Private key found in repository"
+            FOUND=$((FOUND + 1))
+          fi
+
+          if [ "$FOUND" -gt 0 ]; then
+            echo "::error::Found potential secret(s). Review and remove before merging."
+            exit 1
+          fi
+          echo "Secret scan: clean"
+
+  script-safety:
+    name: PowerShell safety patterns
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check for dangerous PowerShell patterns
+        shell: bash
+        run: |
+          echo "=== Checking PowerShell scripts for dangerous patterns ==="
+          FOUND=0
+
+          # Invoke-Expression / iex — remote code execution vector
+          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
+            echo "::error::Invoke-Expression/iex found — potential code injection vector"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # DownloadString + Invoke-Expression (classic cradle)
+          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+            echo "::error::WebClient DownloadString/DownloadFile to executable found"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # Encoded command execution (obfuscation)
+          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+            echo "::error::Encoded command execution found — potential obfuscated payload"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # Unrestricted execution policy set inside scripts
+          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+            echo "::warning::Set-ExecutionPolicy Unrestricted found — verify necessity"
+          fi
+
+          # Restart-Computer -Force without DRY-RUN gate or user prompt
+          # All uses must be inside a DryRun guard or after Confirm-Risk/Read-Host.
+          # 50-line lookback: Cleanup.ps1 has DryRun exit ~45 lines before the restart.
+          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          if [ -n "$RESTART_HITS" ]; then
+            while IFS= read -r line; do
+              FILE=$(echo "$line" | cut -d: -f1)
+              LINENO_HIT=$(echo "$line" | cut -d: -f2)
+              START=$((LINENO_HIT > 50 ? LINENO_HIT - 50 : 1))
+              CONTEXT=$(sed -n "${START},${LINENO_HIT}p" "$FILE")
+              if ! echo "$CONTEXT" | grep -qEi 'DryRun|Confirm-Risk|Read-Host'; then
+                echo "::error::Restart-Computer -Force at $FILE:$LINENO_HIT without DRY-RUN gate or user prompt"
+                FOUND=$((FOUND + 1))
+              fi
+            done <<< "$RESTART_HITS"
+          fi
+
+          # Remove-Item -Recurse -Force on bare variable paths (dangerous if empty/wrong)
+          # Excludes test files (cleanup of temp dirs is expected) and literal paths.
+          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          if [ -n "$REMOVE_HITS" ]; then
+            while IFS= read -r line; do
+              FILE=$(echo "$line" | cut -d: -f1)
+              LINENO_HIT=$(echo "$line" | cut -d: -f2)
+              VARNAME=$(echo "$line" | grep -oP 'Remove-Item\s+\$\K\w+')
+              START=$((LINENO_HIT > 10 ? LINENO_HIT - 10 : 1))
+              CONTEXT=$(sed -n "${START},${LINENO_HIT}p" "$FILE")
+              if ! echo "$CONTEXT" | grep -qEi "Test-Path|if.*\\\$${VARNAME}"; then
+                echo "::warning::Remove-Item -Recurse -Force on \$$VARNAME at $FILE:$LINENO_HIT — verify path is validated"
+              fi
+            done <<< "$REMOVE_HITS"
+          fi
+
+          if [ "$FOUND" -gt 0 ]; then
+            echo "::error::Dangerous pattern(s) found. Review before merging."
+            exit 1
+          fi
+          echo "Script safety check: clean"
+
+      - name: Check public launcher scripts
+        shell: bash
+        run: |
+          echo "=== Checking public launcher scripts ==="
+          FOUND=0
+
+          for launcher in START.bat START-GUI.bat; do
+            if [ ! -f "$launcher" ]; then
+              echo "::error::Missing launcher: $launcher"
+              FOUND=$((FOUND + 1))
+              continue
+            fi
+
+            if grep -Ein '\-encodedcommand|\-enc ' "$launcher"; then
+              echo "::error::Encoded command execution found in $launcher"
+              FOUND=$((FOUND + 1))
+            fi
+
+            if grep -Ein 'Invoke-WebRequest|curl|bitsadmin|certutil' "$launcher"; then
+              echo "::error::Network download primitive found in $launcher"
+              FOUND=$((FOUND + 1))
+            fi
+          done
+
+          if ! grep -Fq 'CS2-Optimize-GUI.ps1' START-GUI.bat; then
+            echo "::error::START-GUI.bat no longer launches CS2-Optimize-GUI.ps1"
+            FOUND=$((FOUND + 1))
+          fi
+
+          if [ "$FOUND" -gt 0 ]; then
+            exit 1
+          fi
+          echo "Launcher safety check: clean"
+
+  workflow-integrity:
+    name: Workflow file integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Check workflow files for dangerous patterns
+        shell: bash
+        run: |
+          echo "=== Checking GitHub Actions workflows ==="
+          FOUND=0
+
+          # Check for dangerous trigger that allows fork PRs to run with write access
+          if grep -rn 'pull_request_target' .github/workflows/ 2>/dev/null | grep -v 'security\.yml'; then
+            echo "::error::pull_request_target trigger found — risk of fork PR privilege escalation"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # Unpinned third-party actions (not actions/ or github/ org)
+          if grep -rEn 'uses:\s+[^#]*@v[0-9]' .github/workflows/ 2>/dev/null | grep -v 'actions/' | grep -v 'github/'; then
+            echo "::warning::Third-party action with tag (not SHA) found — pin to full SHA"
+          fi
+
+          # Expression injection — untrusted event data in run: blocks
+          # These GitHub context values are attacker-controlled and must not
+          # appear directly in shell commands (use env: block instead).
+          UNSAFE_EXPRS=(
+            'github\.event\.issue\.title'
+            'github\.event\.issue\.body'
+            'github\.event\.pull_request\.title'
+            'github\.event\.pull_request\.body'
+            'github\.event\.comment\.body'
+            'github\.event\.review\.body'
+            'github\.event\.review_comment\.body'
+            'github\.event\.head_commit\.message'
+            'github\.event\.commits\[.*\]\.message'
+            'github\.event\.pull_request\.head\.ref'
+            'github\.event\.pull_request\.head\.label'
+          )
+          # Build the dollar-brace-brace pattern dynamically to avoid
+          # GitHub Actions expression evaluation in this run: block
+          EXPR_OPEN='$'
+          EXPR_OPEN="${EXPR_OPEN}{{"
+          for expr in "${UNSAFE_EXPRS[@]}"; do
+            if grep -rPn "\\${EXPR_OPEN}\s*${expr}" .github/workflows/ 2>/dev/null | grep -v '#'; then
+              echo "::error::Potential expression injection found for ${expr} in workflow — use env: block instead"
+              FOUND=$((FOUND + 1))
+            fi
+          done
+
+          # Overly broad permissions (write-all)
+          if grep -rEn 'permissions:\s*write-all' .github/workflows/ 2>/dev/null; then
+            echo "::error::write-all permissions found — use least-privilege scoping"
+            FOUND=$((FOUND + 1))
+          fi
+
+          # workflow_dispatch inputs used directly in run: (template injection)
+          if grep -rPn '\$\{\{\s*github\.event\.inputs\.' .github/workflows/ 2>/dev/null | grep -v 'env:' | grep -v '#'; then
+            echo "::warning::workflow_dispatch input used in expression — verify it is sanitized or passed via env:"
+          fi
+
+          if [ "$FOUND" -gt 0 ]; then
+            exit 1
+          fi
+          echo "Workflow integrity check: clean"

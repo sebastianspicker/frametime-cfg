@@ -1,70 +1,77 @@
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+﻿# ==============================================================================
+#  tests/Optimize-Hardware.Tests.ps1  --  Phase-1 hardware module contracts
+# ==============================================================================
 
-# powershell entrypoint
-
-# current lane: powershell
-function Invoke-Powershell {
-    [CmdletBinding()]
-    param()
+BeforeAll {
+    . "$PSScriptRoot/helpers/_TestInit.ps1"
 }
 
-# current lane: pester
-function Invoke-Pester {
-    [CmdletBinding()]
-    param()
+AfterAll {
+    if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
+        Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# current lane: rollback
-function Invoke-Rollback {
-    [CmdletBinding()]
-    param()
+Describe "Optimize-Hardware Step 10" {
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $false
+        $script:BootWrites = @()
+
+        Mock Write-Section {}
+        Mock Write-Info {}
+        Mock Write-Blank {}
+        Mock Write-Host {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-Sub {}
+        Mock Write-DebugLog {}
+        Mock Complete-Step {}
+        Mock Skip-Step {}
+
+        Mock Set-BootConfig {
+            param($Key, $Val, $Why)
+            $script:BootWrites += [PSCustomObject]@{
+                Key   = $Key
+                Value = $Val
+                Why   = $Why
+            }
+        }
+
+        Mock Invoke-TieredStep {
+            param(
+                [int]$Tier,
+                [string]$Title,
+                [string]$Why,
+                [string]$Evidence,
+                [string]$Caveat,
+                [string]$Risk,
+                [string]$Depth,
+                [string]$Improvement,
+                [string]$SideEffects,
+                [string]$Undo,
+                [scriptblock]$Action,
+                [scriptblock]$SkipAction
+            )
+
+            if ($Title -match "Dynamic Tick") {
+                & $Action
+            }
+        }
+
+        $startStep = 10
+        $PHASE = 1
+        $gpuInput = "0"
+        $state = $null
+    }
+
+    It "applies disabledynamictick without forcing useplatformtick" {
+        . "$PSScriptRoot/../Optimize-Hardware.ps1"
+
+        $script:BootWrites | Should -HaveCount 1
+        $script:BootWrites[0].Key | Should -Be "disabledynamictick"
+        $script:BootWrites[0].Value | Should -Be "yes"
+        ($script:BootWrites | Where-Object Key -eq "useplatformtick") | Should -BeNullOrEmpty
+    }
 }
-
-# current lane: profile
-function Invoke-Profile {
-    [CmdletBinding()]
-    param()
-}
-
-# current lane: evidence
-function Invoke-Evidence {
-    [CmdletBinding()]
-    param()
-}
-
-# forced-evidence-6
-
-# current lane: network
-function Invoke-Network {
-    [CmdletBinding()]
-    param()
-}
-
-# current lane: gui
-function Invoke-Gui {
-    [CmdletBinding()]
-    param()
-}
-
-# current lane: cover_profile_selection_and_json_result_emission
-function Invoke-CoverProfileSelectionAndJsonResultEmission {
-    [CmdletBinding()]
-    param()
-}
-
-# forced-gui-10
-
-# current lane: then
-function Invoke-Then {
-    [CmdletBinding()]
-    param()
-}
-
-# current lane: echo
-function Invoke-Echo {
-    [CmdletBinding()]
-    param()
-}
-
-# forced-then-13

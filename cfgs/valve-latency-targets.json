@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "notes": "Heuristic Valve/Steam region candidates for the Valve Region Latency Diagnostic. These are not Valve-official in-match ping endpoints; ICMP reachability varies over time.",
+  "targets": [
+    {
+      "Label": "Stockholm",
+      "ProtocolPreference": "ICMP",
+      "Provenance": "Heuristic SDR candidate set adapted from cs2-omz and kept versioned inside this repo.",
+      "Notes": "Route-quality proxy only. ICMP may be blocked by some candidates.",
+      "Candidates": [
+        { "Host": "146.66.152.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "146.66.152.11", "Notes": "Heuristic SDR candidate" },
+        { "Host": "155.133.234.10", "Notes": "Heuristic SDR candidate" }
+      ]
+    },
+    {
+      "Label": "Frankfurt",
+      "ProtocolPreference": "ICMP",
+      "Provenance": "Heuristic SDR candidate set adapted from cs2-omz and kept versioned inside this repo.",
+      "Notes": "Route-quality proxy only. ICMP may be blocked by some candidates.",
+      "Candidates": [
+        { "Host": "155.133.232.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "155.133.232.11", "Notes": "Heuristic SDR candidate" },
+        { "Host": "146.66.158.10", "Notes": "Heuristic SDR candidate" }
+      ]
+    },
+    {
+      "Label": "Warsaw",
+      "ProtocolPreference": "ICMP",
+      "Provenance": "Heuristic SDR candidate set adapted from cs2-omz and kept versioned inside this repo.",
+      "Notes": "Route-quality proxy only. ICMP may be blocked by some candidates.",
+      "Candidates": [
+        { "Host": "155.133.230.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "155.133.229.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "146.66.155.10", "Notes": "Heuristic SDR candidate" }
+      ]
+    },
+    {
+      "Label": "Madrid",
+      "ProtocolPreference": "ICMP",
+      "Provenance": "Heuristic SDR candidate set adapted from cs2-omz and kept versioned inside this repo.",
+      "Notes": "Route-quality proxy only. ICMP may be blocked by some candidates.",
+      "Candidates": [
+        { "Host": "155.133.238.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "155.133.240.10", "Notes": "Heuristic SDR candidate" },
+        { "Host": "146.66.157.10", "Notes": "Heuristic SDR candidate" }
+      ]
+    }
+  ]
+}

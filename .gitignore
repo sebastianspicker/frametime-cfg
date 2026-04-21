@@ -1,6 +1,85 @@
-node_modules/
-.venv/
-dist/
-.pytest_cache/
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
 
-# forced-ignore-local-runtime-art-1
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# PowerShell
+*.psm1.bak
+
+# Third-party binary artifacts (not our property)
+FPSHEAVEN2026.pow
+cs2_blur_fix.nip
+*.nip
+*.pow
+
+# Runtime state (generated on target machine)
+state.json
+progress.json
+backup.json
+backup.lock
+backup.*.json
+backup.corrupt.*.json
+benchmark_history.json
+latency_history.json
+cs2_optimize.log
+
+# Secrets and credentials — never commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+id_rsa
+id_ed25519
+*.secrets
+credentials.json
+secrets.json
+service-account*.json
+*_token
+*.gpg
+
+# Personal configurations (internal testing only)
+*_sebastian.*
+
+# Agent orchestration files (loop definitions, progress tracking)
+.claude/
+progress.md
+
+# Local harness and audit workspace
+.agents/
+.codex/
+.github/codex/
+.github/workflows/codex.yml
+AGENTS.md
+HARNESS_PRINCIPLES.md
+code_review.md
+docs/agent/
+docs/source-audit/
+AGENT_AUDIT_REPORT.md
+debug-log-*.md
+scripts/topology_inventory.sh
+
+# Local Windows-style artifact paths produced during cross-platform tests
+C:*
+tmp-winstyle-check*
+
+# Test artifacts
+testResults.xml
+
+# Debug scripts
+debug-*.bat
+debug-*.ps1
+
+# Temp
+*.tmp
+*.bak
