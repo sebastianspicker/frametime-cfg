@@ -1,0 +1,22 @@
+# CODEOWNERS — require review for security-sensitive paths
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# NOTE: @sebastianspicker is the repository owner.
+# CODEOWNERS only works when branch protection rules require reviews.
+
+# Default — all files require owner review
+*                           @sebastianspicker
+
+# CI/CD workflows — highest risk (can exfiltrate secrets, run arbitrary code)
+.github/workflows/          @sebastianspicker
+.github/CODEOWNERS          @sebastianspicker
+
+# Core configuration and helpers (system-modifying code)
+config.env.ps1              @sebastianspicker
+helpers.ps1                 @sebastianspicker
+helpers/                    @sebastianspicker
+
+# Entry-point scripts (require admin privileges)
+Run-Optimize.ps1            @sebastianspicker
+START.bat                   @sebastianspicker
+START-GUI.bat               @sebastianspicker

@@ -1,10 +1,78 @@
-version: 1
-ignore-local-runtime-art: bootstrap
-gui: publication
-ps1: publication
-github-actions: publication
-# forced-gui-5:publication
-cover-profile-selection-: publication
-github: publication
-github: maintenance
-then: maintenance
+name: Bug Report
+description: Something broke or behaved unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please fill in as much as you can — the more detail, the faster we can reproduce it.
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which phase/step?
+      options:
+        - Phase 1 — Normal Boot
+        - Phase 2 — Safe Mode
+        - Phase 3 — Final Setup
+        - FPS Cap Calculator
+        - Cleanup
+        - Verify-Settings
+        - GUI Dashboard
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: step
+    attributes:
+      label: Step number (if applicable)
+      placeholder: "e.g. Step 16, Step 27"
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile used
+      options:
+        - SAFE
+        - RECOMMENDED
+        - COMPETITIVE
+        - CUSTOM
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      placeholder: Describe the issue. Include the error message if there was one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+
+  - type: textarea
+    id: system
+    attributes:
+      label: System info
+      description: CPU, GPU, RAM, Windows version, NVIDIA driver version
+      placeholder: |
+        CPU: Ryzen 7800X3D
+        GPU: RTX 4070 Ti
+        RAM: 32GB DDR5-6000
+        Windows: 11 24H2 (Build 26100)
+        NVIDIA: 572.16
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dryrun
+    attributes:
+      label: Did you run in DRY-RUN mode first?
+      options:
+        - "Yes"
+        - "No"
+        - Not applicable

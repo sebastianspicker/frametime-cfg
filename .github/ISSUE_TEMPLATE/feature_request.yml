@@ -1,0 +1,43 @@
+name: Feature Request
+description: Suggest a new optimization, tweak, or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for a new optimization? We prioritize evidence-based suggestions.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like added or changed?
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence / source
+      description: |
+        Link to benchmarks, testing methodology, or community discussion that supports this.
+        We don't add tweaks without evidence — even "community consensus" counts if sourced.
+      placeholder: |
+        e.g. CapFrameX results, djdallmann testing, Blur Busters article, etc.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Windows registry / scheduler
+        - NVIDIA driver / DRS
+        - AMD GPU
+        - Network / NIC
+        - CS2 CVars / autoexec
+        - CS2 video settings
+        - Power plan
+        - Services / debloat
+        - Documentation
+        - Other
+    validations:
+      required: true
