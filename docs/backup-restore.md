@@ -1,6 +1,6 @@
 # Backup & Restore System — Deep Dive
 
-> Covers `helpers/backup-restore.ps1` and `C:\CS2_OPTIMIZE\backup.json`.
+> Covers the backup-restore module (`helpers/backup-restore.ps1` loader + submodules `backup-restore/core.ps1`, `backup-restore/backup-capture.ps1`, `backup-restore/restore.ps1`) and `C:\CS2_OPTIMIZE\backup.json`.
 
 Every modification the suite makes is recorded before it happens. If something goes wrong — a setting causes an unexpected problem, a driver install fails, or you simply want to undo a step — the backup system lets you restore to pre-optimization state at any granularity: a single step, a group, or everything.
 

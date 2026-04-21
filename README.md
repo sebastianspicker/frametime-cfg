@@ -117,6 +117,19 @@ CS2 has structurally poor frame pacing in Valve's Source 2 engine. Games with si
 
 > Phase 1 ends with a Safe Mode reboot. Phase 2 removes GPU drivers natively. Phase 3 installs clean drivers and finishes. Everything is resumable if interrupted.
 
+```mermaid
+flowchart LR
+    A([START.bat]) --> B[Phase 1\nNormal Boot\n38 Steps]
+    B --> C{Safe Mode\nreboot}
+    C --> D[Phase 2\nSafe Mode\nDriver Removal]
+    D --> E{Normal\nreboot}
+    E --> F[Phase 3\nPost-Reboot\n13 Steps]
+    F --> G([Done ✓])
+
+    B -.->|resumable| B
+    F -.->|resumable| F
+```
+
 ---
 
 ## GUI Dashboard
@@ -128,7 +141,8 @@ Eight panels: **Dashboard** (hardware summary, progress), **Analyze** (40+ setti
 | | | |
 |---|---|---|
 | ![Dashboard](docs/screenshots/01-dashboard.png) | ![Analyze](docs/screenshots/02-analyze.png) | ![Optimize](docs/screenshots/03-optimize.png) |
-| ![Benchmark](docs/screenshots/05-benchmark.png) | ![Video](docs/screenshots/06-video.png) | ![Settings](docs/screenshots/07-settings.png) |
+| ![Backup](docs/screenshots/04-backup.png) | ![Benchmark](docs/screenshots/05-benchmark.png) | ![Video](docs/screenshots/06-video.png) |
+| ![Settings](docs/screenshots/07-settings.png) | *(Network panel — screenshot pending)* | |
 
 The GUI does not run optimizations — Phases 1–3 use the terminal. The dashboard handles analysis, backup, benchmarking, network diagnostics, storage maintenance, and configuration.
 
@@ -482,4 +496,4 @@ Over 40 commonly-recommended settings are debunked with evidence in [`docs/debun
 
 ---
 
-*Last updated: March 2026. Tested on Windows 11 23H2/24H2, NVIDIA RTX 4000/5000 series, AMD Ryzen 7000 series.*
+*Last updated: April 2026. Tested on Windows 11 23H2/24H2, NVIDIA RTX 4000/5000 series, AMD Ryzen 7000 series.*
