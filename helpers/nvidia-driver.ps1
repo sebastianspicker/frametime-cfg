@@ -228,24 +228,20 @@ function Install-NvidiaDriverClean {
         Write-Err "Driver path is not a file: $DriverExe"
         return $false
     }
-    # Verify file has Authenticode signature (NVIDIA drivers are always signed)
+    # Verify file has Authenticode signature (NVIDIA drivers are always signed).
+    # This is an execution boundary: the installer runs as admin, so invalid or
+    # non-NVIDIA signatures must fail closed instead of relying on a prompt.
     $sig = Get-AuthenticodeSignature $DriverExe -ErrorAction SilentlyContinue
-    if ($sig -and $sig.Status -eq 'Valid') {
-        $sigSubject = $sig.SignerCertificate.Subject
-        if ($sigSubject -notmatch 'NVIDIA') {
-            Write-Warn "Driver .exe is signed but NOT by NVIDIA (signer: $sigSubject)"
-            Write-Warn "This may not be a genuine NVIDIA driver. Proceed with caution."
-            $sigConfirm = Read-Host "  Continue anyway? [y/N]"
-            if ($sigConfirm -notmatch '^[jJyY]$') { return $false }
-        } else {
-            Write-DebugLog "Driver Authenticode signature valid: $sigSubject"
-        }
-    } else {
-        Write-Warn "Driver .exe has no valid Authenticode signature (status: $(if($sig){$sig.Status}else{'N/A'}))"
-        Write-Warn "NVIDIA drivers are always code-signed. This file may be tampered."
-        $sigConfirm = Read-Host "  Continue anyway? [y/N]"
-        if ($sigConfirm -notmatch '^[jJyY]$') { return $false }
+    if (-not $sig -or $sig.Status -ne 'Valid') {
+        Write-Err "Driver .exe has no valid Authenticode signature (status: $(if($sig){$sig.Status}else{'N/A'})). Refusing to execute."
+        return $false
     }
+    $sigSubject = $sig.SignerCertificate.Subject
+    if ($sigSubject -notmatch 'NVIDIA') {
+        Write-Err "Driver .exe is signed but NOT by NVIDIA (signer: $sigSubject). Refusing to execute."
+        return $false
+    }
+    Write-DebugLog "Driver Authenticode signature valid: $sigSubject"
 
     # ── 1. Extract driver package ───────────────────────────────────────────
     # The NVIDIA .exe is a self-extracting archive. Use NVIDIA's native silent

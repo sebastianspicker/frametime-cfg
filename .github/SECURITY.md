@@ -44,7 +44,7 @@ All state-changing operations respect `$SCRIPT:DryRun`. The following code paths
 Every modification is backed up to `C:\CS2_OPTIMIZE\backup.json` before execution. Users can roll back individual steps or all changes via `START.bat -> [7] Restore / Rollback`.
 
 ### No remote code execution
-The codebase uses zero instances of `Invoke-Expression` / `iex`. The only network call is `Invoke-WebRequest` to nvidia.com for driver download, with file-size validation.
+The codebase uses zero instances of `Invoke-Expression` / `iex`. The only network call is `Invoke-WebRequest` to nvidia.com for driver download, with file-size validation. NVIDIA driver installers must have a valid Authenticode signature from NVIDIA before any `Start-Process` execution path is reached.
 
 ### CI enforcement
 - PSScriptAnalyzer linting on all PRs
