@@ -253,6 +253,50 @@ Describe "Install-NvidiaDriverClean" {
         $source | Should -Match "Get-AuthenticodeSignature"
         $source | Should -Match "NVIDIA"
     }
+
+    It "fails closed for an invalid driver signature without prompting or executing" {
+        $SCRIPT:DryRun = $false
+        $driverPath = Join-Path $SCRIPT:TestTempRoot "driver.exe"
+        Set-Content $driverPath -Value "not a real driver" -Encoding UTF8
+        Mock Get-AuthenticodeSignature {
+            [PSCustomObject]@{
+                Status = "HashMismatch"
+                SignerCertificate = $null
+            }
+        }
+        Mock Write-Err {}
+        Mock Read-Host { "Y" }
+        Mock Start-Process { throw "Start-Process should not be reached" }
+
+        $result = Install-NvidiaDriverClean -DriverExe $driverPath
+
+        $result | Should -Be $false
+        Should -Invoke Write-Err -Exactly 1 -ParameterFilter { $t -match "no valid Authenticode signature" }
+        Should -Invoke Read-Host -Exactly 0
+        Should -Invoke Start-Process -Exactly 0
+    }
+
+    It "fails closed for a valid non-NVIDIA signature without prompting or executing" {
+        $SCRIPT:DryRun = $false
+        $driverPath = Join-Path $SCRIPT:TestTempRoot "driver.exe"
+        Set-Content $driverPath -Value "not a real driver" -Encoding UTF8
+        Mock Get-AuthenticodeSignature {
+            [PSCustomObject]@{
+                Status = "Valid"
+                SignerCertificate = [PSCustomObject]@{ Subject = "CN=Contoso Software" }
+            }
+        }
+        Mock Write-Err {}
+        Mock Read-Host { "Y" }
+        Mock Start-Process { throw "Start-Process should not be reached" }
+
+        $result = Install-NvidiaDriverClean -DriverExe $driverPath
+
+        $result | Should -Be $false
+        Should -Invoke Write-Err -Exactly 1 -ParameterFilter { $t -match "NOT by NVIDIA" }
+        Should -Invoke Read-Host -Exactly 0
+        Should -Invoke Start-Process -Exactly 0
+    }
 }
 
 # ── Apply-NvidiaPostInstallTweaks ──────────────────────────────────────────
