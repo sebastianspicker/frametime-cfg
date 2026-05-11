@@ -2,7 +2,7 @@ name: Lint
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - '**.ps1'
       - '**.psd1'
@@ -12,7 +12,7 @@ on:
       - 'docs/**'
       - '.github/workflows/**'
   pull_request:
-    branches: [main, dev]
+    branches: [main]
     paths:
       - '**.ps1'
       - '**.psd1'
@@ -58,7 +58,7 @@ jobs:
             Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
           }
           $pssaPaths = Get-ChildItem -Recurse -Filter "*.ps1" |
-            Where-Object { $_.FullName -notlike "*tests/helpers/_TestInit.ps1" }
+            Where-Object { $_.Name -ne "_TestInit.ps1" }
           if (-not $pssaPaths) {
             throw "No PowerShell files found for PSScriptAnalyzer"
           }
@@ -182,6 +182,54 @@ jobs:
           path: ./test-results.xml
           retention-days: 14
 
+  estimate-keys:
+    name: EstimateKey cross-reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify EstimateKey references are retired
+        shell: bash
+        run: |
+          if grep -rEn --include='*.ps1' --include='*.psd1' --include='*.yml' --include='*.yaml' --include='*.md' \
+            'EstimateKey|CFG_ImprovementEstimates' . |
+            grep -v 'CHANGELOG.md' |
+            grep -v '.github/workflows/lint.yml' |
+            grep -v 'docs/agent/'; then
+            echo "::error::Retired EstimateKey references remain"
+            exit 1
+          fi
+          echo "EstimateKey cross-reference: retired surface is clean"
+
+  e2e:
+    name: E2E process smoke
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Cache Pester module
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/Documents/PowerShell/Modules/Pester
+          key: pester5-2-${{ runner.os }}-${{ hashFiles('.github/workflows/lint.yml') }}
+
+      - name: Install Pester 5.x
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable Pester -ErrorAction SilentlyContinue | Where-Object Version -ge '5.0')) {
+            Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0 -MaximumVersion 5.99.99
+          }
+
+      - name: Run E2E process tests
+        shell: pwsh
+        run: Invoke-Pester -Path ./tests/e2e -CI
+
   entrypoint-smoke:
     name: Entry point smoke tests
     runs-on: windows-latest
@@ -243,89 +291,3 @@ jobs:
           if ($startGuiBat -notmatch [regex]::Escape('CS2-Optimize-GUI.ps1')) {
             throw "START-GUI.bat is missing CS2-Optimize-GUI.ps1"
           }
-
-  estimate-keys:
-    name: EstimateKey cross-reference
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Verify EstimateKey references match config
-        shell: bash
-        run: |
-          echo "=== Checking EstimateKey cross-references ==="
-
-          # Extract all -EstimateKey "..." values from phase scripts and the
-          # GUI step catalog. Some estimate keys are display-only in the catalog
-          # and are intentionally not attached to Invoke-TieredStep calls.
-          PHASE_SCRIPTS=(
-            Optimize-SystemBase.ps1
-            Optimize-RegistryTweaks.ps1
-            Optimize-Hardware.ps1
-            Optimize-GameConfig.ps1
-            PostReboot-Setup.ps1
-            helpers/step-catalog.ps1
-          )
-
-          USED_KEYS=()
-          for script in "${PHASE_SCRIPTS[@]}"; do
-            if [ -f "$script" ]; then
-              while IFS= read -r key; do
-                USED_KEYS+=("$key")
-              done < <(grep -oP '(?<=-EstimateKey\s")[^"]+' "$script")
-            fi
-          done
-
-          if [ ${#USED_KEYS[@]} -eq 0 ]; then
-            echo "::error::No EstimateKey values found in phase scripts — parsing may be broken"
-            exit 1
-          fi
-
-          echo "Found ${#USED_KEYS[@]} EstimateKey references in phase scripts"
-
-          # Extract keys only from $CFG_ImprovementEstimates block in config.env.ps1
-          # Scoped extraction: capture lines between the opening @{ and closing }
-          CONFIG_KEYS=()
-          IN_BLOCK=0
-          while IFS= read -r line; do
-            if echo "$line" | grep -q 'CFG_ImprovementEstimates'; then
-              IN_BLOCK=1; continue
-            fi
-            if [ "$IN_BLOCK" -eq 1 ]; then
-              # Stop at the closing brace of the hashtable
-              if echo "$line" | grep -qP '^\s*\}'; then
-                break
-              fi
-              KEY=$(echo "$line" | grep -oP '^\s+"\K[^"]+(?="\s*=)' || true)
-              if [ -n "$KEY" ]; then
-                CONFIG_KEYS+=("$KEY")
-              fi
-            fi
-          done < config.env.ps1
-
-          echo "Found ${#CONFIG_KEYS[@]} keys in CFG_ImprovementEstimates"
-
-          # Check each used key exists in config
-          MISSING=0
-          for key in "${USED_KEYS[@]}"; do
-            FOUND=0
-            for cfg_key in "${CONFIG_KEYS[@]}"; do
-              if [ "$key" = "$cfg_key" ]; then
-                FOUND=1
-                break
-              fi
-            done
-            if [ "$FOUND" -eq 0 ]; then
-              echo "::error::EstimateKey \"$key\" used in phase scripts but not found in \$CFG_ImprovementEstimates"
-              MISSING=$((MISSING + 1))
-            fi
-          done
-
-          if [ "$MISSING" -gt 0 ]; then
-            echo "::error::$MISSING EstimateKey(s) missing from config.env.ps1"
-            exit 1
-          fi
-          echo "EstimateKey cross-reference: all ${#USED_KEYS[@]} keys verified"

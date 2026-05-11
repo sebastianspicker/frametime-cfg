@@ -17,8 +17,16 @@ Thanks for your interest in improving the CS2 Optimization Suite.
 ## Before Submitting
 
 ```powershell
-# Lint check (must pass clean)
-Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+# Lint check (must pass clean; mirrors CI exclusion)
+$pssaPaths = Get-ChildItem -Recurse -Filter "*.ps1" |
+    Where-Object { $_.FullName -notlike "*tests/helpers/_TestInit.ps1" }
+$results = foreach ($file in $pssaPaths) {
+    Invoke-ScriptAnalyzer -Path $file.FullName -Settings .\PSScriptAnalyzerSettings.psd1
+}
+if ($results) {
+    $results | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message
+    throw "$($results.Count) PSScriptAnalyzer issue(s) found"
+}
 
 # Parse check (must show zero errors)
 Get-ChildItem -Recurse -Filter "*.ps1" | ForEach-Object {
@@ -26,6 +34,15 @@ Get-ChildItem -Recurse -Filter "*.ps1" | ForEach-Object {
     $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e)
     if ($e) { $e | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" } }
 }
+
+# Test gate
+Invoke-Pester tests -CI
+
+# Process-level E2E smoke gate
+Invoke-Pester tests/e2e -CI
+
+# Smoke at least the changed entry point locally; CI runs the full matrix on Windows
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\CS2-Optimize-GUI.ps1 -SmokeTest
 ```
 
 ## What We're Looking For

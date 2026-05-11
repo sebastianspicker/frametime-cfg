@@ -43,37 +43,6 @@
 #  DRY-RUN is a modifier that can be combined with any profile.
 
 if (-not (Get-Variable -Name RiskOrder -Scope Script -ErrorAction SilentlyContinue)) { $SCRIPT:RiskOrder = @{ "SAFE"=1; "MODERATE"=2; "AGGRESSIVE"=3; "CRITICAL"=4 } }
-if (-not (Get-Variable -Name AppliedSteps -Scope Script -ErrorAction SilentlyContinue)) { $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new() }
-
-function Save-AppliedSteps {
-    <#  Persists $SCRIPT:AppliedSteps to state.json so Phase 3 can read Phase 1 estimates.  #>
-    if (-not (Test-Path $CFG_StateFile)) { return $true }
-    try {
-        $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
-        $st | Add-Member -NotePropertyName "appliedSteps" -NotePropertyValue @($SCRIPT:AppliedSteps) -Force
-        Save-JsonAtomic -Data $st -Path $CFG_StateFile
-        Set-SecureAcl -Path $CFG_StateFile
-        return $true
-    } catch {
-        Write-DebugLog "Could not persist AppliedSteps: $_"
-        Write-Warn "Could not persist applied steps to state.json. Phase 3 estimates may be incomplete."
-        return $false
-    }
-}
-
-function Load-AppliedSteps {
-    <#  Loads previously applied step keys from state.json into $SCRIPT:AppliedSteps.  #>
-    if (-not (Test-Path $CFG_StateFile)) { return }
-    try {
-        $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
-        if ($st.appliedSteps) {
-            foreach ($key in @($st.appliedSteps)) {
-                if ($key -notin $SCRIPT:AppliedSteps) { $SCRIPT:AppliedSteps.Add($key) }
-            }
-        }
-    } catch { Write-DebugLog "Could not load AppliedSteps: $_" }
-}
-
 function Test-YoloProfile { return $SCRIPT:Profile -eq "YOLO" }
 
 function Get-ProfileMaxRisk {
@@ -176,7 +145,6 @@ function Invoke-TieredStep {
         [string] $Improvement  = "",
         [string] $SideEffects  = "",
         [string] $Undo         = "",
-        [string] $EstimateKey   = "",
         [scriptblock] $Action,
         [scriptblock] $SkipAction = $null
     )
@@ -364,10 +332,6 @@ function Invoke-TieredStep {
             Write-Host "  $([char]0x2139) You can retry later via START.bat, or continue $([char]0x2014) remaining steps still work." -ForegroundColor Cyan
             $actionOk = $false
         }
-        # Track applied steps for improvement estimation (only on success)
-        if ($actionOk -and $EstimateKey -and -not $SCRIPT:DryRun) {
-            $SCRIPT:AppliedSteps.Add($EstimateKey)
-        }
         # Update phase counters
         if ($actionOk) { Add-PhaseApplied } else { Add-PhaseFailed }
     } else {
@@ -383,126 +347,6 @@ function Invoke-TieredStep {
 
     $SCRIPT:CurrentStepTitle = $null
     return ($run -and $actionOk)
-}
-
-function Get-ImprovementEstimate {
-    <#
-    .SYNOPSIS  Calculates cumulative estimated improvement from all applied steps.
-               Returns a summary with min/max P1 low and avg FPS ranges.
-    #>
-    $totalP1Min = 0; $totalP1Max = 0
-    $totalAvgMin = 0; $totalAvgMax = 0
-    $steps = [System.Collections.Generic.List[object]]::new()
-
-    if (-not $CFG_ImprovementEstimates) {
-        return @{ P1LowMin=0; P1LowMax=0; AvgMin=0; AvgMax=0; Steps=@(); Count=0 }
-    }
-    foreach ($key in $SCRIPT:AppliedSteps) {
-        if ($CFG_ImprovementEstimates.ContainsKey($key)) {
-            $est = $CFG_ImprovementEstimates[$key]
-            $totalP1Min  += $est.P1LowMin
-            $totalP1Max  += $est.P1LowMax
-            $totalAvgMin += $est.AvgMin
-            $totalAvgMax += $est.AvgMax
-            $steps.Add(@{ Key=$key; Estimate=$est })
-        }
-    }
-
-    return @{
-        P1LowMin = $totalP1Min;  P1LowMax = $totalP1Max
-        AvgMin   = $totalAvgMin; AvgMax   = $totalAvgMax
-        Steps    = $steps;       Count    = $steps.Count
-    }
-}
-
-function Show-ImprovementEstimate {
-    <#
-    .SYNOPSIS  Shows the cumulative estimated improvement and compares against
-               actual benchmark results if a baseline exists.
-    #>
-    param(
-        [double]$BaselineAvg = 0,
-        [double]$BaselineP1  = 0,
-        [double]$ActualAvg   = 0,
-        [double]$ActualP1    = 0
-    )
-
-    $est = Get-ImprovementEstimate
-    if ($est.Count -eq 0) {
-        Write-Info "No tracked improvement estimates available."
-        return
-    }
-
-    Write-Blank
-    Write-Host "  ┌──────────────────────────────────────────────────────────────────" -ForegroundColor Cyan
-    Write-Host "  │  IMPROVEMENT ESTIMATE vs. ACTUAL RESULTS" -ForegroundColor Cyan
-    Write-Host "  │" -ForegroundColor DarkGray
-    Write-Host "  │  Applied steps with tracked estimates: $($est.Count)" -ForegroundColor DarkGray
-    Write-Host "  │" -ForegroundColor DarkGray
-
-    # Show per-step estimates
-    foreach ($s in $est.Steps) {
-        $e = $s.Estimate
-        $conf = switch ($e.Confidence) { "HIGH" {"Green"} "MEDIUM" {"Yellow"} "LOW" {"DarkGray"} default {"White"} }
-        $confIcon = switch ($e.Confidence) { "HIGH" {"$([char]0x2714)"} "MEDIUM" {"$([char]0x25B2)"} "LOW" {"?"} default {"?"} }
-        $p1Range = if ($e.P1LowMin -eq $e.P1LowMax) { "$($e.P1LowMin)%" } else { "$($e.P1LowMin)-$($e.P1LowMax)%" }
-        Write-Host "  │  $confIcon $($s.Key.PadRight(28)) 1% lows: +$p1Range" -ForegroundColor $conf
-    }
-
-    Write-Host "  │" -ForegroundColor DarkGray
-    Write-Host "  │  CUMULATIVE ESTIMATE:" -ForegroundColor White
-    Write-Host "  │  1% Lows:  +$($est.P1LowMin)% to +$($est.P1LowMax)%  improvement" -ForegroundColor Cyan
-    if ($est.AvgMin -ne 0 -or $est.AvgMax -ne 0) {
-        $avgMinSign = if ($est.AvgMin -ge 0) { "+" } else { "" }
-        $avgMaxSign = if ($est.AvgMax -ge 0) { "+" } else { "" }
-        Write-Host "  │  Avg FPS:  ${avgMinSign}$($est.AvgMin)% to ${avgMaxSign}$($est.AvgMax)%" -ForegroundColor DarkCyan
-    }
-
-    # Compare against actual benchmark if we have data
-    if ($BaselineP1 -gt 0 -and $ActualP1 -gt 0) {
-        $actualP1Pct = [math]::Round(($ActualP1 - $BaselineP1) / $BaselineP1 * 100, 1)
-        $actualAvgPct = if ($BaselineAvg -gt 0) { [math]::Round(($ActualAvg - $BaselineAvg) / $BaselineAvg * 100, 1) } else { 0 }
-
-        Write-Host "  │" -ForegroundColor DarkGray
-        Write-Host "  │  ACTUAL BENCHMARK RESULT:" -ForegroundColor White
-        Write-Host "  │  1% Lows:  $($BaselineP1.ToString('F1')) -> $($ActualP1.ToString('F1'))  ($(if($actualP1Pct -ge 0){'+'})$actualP1Pct%)" -ForegroundColor White
-        if ($BaselineAvg -gt 0) {
-            Write-Host "  │  Avg FPS:  $($BaselineAvg.ToString('F1')) -> $($ActualAvg.ToString('F1'))  ($(if($actualAvgPct -ge 0){'+'})$actualAvgPct%)" -ForegroundColor White
-        }
-
-        Write-Host "  │" -ForegroundColor DarkGray
-
-        # Verdict
-        if ($actualP1Pct -ge $est.P1LowMin -and $actualP1Pct -le $est.P1LowMax) {
-            Write-Host "  │  $([char]0x2714) WITHIN EXPECTED RANGE" -ForegroundColor Green
-            Write-Host "  │  Estimated +$($est.P1LowMin)-$($est.P1LowMax)%, got $(if($actualP1Pct -ge 0){'+'})$actualP1Pct%" -ForegroundColor Green
-        } elseif ($actualP1Pct -gt $est.P1LowMax) {
-            Write-Host "  │  $([char]0x2714) BETTER THAN EXPECTED" -ForegroundColor Green
-            Write-Host "  │  Estimated +$($est.P1LowMin)-$($est.P1LowMax)%, got +$actualP1Pct% $([char]0x2014) great result!" -ForegroundColor Green
-        } elseif ($actualP1Pct -ge 0 -and $actualP1Pct -lt $est.P1LowMin) {
-            Write-Host "  │  $([char]0x25B2) BELOW ESTIMATE" -ForegroundColor Yellow
-            Write-Host "  │  Estimated +$($est.P1LowMin)-$($est.P1LowMax)%, got +$actualP1Pct%" -ForegroundColor Yellow
-            Write-Host "  │  Some steps may not apply to your setup. Run 3x to confirm." -ForegroundColor DarkGray
-        } else {
-            Write-Host "  │  $([char]0x2718) REGRESSION" -ForegroundColor Red
-            Write-Host "  │  Estimated improvement, got $actualP1Pct% $([char]0x2014) investigate!" -ForegroundColor Red
-            Write-Host "  │  Consider reverting recent changes: START.bat -> [7] Restore" -ForegroundColor DarkGray
-        }
-    } else {
-        Write-Host "  │" -ForegroundColor DarkGray
-        Write-Host "  │  Run a benchmark to compare estimate vs. actual result." -ForegroundColor DarkGray
-        if ($BaselineP1 -gt 0) {
-            $estMinFps = [math]::Round($BaselineP1 * (1 + $est.P1LowMin / 100), 1)
-            $estMaxFps = [math]::Round($BaselineP1 * (1 + $est.P1LowMax / 100), 1)
-            Write-Host "  │  Based on baseline ($($BaselineP1.ToString('F1')) 1% lows):" -ForegroundColor DarkGray
-            Write-Host "  │  Expected after optimization: $estMinFps - $estMaxFps FPS (1% lows)" -ForegroundColor Cyan
-        }
-    }
-
-    Write-Host "  │" -ForegroundColor DarkGray
-    Write-Host "  │  NOTE: Estimates are ranges based on community benchmarks." -ForegroundColor DarkGray
-    Write-Host "  │  Individual results vary by hardware. Always measure yourself." -ForegroundColor DarkGray
-    Write-Host "  └──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 }
 
 # Backward-compatible wrapper

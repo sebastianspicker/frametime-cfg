@@ -27,6 +27,9 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - DRS profile: `Trilinear optimization` name corrected — value `0` means ON (driver perf shortcut enabled), not OFF
 - Power plan: PCIe ASPM GUIDs fixed — previous GUIDs were incorrect, meaning ASPM disable was never applied. Now uses correct subgroup `501a4d13-...` and setting `ee12f906-...`
 
+### Removed
+- Simplicity First cleanup: removed unused wrappers/test helpers and the runtime improvement-estimate engine. Benchmark history remains the source of before/after comparison.
+
 ### Added (previous — initial release)
 - `helpers/process-priority.ps1` — replaces Process Lasso (final external tool eliminated). IFEO PerfOptions for persistent High CPU priority; scheduled task for dual-CCD X3D affinity pinning (7900X3D/7950X3D/9900X3D/9950X3D)
 - `helpers/power-plan.ps1` — replaces FPSHeaven `.pow` binary import with native `powercfg` calls. Fixed 4 bugs in the original plan (passive cooling, AMD PROCTHROTTLEMIN, duty cycling, PERFAUTONOMOUS)
@@ -96,8 +99,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 **Code quality:**
 - All PSScriptAnalyzer warnings resolved (test stubs: `$Args` renamed to `$CmdArgs`, `$input` to `$vprofOutput`, pipeline stubs given `process {}` blocks)
-- AI filler text removed from docs and scripts (`robust`, `comprehensive` replaced with concrete terms)
-- `.gitignore`: added `.claude/loops/`, `progress.md`, `testResults.xml`
+- Filler text removed from docs and scripts (`robust`, `comprehensive` replaced with concrete terms)
+- `.gitignore`: added local-only automation, progress, and test-result artifacts
 
 ### Audit (March 2026)
 Multi-round code audit covering infrastructure, phase scripts, specialized modules, GUI, tests, documentation, CI/CD, UX, code simplification, security hardening, and compatibility guards.
@@ -151,4 +154,3 @@ Multi-round code audit covering infrastructure, phase scripts, specialized modul
 - `README.md`: fixed docs/ file count from 16 to 17 (includes `video.txt`)
 - `README.md`: fixed nvidia-drs-settings.md description to match actual doc structure (12 sections, not "10-cluster/8 findings")
 - `CHANGELOG.md`: updated test count from 203 to 233, test files from 6 to 7
-

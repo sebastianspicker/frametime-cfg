@@ -272,7 +272,7 @@ if ($doDriver) {
                 $st = [PSCustomObject]@{ mode = $SCRIPT:Mode; profile = $SCRIPT:Profile }
             }
             $st | Add-Member -NotePropertyName "gpuInput" -NotePropertyValue $gpuChoice -Force
-            Save-JsonAtomic -Data $st -Path $CFG_StateFile
+            Save-SuiteState -State $st
         } catch { Write-DebugLog "Could not persist GPU choice: $_" }
     }
 

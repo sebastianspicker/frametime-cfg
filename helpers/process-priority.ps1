@@ -189,6 +189,7 @@ function Install-CS2AffinityTask {
 
     # Create the affinity setter script
     # Use [long] cast to prevent Int32 truncation on high-core-count CPUs (>32 logical processors)
+    Ensure-SecureWorkDir -Path $CFG_WorkDir
     $scriptContent = @"
 # CS2 CCD Affinity Setter — created by CS2 Optimization Suite
 # Sets cs2.exe affinity to V-Cache CCD (mask: $AffinityHex)
@@ -207,6 +208,7 @@ if (`$procs) {
 }
 "@
     Set-Content -Path $CS2_AffinityScriptPath -Value $scriptContent -Encoding UTF8 -Force
+    Set-SecureAcl -Path $CS2_AffinityScriptPath
 
     # Register scheduled task via XML for reliable logon trigger + repetition
     $escapedPath = [System.Security.SecurityElement]::Escape($CS2_AffinityScriptPath)
@@ -252,52 +254,5 @@ if (`$procs) {
     } catch {
         Write-Warn "Could not create scheduled task: $_"
         Write-Info "Manual alternative: set cs2.exe affinity to $AffinityHex in Task Manager"
-    }
-}
-
-function Remove-CS2ProcessPriority {
-    <#
-    .SYNOPSIS  Removes IFEO priority setting and CCD affinity scheduled task.
-    .DESCRIPTION  Called during rollback via Restore-Interactive.
-    #>
-
-    if ($SCRIPT:DryRun) {
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would remove CS2 process priority settings" -ForegroundColor Magenta
-        return
-    }
-
-    # Remove IFEO PerfOptions
-    $ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe\PerfOptions"
-    if (Test-Path $ifeoPath) {
-        try {
-            Remove-Item -Path $ifeoPath -Force -ErrorAction Stop
-            Write-OK "Removed IFEO PerfOptions for cs2.exe"
-
-            # Clean up empty parent key
-            $parentPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe"
-            $parent = Get-Item $parentPath -ErrorAction SilentlyContinue
-            if ($parent -and $parent.SubKeyCount -eq 0 -and $parent.ValueCount -eq 0) {
-                Remove-Item -Path $parentPath -Force -ErrorAction SilentlyContinue
-            }
-        } catch { Write-Warn "Could not remove IFEO PerfOptions: $_" }
-    }
-
-    # Remove scheduled task — stop it first if running to avoid Unregister failure
-    try {
-        $task = Get-ScheduledTask -TaskName $CS2_AffinityTaskName -ErrorAction SilentlyContinue
-        if ($task) {
-            if ($task.State -eq "Running") {
-                Stop-ScheduledTask -TaskName $CS2_AffinityTaskName -ErrorAction SilentlyContinue
-                Write-DebugLog "Stopped running task '$CS2_AffinityTaskName' before unregistering"
-            }
-            Unregister-ScheduledTask -TaskName $CS2_AffinityTaskName -Confirm:$false
-            Write-OK "Removed scheduled task: $CS2_AffinityTaskName"
-        }
-    } catch { Write-DebugLog "Task removal: $_" }
-
-    # Remove affinity script
-    if (Test-Path $CS2_AffinityScriptPath) {
-        Remove-Item $CS2_AffinityScriptPath -Force -ErrorAction SilentlyContinue
-        Write-OK "Removed: $CS2_AffinityScriptPath"
     }
 }

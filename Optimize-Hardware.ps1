@@ -77,7 +77,7 @@ if ($startStep -le 13) {
         -Why "Telemetry processes and bloatware consume CPU time in the background." `
         -Evidence "No CS2-specific 1%-low proof. General system hygiene." `
         -Caveat "Removes known bloatware AppX packages + disables telemetry. NOT: Windows Defender!" `
-        -Risk "MODERATE" -Depth "APP" -EstimateKey "Debloat" `
+        -Risk "MODERATE" -Depth "APP" `
         -Improvement "Fewer background processes — cleaner system, marginal CPU/RAM savings" `
         -SideEffects "Removed bloatware apps cannot be easily reinstalled from Microsoft Store" `
         -Undo "Reinstall apps via Microsoft Store or DISM /Online /Add-ProvisionedAppxPackage" `
@@ -212,7 +212,7 @@ if ($startStep -le 16) {
         -Why "Five complementary layers: (1) Adapter properties — EEE, Green Ethernet, Power Saving Mode eliminate PHY power-state wake latency spikes; Flow Control disables PAUSE frame transmit stalls. InterruptModeration=Medium (all profiles) — djdallmann empirical test found Medium minimises DPC latency variance; Disabled causes interrupt storms under background traffic, making jitter worse. (2) RSS — Intel I225-V/I226-V omit RSS registry entries by default; all DPCs land on Core 0. (3) URO (Win11) — UDP Receive Offload batches CS2's 128-pkt/sec datagrams before DPC delivery, adding receive jitter; disable gives per-datagram DPC. (4) QoS DSCP EF=46 — tags CS2 UDP for priority forwarding; 'Do not use NLA' key is prerequisite (silently blocks DSCP on unidentified networks without it). (5) Bufferbloat awareness." `
         -Evidence "EEE/FlowControl: standard low-latency NIC tuning. InterruptModeration Medium: djdallmann/GamingPCSetup empirical Intel NIC test — Disabled caused interrupt storms worsening jitter under real-world background traffic; Medium gives most predictable DPC scheduling. GreenEthernet/PowerSavingMode: same rationale as EEE (vendor-specific PHY power gating). RSS entries: djdallmann — 'many vendor drivers omit these; notable NDIS DPC latency improvements.' URO: Windows 11 UDP batching feature — disabling gives per-datagram DPC delivery for CS2. QoS NLA key: required prerequisite for DSCP on all network profiles. Bufferbloat: valleyofdoom, waveform.com." `
         -Caveat "LatencyMon can confirm NIC DPC bottleneck. RSS restart required. URO disable Win11 only (safely no-ops Win10). DSCP benefit requires QoS-aware router/switch; consumer ISP routers strip DSCP at first hop. InterruptModeration stays Medium even on COMPETITIVE — empirical evidence trumps theoretical per-packet argument." `
-        -Risk "MODERATE" -Depth "NETWORK" -EstimateKey "NIC Tweaks" `
+        -Risk "MODERATE" -Depth "NETWORK" `
         -Improvement "Lower, more consistent NIC DPC latency: PHY wake jitter eliminated, interrupt coalescing tuned for predictability, UDP receive batching removed (Win11), CS2 UDP tagged for QoS priority" `
         -SideEffects "Higher NIC power consumption (power features off). Wake-on-LAN unaffected during play. QoS policies persist until removed. URO persists until re-enabled." `
         -Undo "Re-enable EEE via Device Manager -> NIC -> Advanced; netsh int udp set global uro=enabled; Remove-NetQosPolicy -Name CS2_UDP_Ports,CS2_App -Confirm:\$false; remove RSS registry entries; set DisabledComponents=0 in HKLM:\...Tcpip6\Parameters" `
@@ -486,7 +486,7 @@ if ($startStep -le 17) {
                             $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
                             $st | Add-Member -NotePropertyName "baselineAvg" -NotePropertyValue $result.Avg -Force
                             $st | Add-Member -NotePropertyName "baselineP1" -NotePropertyValue $result.P1 -Force
-                            Save-JsonAtomic -Data $st -Path $CFG_StateFile
+                            Save-SuiteState -State $st
                         } catch { Write-Warn "Could not persist baseline data: $_" }
                     } else {
                         Write-Host "  [DRY-RUN] Would persist baseline: Avg=$($result.Avg) P1=$($result.P1)" -ForegroundColor Magenta
@@ -532,7 +532,7 @@ if ($startStep -le 19) {
                     try {
                         $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
                         $st | Add-Member -NotePropertyName "nvidiaGpuName" -NotePropertyValue $gpuForState.Name -Force
-                        Save-JsonAtomic -Data $st -Path $CFG_StateFile
+                        Save-SuiteState -State $st
                     } catch { Write-DebugLog "Could not persist GPU name to state: $_" }
                 }
 
@@ -565,7 +565,7 @@ if ($startStep -le 19) {
                                     $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
                                     $st | Add-Member -NotePropertyName "nvidiaDriverPath" -NotePropertyValue $driverDest -Force
                                     $st | Add-Member -NotePropertyName "nvidiaDriverVersion" -NotePropertyValue $driverInfo.Version -Force
-                                    Save-JsonAtomic -Data $st -Path $CFG_StateFile
+                                    Save-SuiteState -State $st
                                 } catch { Write-Warn "Could not persist driver path to state: $_" }
                                 Write-OK "Driver ready: $driverDest"
                             }

@@ -1,6 +1,6 @@
 # Optimization Evidence & Risk Analysis
 
-> Per-optimization impact estimates, cumulative improvement ranges, and risk trade-off analysis.
+> Per-optimization impact notes and risk trade-off analysis.
 > See the [README](../README.md) for the phase step tables.
 
 ---
@@ -31,21 +31,6 @@ Every optimization tracked by this suite, with estimated impact ranges from isol
 | Windows Update Blocker | T3 | CRITICAL | 0 | 0 | N/A | Security trade-off | Disables security updates — not recommended |
 
 > **Reading this table:** "1% Low" is frametime consistency (higher = fewer stutters). "Avg FPS" is average framerate. Negative values mean intentional reduction (FPS Cap) or possible regression (HAGS on older GPUs). Confidence reflects the quality and reproducibility of the evidence.
-
----
-
-## Cumulative Theoretical Improvement
-
-These ranges assume all applicable improvements stack independently. Real-world gains are typically 30–60% of these values.
-
-| Scenario | Steps Applied | 1% Low Range | Avg FPS Range | Risk Level |
-|---|---|---|---|---|
-| **SAFE Profile** (T1 only) | Shader, FSO, Power Plan, FPS Cap, Driver | +10–48% | +1–14% (excl. cap) | Minimal (1 MODERATE step) |
-| **RECOMMENDED** (T1 + safe T2) | + Game DVR, Overlays, Autoexec | +12–56% | +1–18% | Low |
-| **COMPETITIVE** (T1 + T2 + T3) | + MSI, HAGS, NIC, Timer, SysMain, Debloat, Visual | +12–65% | +1–20% | Moderate |
-| **CUSTOM** (everything) | + Windows Update Blocker | +12–65% | +1–20% | High |
-
-> **Why the wide ranges?** A bloated system with stale drivers and no power plan will see large gains. A clean Windows install with recent drivers might see almost nothing. The 1% low improvement is where most users see the biggest difference — that's frametime consistency, not raw FPS.
 
 ---
 

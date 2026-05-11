@@ -72,7 +72,7 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . "$ScriptRoot\config.env.ps1"
 . "$ScriptRoot\helpers.ps1"
 
-Ensure-Dir $CFG_WorkDir
+Ensure-SecureWorkDir -Path $CFG_WorkDir
 Ensure-Dir $CFG_LogDir
 
 if ($SmokeTest) {
@@ -86,10 +86,11 @@ $SCRIPT:CurrentPhase = 1
 $PHASE = 1
 $SCRIPT:DryRun = $false         # safe default; Setup-Profile.ps1 will override
 $SCRIPT:SafebootReady = $false  # set to $true by Step 38 if bcdedit safeboot confirmed
-$appliedStepsPersisted = $true
 
 try {
     Initialize-PhaseCounters
+    # The phase files execute while being dot-sourced; this order is the Phase 1
+    # workflow, not a passive import list.
     . "$ScriptRoot\Setup-Profile.ps1"
     . "$ScriptRoot\Optimize-SystemBase.ps1"
     . "$ScriptRoot\Optimize-Hardware.ps1"
@@ -97,16 +98,9 @@ try {
     . "$ScriptRoot\Optimize-GameConfig.ps1"
 
     # ── Phase 1 complete ─────────────────────────────────────────────────────────
-    # Persist applied step keys so Phase 3 improvement estimates are cumulative
-    # Skip in DRY-RUN to avoid overwriting real applied steps with an empty array
-    if (-not $SCRIPT:DryRun) { $appliedStepsPersisted = Save-AppliedSteps }
     if ($SCRIPT:DryRun) {
         Write-PhaseSummary -PhaseLabel "PHASE 1" -DryRun
     } else {
-        if (-not $appliedStepsPersisted) {
-            Write-Warn "Phase 1 completed, but applied-step history was not saved."
-            Write-Warn "Phase 3 will still run, but cumulative improvement estimates may be incomplete."
-        }
         $nextAction = "-> Restart -> Safe Mode -> GPU driver clean`n-> Normal boot -> Phase 3 starts automatically"
         Write-PhaseSummary -PhaseLabel "PHASE 1" -NextAction $nextAction
 

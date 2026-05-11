@@ -155,7 +155,7 @@ if (-not $SCRIPT:DryRun) {
             $st | Add-Member -NotePropertyName "avgFps"  -NotePropertyValue $avg  -Force
             if ($p1 -gt 0) { $st | Add-Member -NotePropertyName "p1Fps" -NotePropertyValue $p1 -Force }
             $st | Add-Member -NotePropertyName "capDate" -NotePropertyValue (Get-Date -Format "yyyy-MM-dd HH:mm") -Force
-            Save-JsonAtomic -Data $st -Path $CFG_StateFile
+            Save-SuiteState -State $st
         } catch { Write-DebugLog "Could not persist FPS cap data: $_" }
     }
     if ($p1 -gt 0) {

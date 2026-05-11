@@ -55,7 +55,8 @@ try {
             elseif ($gpu.Name -match "RTX\s*5\d{3}") { $detectedGpu = "1" }
         }
     } catch { <# GPU detection failed — use NVIDIA default #> }
-    $state = [PSCustomObject]@{ gpuInput=$detectedGpu; mode="CONTROL"; logLevel="NORMAL"; profile="RECOMMENDED"; fpsCap=0; avgFps=0; rollbackDriver=$null; nvidiaDriverPath=$null; appliedSteps=@(); baselineAvg=$null; baselineP1=$null }
+    $state = [PSCustomObject]@{ gpuInput=$detectedGpu; mode="CONTROL"; logLevel="NORMAL"; profile="RECOMMENDED"; fpsCap=0; avgFps=0; rollbackDriver=$null; nvidiaDriverPath=$null; baselineAvg=$null; baselineP1=$null }
+    Save-SuiteState -State $state
     $SCRIPT:Mode = "CONTROL"; $SCRIPT:LogLevel = "NORMAL"; $SCRIPT:Profile = "RECOMMENDED"; $SCRIPT:DryRun = $false
 }
 $fpsCap   = if ($state.PSObject.Properties['fpsCap']) { $state.fpsCap } else { 0 }
@@ -88,7 +89,7 @@ if ($SCRIPT:DryRun) {
         }
         Write-Host "  Switched to $($SCRIPT:Mode) mode ($($SCRIPT:Profile) profile) — changes WILL be applied." -ForegroundColor Yellow
         # Persist the mode switch so re-launches don't revert to DRY-RUN
-        try { $state | Add-Member -NotePropertyName "mode" -NotePropertyValue $SCRIPT:Mode -Force; Save-JsonAtomic -Data $state -Path $CFG_StateFile } catch {}
+        try { $state | Add-Member -NotePropertyName "mode" -NotePropertyValue $SCRIPT:Mode -Force; Save-SuiteState -State $state } catch {}
     }
 }
 
@@ -126,9 +127,6 @@ try {
 # Initialize backup system for this phase (inside try so finally releases the lock on error)
 Initialize-Backup
 Initialize-PhaseCounters
-
-# Load Phase 1 applied steps so improvement estimates are cumulative
-Load-AppliedSteps
 
 Ensure-Dir $CFG_LogDir
 Initialize-Log
@@ -346,7 +344,7 @@ if ($startStep -le 2) {
         -Why "MSI interrupts for GPU, NIC, audio -> less DPC latency." `
         -Evidence "Measurable if LatencyMon shows DPC spikes. Without diagnosis: situational." `
         -Caveat "Not all devices support MSI. Errors are ignored for unsupported devices." `
-        -Risk "MODERATE" -Depth "REGISTRY" -EstimateKey "MSI Interrupts" `
+        -Risk "MODERATE" -Depth "REGISTRY" `
         -Improvement "Less DPC latency for GPU/NIC/audio — measurable with LatencyMon" `
         -SideEffects "Rare: device instability if MSI not supported (errors are ignored safely)" `
         -Undo "Delete MSISupported values from device Interrupt Management registry keys" `
@@ -470,7 +468,7 @@ if ($startStep -le 7) {
         -Why "Virtualization-Based Security runs a Type-1 hypervisor below the kernel. On OEM Win11 systems this adds 5-15% CPU scheduling overhead in games. X3D tuning guide: Off." `
         -Evidence "Microsoft VBS docs; Phoronix benchmarks show 5-15% overhead. X3D guide (A18): Off. Multiple community benchmarks confirm FPS impact on CPU-bound titles." `
         -Caveat "SECURITY TRADE-OFF: Disables LSASS credential theft protection. FACEIT Anti-Cheat and Vanguard REQUIRE HVCI — skip this step if using these. Only disable on dedicated gaming PCs." `
-        -Risk "MODERATE" -Depth "REGISTRY" -EstimateKey "VBS/Core Isolation Off" `
+        -Risk "MODERATE" -Depth "REGISTRY" `
         -Improvement "Removes 5-15% CPU overhead from hypervisor layer — measurable on OEM Win11" `
         -SideEffects "Reduces credential theft protection (LSASS). May break FACEIT AC / Vanguard." `
         -Undo "Windows Security -> Device Security -> Core Isolation -> Memory Integrity: ON" `
@@ -950,11 +948,6 @@ if ($startStep -le 13) {
         Write-Info "You can run this benchmark again anytime via START.bat -> [3] FPS Cap Calculator."
         Write-Info "All results are tracked in: $CFG_BenchmarkFile"
 
-        # Show improvement estimate vs. actual results
-        $baselineAvg = if ($state.PSObject.Properties['baselineAvg'] -and $null -ne $state.baselineAvg) { $state.baselineAvg } else { 0 }
-        $baselineP1  = if ($state.PSObject.Properties['baselineP1']  -and $null -ne $state.baselineP1)  { $state.baselineP1 }  else { 0 }
-        Show-ImprovementEstimate -BaselineAvg $baselineAvg -BaselineP1 $baselineP1 `
-            -ActualAvg $bmResult.Avg -ActualP1 $bmResult.P1
     }
 
     # Show full history if multiple results exist

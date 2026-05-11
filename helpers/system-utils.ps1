@@ -109,31 +109,69 @@ function Save-JsonAtomic {
 }
 
 function Set-SecureAcl {
-    <#  Applies an Administrators-only ACL to a sensitive JSON file.
+    <#  Applies an Administrators/SYSTEM-only ACL to a sensitive file or directory.
         NOTE: C:\CS2_OPTIMIZE should also inherit restrictive ACLs so newly created
         temp files from Save-JsonAtomic stay protected before this file ACL is re-applied.  #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [switch]$Required
+    )
 
     if (-not (Test-Path $Path)) { return }
     if (-not (Test-HostIsWindows)) { return }
 
     try {
         $admins = New-Object System.Security.Principal.NTAccount("BUILTIN", "Administrators")
-        $acl = New-Object System.Security.AccessControl.FileSecurity
-        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($admins, "FullControl", "Allow")
+        $system = New-Object System.Security.Principal.NTAccount("NT AUTHORITY", "SYSTEM")
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        $isDirectory = $item.PSObject.Properties.Match("PSIsContainer").Count -gt 0 -and $item.PSIsContainer
+        $acl = if ($isDirectory) {
+            New-Object System.Security.AccessControl.DirectorySecurity
+        } else {
+            New-Object System.Security.AccessControl.FileSecurity
+        }
+        $inheritance = if ($isDirectory) {
+            [System.Security.AccessControl.InheritanceFlags]"ContainerInherit,ObjectInherit"
+        } else {
+            [System.Security.AccessControl.InheritanceFlags]::None
+        }
+        $propagation = [System.Security.AccessControl.PropagationFlags]::None
+        $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule($admins, "FullControl", $inheritance, $propagation, "Allow")
+        $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule($system, "FullControl", $inheritance, $propagation, "Allow")
 
         $acl.SetOwner($admins)
         $acl.SetAccessRuleProtection($true, $false)
-        $acl.SetAccessRule($rule)
+        $acl.SetAccessRule($adminRule)
+        $acl.SetAccessRule($systemRule)
         Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
     } catch {
+        if ($Required) { throw "Failed to secure ACL on '$Path': $_" }
         Write-Warn "Failed to secure ACL on '$Path': $_"
     }
 }
 
-function Save-State($obj, $path) {
-    Save-JsonAtomic -Data $obj -Path $path
+function Save-SuiteState {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$State)
+
+    Ensure-SecureWorkDir -Path (Split-Path $CFG_StateFile -Parent)
+    Save-JsonAtomic -Data $State -Path $CFG_StateFile
+    Set-SecureAcl -Path $CFG_StateFile -Required
+}
+
+function Ensure-SecureWorkDir {
+    [CmdletBinding()]
+    param([string]$Path = $CFG_WorkDir)
+
+    Ensure-Dir $Path
+    if (-not (Test-HostIsWindows)) { return }
+
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Work directory '$Path' is a reparse point — refusing to trust runtime files."
+    }
+    Set-SecureAcl -Path $Path -Required
 }
 
 function Test-TrustedSuiteScriptPath {
@@ -156,6 +194,9 @@ function Copy-PhaseRuntimePayload {
         [Parameter(Mandatory)][string]$DestinationRoot
     )
 
+    # Phase 2 and Phase 3 run after reboot from C:\CS2_OPTIMIZE via RunOnce.
+    # Copy only the runtime payload they need so the handoff is stable even if
+    # the original checkout is moved, while avoiding broad repo copies.
     $requiredFiles = @(
         "SafeMode-DriverClean.ps1",
         "PostReboot-Setup.ps1",
@@ -172,14 +213,16 @@ function Copy-PhaseRuntimePayload {
         "docs/nvidia-drs-settings.md"
     )
 
-    Ensure-Dir $DestinationRoot
+    Ensure-SecureWorkDir -Path $DestinationRoot
 
     foreach ($file in $requiredFiles) {
         $src = Join-Path $SourceRoot $file
         if (-not (Test-Path $src)) {
             throw "Required file missing: $file"
         }
-        Copy-Item $src (Join-Path $DestinationRoot $file) -Force -ErrorAction Stop
+        $dest = Join-Path $DestinationRoot $file
+        Copy-Item $src $dest -Force -ErrorAction Stop
+        Set-SecureAcl -Path $dest -Required
         Write-OK "Copied: $file"
     }
 
@@ -191,6 +234,10 @@ function Copy-PhaseRuntimePayload {
         $dest = Join-Path $DestinationRoot $dir
         Ensure-Dir $dest
         Copy-Item (Join-Path $src '*') $dest -Force -Recurse -ErrorAction Stop
+        Set-SecureAcl -Path $dest -Required
+        Get-ChildItem $dest -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            Set-SecureAcl -Path $_.FullName -Required
+        }
         Write-OK "Copied: $dir/"
     }
 
@@ -205,6 +252,7 @@ function Copy-PhaseRuntimePayload {
             Ensure-Dir $destDir
         }
         Copy-Item $src $dest -Force -ErrorAction Stop
+        Set-SecureAcl -Path $dest -Required
         Write-OK "Copied: $doc"
     }
 }
@@ -233,12 +281,14 @@ function Set-Phase1SafeModeReadyFlag {
 
     $state = Get-Content $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     $state | Add-Member -NotePropertyName "phase1SafeModeReady" -NotePropertyValue $Ready -Force
+    Ensure-SecureWorkDir -Path (Split-Path $Path -Parent)
     Save-JsonAtomic -Data $state -Path $Path
-    Set-SecureAcl -Path $Path
+    Set-SecureAcl -Path $Path -Required
     return $state
 }
 
 function Load-State($path) {
+    Ensure-SecureWorkDir -Path (Split-Path $path -Parent)
     if (-not (Test-Path $path)) { throw "Settings file not found at '$path' — run Phase 1 first (START.bat -> [1])." }
     # -Raw ensures the entire file is read as a single string (consistent with backup-restore.ps1).
     # Without -Raw, multi-line JSON could be split into a string array, causing ConvertFrom-Json to
@@ -266,6 +316,7 @@ function Load-State($path) {
 function Initialize-ScriptDefaults {
     <#  Soft state loader for entry-point scripts (Cleanup, FpsCap, Verify).
         Loads state.json if present, otherwise sets safe defaults. Never exits.  #>
+    Ensure-SecureWorkDir -Path (Split-Path $CFG_StateFile -Parent)
     if (Test-Path $CFG_StateFile) {
         try {
             # -ErrorAction Stop ensures Get-Content failures throw into the catch block.
@@ -309,12 +360,14 @@ function Set-RunOnce {
     }
     # Validate target script exists before registering — a RunOnce pointing to a missing
     # file would silently fail on next boot, leaving Phase 3 unexecuted with no error.
+    Ensure-SecureWorkDir -Path $CFG_WorkDir
     if (-not (Test-Path $scriptPath)) {
         Write-Warn "RunOnce target does not exist: $scriptPath"
         Write-Host "  $([char]0x2139) What to do: Phase 3 will NOT auto-start on next boot." -ForegroundColor Cyan
         Write-Host "    After rebooting, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
         return
     }
+    Set-SecureAcl -Path $scriptPath -Required
     $allowedPolicies = @("Bypass", "RemoteSigned", "AllSigned")
     $executionPolicy = [string]$CFG_RunOnceExecutionPolicy
     if ($executionPolicy -eq "Undefined") {

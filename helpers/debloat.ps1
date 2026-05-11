@@ -137,7 +137,7 @@ function Invoke-GamingDebloat {
                 continue
             }
             if (-not $SCRIPT:DryRun) {
-                Backup-ScheduledTask -TaskName $t.TaskName -StepTitle $SCRIPT:CurrentStepTitle
+                Backup-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -StepTitle $SCRIPT:CurrentStepTitle
                 try {
                     Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction Stop | Out-Null
                     Write-OK "Disabled task: $($t.TaskName)"
