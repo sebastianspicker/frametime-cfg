@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-# ==============================================================================
+﻿# ==============================================================================
 #  CS2-Optimize-GUI.ps1  —  WPF Dashboard
 #  Launch via START-GUI.bat
 # ==============================================================================
@@ -10,6 +9,15 @@ if ($SmokeTest) {
     exit 0
 }
 
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "CS2-Optimize-GUI.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
@@ -22,11 +30,6 @@ $Script:Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path $MyInvocat
 . "$Script:Root\helpers.ps1"
 . "$Script:Root\helpers\step-catalog.ps1"
 . "$Script:Root\helpers\system-analysis.ps1"
-
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: CS2-Optimize-GUI" -ForegroundColor Green
-    exit 0
-}
 
 # ── Async engine ──────────────────────────────────────────────────────────────
 $Script:Pool   = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 3)

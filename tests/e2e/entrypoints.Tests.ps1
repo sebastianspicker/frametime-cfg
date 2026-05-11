@@ -37,13 +37,22 @@ BeforeAll {
         $startInfo.UseShellExecute = $false
         $startInfo.RedirectStandardOutput = $true
         $startInfo.RedirectStandardError = $true
-        [void]$startInfo.ArgumentList.Add("-NoLogo")
-        [void]$startInfo.ArgumentList.Add("-NoProfile")
-        [void]$startInfo.ArgumentList.Add("-ExecutionPolicy")
-        [void]$startInfo.ArgumentList.Add("Bypass")
-        [void]$startInfo.ArgumentList.Add("-File")
-        [void]$startInfo.ArgumentList.Add($target)
-        [void]$startInfo.ArgumentList.Add("-SmokeTest")
+        $arguments = @(
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $target,
+            "-SmokeTest"
+        )
+        $startInfo.Arguments = ($arguments | ForEach-Object {
+            if ($_ -match '[\s"]') {
+                '"' + ($_ -replace '"', '\"') + '"'
+            } else {
+                $_
+            }
+        }) -join ' '
 
         $childProcess = [System.Diagnostics.Process]::Start($startInfo)
         $stdout = $childProcess.StandardOutput.ReadToEnd()

@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-<#
+﻿<#
 .SYNOPSIS  CS2 Optimization Suite — Settings Verifier (Read-Only)
 
   Checks all registry keys, boot config and service states set by the suite.
@@ -12,6 +11,22 @@
 #>
 param([switch]$SmokeTest)
 
+if ($SmokeTest) {
+    Write-Host "SMOKE TEST OK: Verify-Settings" -ForegroundColor Green
+    exit 0
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "Verify-Settings.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+if ($MyInvocation.InvocationName -ne ".") {
+    Assert-Administrator
+}
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -32,11 +47,6 @@ if (-not (Get-Variable -Name NV_DRS_SETTINGS -Scope Script -ErrorAction Silently
 }
 if (-not (Get-Variable -Name PP_SUB_PROCESSOR -ErrorAction SilentlyContinue)) {
     . "$ScriptRoot\helpers\power-plan.ps1"
-}
-
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: Verify-Settings" -ForegroundColor Green
-    exit 0
 }
 
 function New-VerifyCheckResult {

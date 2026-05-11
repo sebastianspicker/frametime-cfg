@@ -147,7 +147,7 @@ function Test-TrustedLocalPath {
         $current = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
         while ($current) {
             if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
-            $parent = Split-Path -LiteralPath $current.FullName -Parent
+            $parent = Split-Path -Path $current.FullName -Parent
             if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current.FullName) { break }
             if (-not (Test-Path -LiteralPath $parent -ErrorAction SilentlyContinue)) { break }
             $current = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue

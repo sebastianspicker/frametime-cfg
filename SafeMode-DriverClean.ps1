@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-<# CS2 Optimization Suite — Safe Mode · GPU Driver Clean Removal
+﻿<# CS2 Optimization Suite — Safe Mode · GPU Driver Clean Removal
 
     CRASH RECOVERY SCENARIOS — this script is safety-critical.
 
@@ -32,16 +31,25 @@
 #>
 param([switch]$SmokeTest)
 
+if ($SmokeTest) {
+    Write-Host "SMOKE TEST OK: SafeMode-DriverClean" -ForegroundColor Green
+    exit 0
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "SafeMode-DriverClean.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 . "$ScriptRoot\config.env.ps1"
 . "$ScriptRoot\helpers.ps1"
-
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: SafeMode-DriverClean" -ForegroundColor Green
-    exit 0
-}
 
 try {
     $state = Load-State $CFG_StateFile

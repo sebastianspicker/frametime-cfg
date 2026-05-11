@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-<#
+﻿<#
 .SYNOPSIS  CS2 Optimization Suite — Post-Reboot Setup (Normal boot after GPU driver clean)
 
   Steps:
@@ -25,6 +24,15 @@ if ($SmokeTest) {
     exit 0
 }
 
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "PostReboot-Setup.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path

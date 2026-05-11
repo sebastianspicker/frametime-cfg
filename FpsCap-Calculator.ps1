@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-<#
+﻿<#
 .SYNOPSIS  FPS Cap Calculator — CS2 benchmark output -> FPS cap  [T1]
 
   Reads [VProf] FPS: Avg=XXX.X, P1=XXX.X from clipboard or input.
@@ -13,6 +12,20 @@ param(
     [switch]$SmokeTest
 )
 
+if ($SmokeTest) {
+    Write-Host "SMOKE TEST OK: FpsCap-Calculator" -ForegroundColor Green
+    exit 0
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "FpsCap-Calculator.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -21,11 +34,6 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Initialize-ScriptDefaults
 Ensure-Dir $CFG_LogDir
-
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: FpsCap-Calculator" -ForegroundColor Green
-    exit 0
-}
 
 Write-LogoBanner "FPS Cap Calculator  [T1]  ·  CS2 Optimization Suite"
 Write-Host "  $("─" * 58)" -ForegroundColor DarkGray

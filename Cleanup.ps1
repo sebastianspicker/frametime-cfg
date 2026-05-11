@@ -1,5 +1,4 @@
-﻿#Requires -RunAsAdministrator
-<#
+﻿<#
 .SYNOPSIS  CS2 Optimization Suite — Cleanup / Soft-Reset
 
   [1]  QUICK REFRESH  (~2 min, no restart)
@@ -19,6 +18,20 @@
 #>
 param([switch]$SmokeTest)
 
+if ($SmokeTest) {
+    Write-Host "SMOKE TEST OK: Cleanup" -ForegroundColor Green
+    exit 0
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "Cleanup.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -28,11 +41,6 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Initialize-ScriptDefaults
 Initialize-PhaseCounters
 Ensure-Dir $CFG_LogDir
-
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: Cleanup" -ForegroundColor Green
-    exit 0
-}
 
 Write-LogoBanner "Cleanup / Soft-Reset  ·  CS2 Optimization Suite"
 

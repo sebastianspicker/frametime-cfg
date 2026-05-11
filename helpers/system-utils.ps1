@@ -121,33 +121,63 @@ function Set-SecureAcl {
     if (-not (Test-Path $Path)) { return }
     if (-not (Test-HostIsWindows)) { return }
 
-    try {
-        $admins = New-Object System.Security.Principal.NTAccount("BUILTIN", "Administrators")
-        $system = New-Object System.Security.Principal.NTAccount("NT AUTHORITY", "SYSTEM")
-        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) {
+        Write-DebugLog "Set-SecureAcl: skipped ACL hardening for '$Path' in non-elevated session."
+        return
+    }
+
+    $admins = New-Object System.Security.Principal.NTAccount("BUILTIN", "Administrators")
+    $system = New-Object System.Security.Principal.NTAccount("NT AUTHORITY", "SYSTEM")
+
+    function Set-SuiteDacl {
+        param(
+            [Parameter(Mandatory)][string]$TargetPath,
+            [Parameter(Mandatory)]$AdministratorsAccount,
+            [Parameter(Mandatory)]$SystemAccount,
+            [switch]$SetOwner
+        )
+
+        $item = Get-Item -LiteralPath $TargetPath -Force -ErrorAction Stop
         $isDirectory = $item.PSObject.Properties.Match("PSIsContainer").Count -gt 0 -and $item.PSIsContainer
-        $acl = if ($isDirectory) {
-            New-Object System.Security.AccessControl.DirectorySecurity
-        } else {
-            New-Object System.Security.AccessControl.FileSecurity
-        }
+        $acl = Get-Acl -LiteralPath $TargetPath -ErrorAction Stop
         $inheritance = if ($isDirectory) {
             [System.Security.AccessControl.InheritanceFlags]"ContainerInherit,ObjectInherit"
         } else {
             [System.Security.AccessControl.InheritanceFlags]::None
         }
         $propagation = [System.Security.AccessControl.PropagationFlags]::None
-        $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule($admins, "FullControl", $inheritance, $propagation, "Allow")
-        $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule($system, "FullControl", $inheritance, $propagation, "Allow")
+        $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule($AdministratorsAccount, "FullControl", $inheritance, $propagation, "Allow")
+        $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule($SystemAccount, "FullControl", $inheritance, $propagation, "Allow")
 
-        $acl.SetOwner($admins)
+        if ($SetOwner) {
+            $acl.SetOwner($AdministratorsAccount)
+        }
         $acl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @($acl.Access)) {
+            [void]$acl.RemoveAccessRuleAll($rule)
+        }
         $acl.SetAccessRule($adminRule)
         $acl.SetAccessRule($systemRule)
-        Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
+        Set-Acl -LiteralPath $TargetPath -AclObject $acl -ErrorAction Stop
+    }
+
+    try {
+        Set-SuiteDacl -TargetPath $Path -AdministratorsAccount $admins -SystemAccount $system -SetOwner
     } catch {
-        if ($Required) { throw "Failed to secure ACL on '$Path': $_" }
-        Write-Warn "Failed to secure ACL on '$Path': $_"
+        $ownerError = $_
+        try {
+            # Some elevated contexts may still be unable to change ownership.
+            # Keep the restrictive DACL when possible; non-elevated sandboxes
+            # return above so they do not lock themselves out of temp files.
+            Set-SuiteDacl -TargetPath $Path -AdministratorsAccount $admins -SystemAccount $system
+            Write-DebugLog "Set-SecureAcl: owner assignment skipped for '$Path': $ownerError"
+        } catch {
+            if ($Required) { throw "Failed to secure ACL on '$Path': $_" }
+            Write-Warn "Failed to secure ACL on '$Path': $_"
+        }
     }
 }
 

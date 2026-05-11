@@ -158,12 +158,18 @@ implementation.
 
 The repository is PowerShell-first. The relevant local checks are:
 
-- `pwsh -NoProfile -Command "Invoke-Pester tests -CI"` for the full test gate;
-- `pwsh -NoProfile -Command "Invoke-Pester tests/e2e -CI"` for process-level
-  E2E coverage of the public entrypoints;
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 -Path .\tests\integration\dryrun-compliance.Tests.ps1 .\tests\e2e\entrypoints.Tests.ps1`
+  for the normal-shell dry-run and entrypoint smoke gates with Pester 5.x
+  bootstrapping;
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1`
+  for the full test gate from an elevated shell or CI;
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 -Path .\tests\e2e`
+  for process-level E2E coverage of the public entrypoints;
 - a parse check over `*.ps1` files after script edits;
 - PSScriptAnalyzer for linting when available;
-- entrypoint smoke checks using each shipped script's `-SmokeTest` switch.
+- entrypoint smoke checks using each shipped script's `-SmokeTest` switch. The
+  smoke path is intentionally allowed from non-elevated shells; normal execution
+  still performs an explicit Administrator guard.
 
 CI mirrors those surfaces in `.github/workflows/lint.yml` and adds security
 checks in `.github/workflows/security.yml`.
