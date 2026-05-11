@@ -24,7 +24,7 @@ Describe "Initialize-Backup hardening" {
     It "applies a secure ACL to backup.json after initialization" {
         Initialize-Backup
 
-        Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_BackupFile }
+        Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_BackupFile -and $Required }
     }
 }
 
@@ -119,18 +119,35 @@ Describe "Sensitive JSON ACL re-application" {
         Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_ProgressFile }
     }
 
-    It "Save-AppliedSteps reapplies the secure ACL to state.json" {
-        Save-JsonAtomic -Data ([PSCustomObject]@{
-            profile = "RECOMMENDED"
+    It "Save-SuiteState reapplies the secure ACL to state.json" {
+        $state = [PSCustomObject]@{
             mode = "CONTROL"
-            logLevel = "NORMAL"
-        }) -Path $CFG_StateFile
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Step A")
+            profile = "RECOMMENDED"
+        }
 
-        Save-AppliedSteps | Should -Be $true
+        Save-SuiteState -State $state
 
-        Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_StateFile }
+        Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_StateFile -and $Required }
+    }
+
+}
+
+Describe "Critical ACL failures" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Test-HostIsWindows { $true }
+        Mock Get-Item {
+            [PSCustomObject]@{
+                Attributes = [System.IO.FileAttributes]::Directory
+                PSIsContainer = $true
+            }
+        }
+        Mock Set-SecureAcl { throw "acl failed" }
+    }
+
+    It "fails closed when the work directory cannot be secured" {
+        { Ensure-SecureWorkDir -Path $CFG_WorkDir } | Should -Throw
     }
 }
 
@@ -143,6 +160,7 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
         Mock Write-Warn {}
         Mock Write-Err {}
         Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-SecureAcl {}
         Mock Set-ItemProperty {}
     }
 

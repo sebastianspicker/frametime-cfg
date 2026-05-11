@@ -9,7 +9,7 @@
 ## Checklist
 
 - [ ] Tested on a real system (not just theory)
-- [ ] `Invoke-ScriptAnalyzer -Settings .\PSScriptAnalyzerSettings.psd1` passes clean
+- [ ] CI `PSScriptAnalyzer` passes clean
 - [ ] DRY-RUN mode works correctly for any new registry/boot changes
 - [ ] Backup/restore handles the new changes
 - [ ] README and relevant docs updated (if applicable)

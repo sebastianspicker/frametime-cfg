@@ -11,7 +11,7 @@ Create a rule for the `main` branch:
   - [x] Dismiss stale pull request approvals when new commits are pushed
   - [x] Require review from Code Owners
 - [x] **Require status checks to pass before merging**
-  - Required checks: `PSScriptAnalyzer`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`
+  - Required checks: `PSScriptAnalyzer`, `Verify syntax (parse check)`, `Windows PowerShell 5.1 compatibility`, `Pester tests`, `Entry point smoke tests`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`
 - [x] **Require conversation resolution before merging**
 - [x] **Do not allow bypassing the above settings** (even for admins)
 - [ ] Require signed commits *(optional — adds trust but complicates workflow)*

@@ -377,8 +377,7 @@ function Update-LastVerifiedTimestamp {
             }
         }
         $state | Add-Member -NotePropertyName "last_verified" -NotePropertyValue ((Get-Date).ToString("o")) -Force
-        Save-JsonAtomic -Data $state -Path $CFG_StateFile
-        Set-SecureAcl -Path $CFG_StateFile
+        Save-SuiteState -State $state
     } catch {
         Write-DebugLog "Could not persist last_verified timestamp: $_"
     }

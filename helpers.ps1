@@ -13,6 +13,8 @@ $helpersRoot = if ($PSScriptRoot) { "$PSScriptRoot\helpers" }
                else { ".\helpers" }
 
 # ── Core modules (CLI + GUI) ──────────────────────────────────────────────
+# Dot-sourcing is intentional: entrypoints and helpers share $SCRIPT: state
+# for profile, dry-run, current step, backup buffering, and phase counters.
 . "$helpersRoot\logging.ps1"
 . "$helpersRoot\tier-system.ps1"
 . "$helpersRoot\step-state.ps1"

@@ -16,7 +16,7 @@ AfterAll {
 Describe "StepCatalog schema" {
 
     It "contains the required fields on every entry" {
-        $requiredFields = @("Phase", "Step", "Category", "Title", "Tier", "Risk", "Depth", "EstKey", "CheckOnly", "Reboot")
+        $requiredFields = @("Phase", "Step", "Category", "Title", "Tier", "Risk", "Depth", "CheckOnly", "Reboot")
 
         foreach ($entry in $SCRIPT:StepCatalog) {
             foreach ($field in $requiredFields) {

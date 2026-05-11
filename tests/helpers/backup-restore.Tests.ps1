@@ -32,7 +32,7 @@ Describe "Initialize-Backup" {
         $data.created | Should -Not -BeNullOrEmpty
     }
 
-    It "rotates existing backup.json into a versioned file and starts a fresh active backup" {
+    It "preserves existing backup.json entries across phase initialization" {
         # Create a backup with an entry
         $existing = @{
             entries = @(
@@ -45,12 +45,12 @@ Describe "Initialize-Backup" {
         Initialize-Backup
 
         $data = Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json
-        @($data.entries).Count | Should -Be 0
-        $data.created | Should -Not -Be "2026-01-01 00:00:00"
+        @($data.entries).Count | Should -Be 1
+        @($data.entries)[0].step | Should -Be "Existing Step"
+        $data.created | Should -Be "2026-01-01 00:00:00"
 
         $versionedFiles = @(Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" | Where-Object { $_.Name -ne "backup.json" })
-        $versionedFiles.Count | Should -Be 1
-        (Get-Content $versionedFiles[0].FullName -Raw) | Should -Match "Existing Step"
+        $versionedFiles.Count | Should -Be 0
     }
 
     It "warns and aborts when backup lock exists" {
@@ -78,7 +78,7 @@ Describe "Initialize-Backup" {
         $script:InitOrder | Should -BeNullOrEmpty
     }
 
-    It "acquires the backup lock before rotating or pruning existing backups" {
+    It "acquires the backup lock before trusting an existing backup file" {
         $existing = @{
             entries = @([ordered]@{ type = "registry"; name = "TestValue"; step = "Existing Step" })
             created = "2026-01-01 00:00:00"
@@ -88,15 +88,13 @@ Describe "Initialize-Backup" {
         $script:InitOrder = [System.Collections.Generic.List[string]]::new()
         Mock Test-BackupLock { $false }
         Mock Set-BackupLock { $script:InitOrder.Add("lock") | Out-Null }
-        Mock Move-Item { $script:InitOrder.Add("move") | Out-Null }
-        Mock Prune-BackupVersions { $script:InitOrder.Add("prune") | Out-Null }
         Mock New-BackupFile { $script:InitOrder.Add("new") | Out-Null }
         Mock Set-SecureAcl { $script:InitOrder.Add("acl") | Out-Null }
 
         Initialize-Backup
 
         $script:InitOrder[0] | Should -Be "lock"
-        ($script:InitOrder -join ',') | Should -Match 'lock,move,prune'
+        ($script:InitOrder -join ',') | Should -Be 'lock,acl'
     }
 }
 
@@ -108,9 +106,9 @@ Describe "Backup-RegistryValue" {
     }
 
     It "adds entry to in-memory buffer (not disk)" {
-        Mock Test-Path { $false } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $false } -ParameterFilter { $Path -match "HKCU:" }
 
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\Test" -Name "TestVal" -StepTitle "Step 1"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "TestVal" -StepTitle "Step 1"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $SCRIPT:_backupPending[0].type | Should -Be "registry"
@@ -120,17 +118,17 @@ Describe "Backup-RegistryValue" {
     }
 
     It "captures existing value when registry key exists" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Get-ItemProperty {
             [PSCustomObject]@{ TestVal = 42 }
-        } -ParameterFilter { $Path -match "HKLM:" }
+        } -ParameterFilter { $Path -match "HKCU:" }
         Mock Get-Item {
             $mockReg = [PSCustomObject]@{}
             $mockReg | Add-Member -MemberType ScriptMethod -Name "GetValueKind" -Value { "DWord" }
             $mockReg
-        } -ParameterFilter { $Path -match "HKLM:" }
+        } -ParameterFilter { $Path -match "HKCU:" }
 
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\Test" -Name "TestVal" -StepTitle "Step 1"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "TestVal" -StepTitle "Step 1"
 
         $SCRIPT:_backupPending[0].existed       | Should -Be $true
         $SCRIPT:_backupPending[0].originalValue  | Should -Be 42
@@ -323,14 +321,14 @@ Describe "Restore-StepChanges" {
     It "restores registry value and removes entry on success" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "Restored";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "Restored";
                 originalValue = 99; originalType = "DWord"; existed = $true;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Test Step"
@@ -346,16 +344,16 @@ Describe "Restore-StepChanges" {
     It "removes registry value that did not exist before" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "NewValue";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "NewValue";
                 originalValue = $null; originalType = $null; existed = $false;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         # Mock Get-ItemProperty to indicate the value still exists (so Remove-ItemProperty is called)
-        Mock Get-ItemProperty { [PSCustomObject]@{ NewValue = 42 } } -ParameterFilter { $Path -match "HKLM:" -and $Name -eq "NewValue" }
+        Mock Get-ItemProperty { [PSCustomObject]@{ NewValue = 42 } } -ParameterFilter { $Path -match "HKCU:" -and $Name -eq "NewValue" }
         Mock Remove-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Test Step"
@@ -367,16 +365,16 @@ Describe "Restore-StepChanges" {
     It "skips removal when registry value is already absent" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "GoneValue";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GoneValue";
                 originalValue = $null; originalType = $null; existed = $false;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         # Value is already gone — Get-ItemProperty returns object without the property
-        Mock Get-ItemProperty { [PSCustomObject]@{} } -ParameterFilter { $Path -match "HKLM:" -and $Name -eq "GoneValue" }
+        Mock Get-ItemProperty { [PSCustomObject]@{} } -ParameterFilter { $Path -match "HKCU:" -and $Name -eq "GoneValue" }
         Mock Remove-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Test Step"
@@ -388,14 +386,14 @@ Describe "Restore-StepChanges" {
     It "keeps entries on restore failure" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "FailVal";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "FailVal";
                 originalValue = 1; originalType = "DWord"; existed = $true;
                 step = "Fail Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty { throw "Access denied" }
 
         $result = Restore-StepChanges -StepTitle "Fail Step"
@@ -410,19 +408,19 @@ Describe "Restore-StepChanges" {
     It "restores only the specified step's entries" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\Test"; name = "A";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "A";
                 originalValue = 1; originalType = "DWord"; existed = $true;
                 step = "Step A"; timestamp = "2026-01-01"
             },
             [ordered]@{
-                type = "registry"; path = "HKLM:\Test"; name = "B";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "B";
                 originalValue = 2; originalType = "DWord"; existed = $true;
                 step = "Step B"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         Restore-StepChanges -StepTitle "Step A"
@@ -436,14 +434,14 @@ Describe "Restore-StepChanges" {
         # PS 5.1 ConvertFrom-Json unwraps ["single"] to "single" (scalar)
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "MultiVal";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "MultiVal";
                 originalValue = "OnlyOneString"; originalType = "MultiString"; existed = $true;
                 step = "Multi Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Multi Step"
@@ -457,14 +455,14 @@ Describe "Restore-StepChanges" {
     It "skips binary restore when values are outside [0,255]" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "BadBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "BadBin";
                 originalValue = @(0, 255, 300); originalType = "Binary"; existed = $true;
                 step = "Binary Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Binary Step"
@@ -477,14 +475,14 @@ Describe "Restore-StepChanges" {
         # ConvertFrom-Json may produce negative Int64 for large unsigned values
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "NegBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "NegBin";
                 originalValue = @(10, -1, 128); originalType = "Binary"; existed = $true;
                 step = "Neg Binary Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Neg Binary Step"
@@ -496,14 +494,14 @@ Describe "Restore-StepChanges" {
     It "restores valid binary values within [0,255]" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKLM:\SOFTWARE\Test"; name = "GoodBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GoodBin";
                 originalValue = @(0, 128, 255); originalType = "Binary"; existed = $true;
                 step = "Good Binary Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
-        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKLM:" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
         Mock Set-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Good Binary Step"
@@ -553,6 +551,60 @@ Describe "Backup-ServiceState" {
     }
 }
 
+Describe "Service restore allowlist" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Write-Host {}
+        Mock Write-Step {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-DebugLog {}
+        Mock Write-Info {}
+    }
+
+    It "rejects tampered service restore entries outside the suite allowlist" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "Spooler"; originalStartType = "Auto";
+                originalStatus = "Running"; delayedAutoStart = $false;
+                step = "Service Attack"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service {}
+        Mock Set-Service {}
+        Mock Start-Service {}
+
+        $result = Restore-StepChanges -StepTitle "Service Attack"
+
+        $result | Should -Be $false
+        Should -Invoke Get-Service -Exactly 0
+        Should -Invoke Set-Service -Exactly 0
+        Should -Invoke Start-Service -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'outside restore allowlist' }
+    }
+
+    It "rejects unsupported service start types before Set-Service" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "DiagTrack"; originalStartType = "Kernel";
+                originalStatus = "Stopped"; delayedAutoStart = $false;
+                step = "Service Attack"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service { [PSCustomObject]@{ Name = "DiagTrack"; Status = "Stopped" } }
+        Mock Set-Service {}
+
+        $result = Restore-StepChanges -StepTitle "Service Attack"
+
+        $result | Should -Be $false
+        Should -Invoke Set-Service -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'unsupported start type' }
+    }
+}
+
 # ── Backup lock system ───────────────────────────────────────────────────────
 Describe "Backup lock system" {
 
@@ -564,6 +616,16 @@ Describe "Backup lock system" {
         Test-Path $CFG_BackupLockFile | Should -Be $true
         $lockData = Get-Content $CFG_BackupLockFile -Raw | ConvertFrom-Json
         $lockData.pid | Should -Be $PID
+    }
+
+    It "Set-BackupLock secures the lock file" {
+        Mock Set-SecureAcl {}
+
+        Set-BackupLock
+
+        Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter {
+            $Path -eq $CFG_BackupLockFile -and $Required
+        }
     }
 
     It "Remove-BackupLock removes lock file" {
@@ -679,14 +741,15 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
     It "re-enables task that was enabled before optimization (wasEnabled=true)" {
         $entries = @(
             [ordered]@{
-                type = "scheduledtask"; taskName = "TestTask"; existed = $true;
+                type = "scheduledtask"; taskName = "CS2_Optimize_CCD_Affinity"; taskPath = "\";
+                existed = $true;
                 wasEnabled = $true; scriptPath = ""; step = "Task Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "TestTask"; State = "Disabled" }
+            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Disabled" }
         }
         Mock Enable-ScheduledTask {}
 
@@ -699,14 +762,15 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
     It "re-disables task that was disabled before optimization (wasEnabled=false)" {
         $entries = @(
             [ordered]@{
-                type = "scheduledtask"; taskName = "TestTask"; existed = $true;
+                type = "scheduledtask"; taskName = "CS2_Optimize_CCD_Affinity"; taskPath = "\";
+                existed = $true;
                 wasEnabled = $false; scriptPath = ""; step = "Task Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "TestTask"; State = "Ready" }
+            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
         Mock Disable-ScheduledTask {}
 
@@ -716,40 +780,37 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
         Should -Invoke Disable-ScheduledTask -Exactly 1
     }
 
-    It "defaults wasEnabled to true for pre-Round-1 backups (wasEnabled=null)" {
-        # Older backup.json entries lack the wasEnabled field — defaults to $true
+    It "rejects legacy scheduled task backups without taskPath" {
         $entries = @(
             [ordered]@{
                 type = "scheduledtask"; taskName = "LegacyTask"; existed = $true;
                 scriptPath = ""; step = "Legacy Step"; timestamp = "2026-01-01"
-                # wasEnabled intentionally omitted — simulates pre-Round-1 backup
             }
         )
         New-TestBackupFile -Entries $entries
-
-        Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "LegacyTask"; State = "Disabled" }
-        }
+        Mock Get-ScheduledTask {}
         Mock Enable-ScheduledTask {}
 
         $result = Restore-StepChanges -StepTitle "Legacy Step"
 
-        $result | Should -Be $true
-        # Should default to wasEnabled=$true and re-enable
-        Should -Invoke Enable-ScheduledTask -Exactly 1
+        $result | Should -Be $false
+        Should -Invoke Get-ScheduledTask -Exactly 0
+        Should -Invoke Enable-ScheduledTask -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'outside restore allowlist' }
     }
 
     It "removes task that did not exist before optimization" {
         $entries = @(
             [ordered]@{
-                type = "scheduledtask"; taskName = "NewTask"; existed = $false;
+                type = "scheduledtask"; taskName = "CS2_Optimize_CCD_Affinity"; taskPath = "\";
+                existed = $false;
                 wasEnabled = $false; scriptPath = ""; step = "New Task Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "NewTask"; State = "Ready" }
+            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
         Mock Unregister-ScheduledTask {}
 
@@ -762,14 +823,15 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
     It "refuses to delete a tampered scheduled-task scriptPath outside the suite workspace" {
         $entries = @(
             [ordered]@{
-                type = "scheduledtask"; taskName = "NewTask"; existed = $false;
+                type = "scheduledtask"; taskName = "CS2_Optimize_CCD_Affinity"; taskPath = "\";
+                existed = $false;
                 wasEnabled = $false; scriptPath = "C:\Windows\System32\evil.ps1"; step = "New Task Step"; timestamp = "2026-01-01"
             }
         )
         New-TestBackupFile -Entries $entries
 
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "NewTask"; State = "Ready" }
+            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
         Mock Unregister-ScheduledTask {}
         Mock Remove-Item {}
@@ -779,5 +841,129 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
         $result | Should -Be $false
         Should -Invoke Remove-Item -Exactly 0
         Should -Invoke Write-Warn -ParameterFilter { $t -match 'refusing to delete untrusted scriptPath' }
+    }
+
+    It "rejects root scheduled task names that are not managed by the suite" {
+        $entries = @(
+            [ordered]@{
+                type = "scheduledtask"; taskName = "OtherRootTask"; taskPath = "\"; existed = $true;
+                wasEnabled = $true; scriptPath = ""; step = "Bad Root Task"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-ScheduledTask {}
+        Mock Enable-ScheduledTask {}
+
+        $result = Restore-StepChanges -StepTitle "Bad Root Task"
+
+        $result | Should -Be $false
+        Should -Invoke Get-ScheduledTask -Exactly 0
+        Should -Invoke Enable-ScheduledTask -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'outside restore allowlist' }
+    }
+
+    It "rejects wildcard scheduled task names from backup.json" {
+        $entries = @(
+            [ordered]@{
+                type = "scheduledtask"; taskName = "*"; taskPath = "\"; existed = $false;
+                wasEnabled = $false; scriptPath = ""; step = "Bad Task Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-ScheduledTask {}
+        Mock Unregister-ScheduledTask {}
+
+        $result = Restore-StepChanges -StepTitle "Bad Task Step"
+
+        $result | Should -Be $false
+        Should -Invoke Get-ScheduledTask -Exactly 0
+        Should -Invoke Unregister-ScheduledTask -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'outside restore allowlist' }
+    }
+
+    It "restores the backed-up task path for duplicate task names" {
+        $entries = @(
+            [ordered]@{
+                type = "scheduledtask"; taskName = "SharedName"; taskPath = "\Microsoft\Windows\Application Experience\";
+                existed = $true; wasEnabled = $true; scriptPath = ""; step = "Path Task Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-ScheduledTask {
+            [PSCustomObject]@{ TaskName = "SharedName"; TaskPath = "\Microsoft\Windows\Application Experience\"; State = "Disabled" }
+        } -ParameterFilter { $TaskName -eq "SharedName" -and $TaskPath -eq "\Microsoft\Windows\Application Experience\" }
+        Mock Enable-ScheduledTask {}
+
+        $result = Restore-StepChanges -StepTitle "Path Task Step"
+
+        $result | Should -Be $true
+        Should -Invoke Enable-ScheduledTask -Exactly 1 -ParameterFilter {
+            $TaskName -eq "SharedName" -and $TaskPath -eq "\Microsoft\Windows\Application Experience\"
+        }
+    }
+}
+
+Describe "Registry restore allowlist" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Write-Host {}
+        Mock Write-Step {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-DebugLog {}
+        Mock Write-Info {}
+    }
+
+    It "rejects tampered Run-key restore entries before registry writes" {
+        $entries = @(
+            [ordered]@{
+                type = "registry"; path = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+                name = "BadStartup"; existed = $true; originalValue = "evil.exe"; originalType = "String";
+                step = "Registry Attack"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock New-Item {}
+        Mock Set-ItemProperty {}
+
+        $result = Restore-StepChanges -StepTitle "Registry Attack"
+
+        $result | Should -Be $false
+        Should -Invoke New-Item -Exactly 0
+        Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'outside restore allowlist' }
+    }
+
+    It "allows IFEO PerfOptions restore entries" {
+        $entries = @(
+            [ordered]@{
+                type = "registry"; path = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe\PerfOptions";
+                name = "CpuPriorityClass"; existed = $true; originalValue = 3; originalType = "DWord";
+                step = "Registry Good"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Restore-StepChanges -StepTitle "Registry Good"
+
+        $result | Should -Be $true
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Path -match 'Image File Execution Options' -and $Name -eq 'CpuPriorityClass'
+        }
+    }
+
+    It "rejects production test-namespace restore entries" {
+        Test-RegistryRestoreAllowed -Path "HKLM:\SOFTWARE\Test" -Name "Value" | Should -BeFalse
+    }
+
+    It "rejects sibling-prefix registry restore paths" {
+        Test-RegistryRestoreAllowed -Path "HKLM:\SOFTWARE\Microsoft\Windows\Dwmalicious" -Name "Value" | Should -BeFalse
+    }
+
+    It "allows canonical provider registry restore paths" {
+        Test-RegistryRestoreAllowed -Path "Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" | Should -BeTrue
     }
 }

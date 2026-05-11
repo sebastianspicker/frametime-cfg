@@ -55,9 +55,10 @@ service-account*.json
 .claude/
 progress.md
 
-# Local harness and audit workspace
+# Local-only automation and audit workspace
 .agents/
 .codex/
+.kilo/
 .github/codex/
 .github/workflows/codex.yml
 AGENTS.md
@@ -75,6 +76,10 @@ tmp-winstyle-check*
 
 # Test artifacts
 testResults.xml
+test-results.xml
+
+# Legacy ad hoc screenshot captures; keep named docs screenshots tracked
+docs/screenshots/[0-9][0-9].png
 
 # Debug scripts
 debug-*.bat

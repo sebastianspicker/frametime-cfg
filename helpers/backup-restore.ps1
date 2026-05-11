@@ -62,11 +62,11 @@ function Prune-BackupVersions {
 
 function New-BackupFile {
     Save-JsonAtomic -Data (New-BackupDataObject) -Path $CFG_BackupFile
-    Set-SecureAcl -Path $CFG_BackupFile
+    Set-SecureAcl -Path $CFG_BackupFile -Required
 }
 
 function Initialize-Backup {
-    # Acquire lock before rotating or pruning so we never steal another live backup file.
+    # Acquire lock before creating/repairing the active backup file.
     if (Test-BackupLock) {
         Write-Warn "Another CS2 Optimization window appears to be open already."
         Write-Host "  $([char]0x2139) What to do: Close the other window first, then try again." -ForegroundColor Cyan
@@ -75,16 +75,7 @@ function Initialize-Backup {
     }
     Set-BackupLock
 
-    if (Test-Path $CFG_BackupFile) {
-        $backupDir = Split-Path $CFG_BackupFile -Parent
-        $backupName = Split-Path $CFG_BackupFile -Leaf
-        $backupStem = if ($backupName -match '^(.*)\.json$') { $Matches[1] } else { $backupName }
-        $stamp = (Get-Date).ToString("yyyyMMdd-HHmmssfff")
-        $versionPath = Join-Path $backupDir "$backupStem.$stamp.json"
-        Move-Item $CFG_BackupFile $versionPath -Force
-        Prune-BackupVersions
-    }
-    if (-not (Test-Path $CFG_BackupFile)) { New-BackupFile } else { Set-SecureAcl -Path $CFG_BackupFile }
+    if (-not (Test-Path $CFG_BackupFile)) { New-BackupFile } else { Set-SecureAcl -Path $CFG_BackupFile -Required }
 }
 
 function Test-BackupLock {
@@ -141,6 +132,7 @@ function Set-BackupLock {
     <#  Called at the start of optimization and restore operations.  #>
     $lockData = @{ pid = $PID; started = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
     Save-JsonAtomic -Data $lockData -Path $CFG_BackupLockFile
+    Set-SecureAcl -Path $CFG_BackupLockFile -Required
 }
 
 function Remove-BackupLock {
@@ -165,7 +157,7 @@ function Flush-BackupBuffer {
                 switch ($e.type) {
                     "registry"      { $isDupe = ($existing.PSObject.Properties['path'] -and $e.Contains('path') -and $existing.path -eq $e.path -and $existing.name -eq $e.name) }
                     "service"       { $isDupe = ($existing.name -eq $e.name) }
-                    "scheduledtask" { $isDupe = ($existing.PSObject.Properties['taskName'] -and $e.Contains('taskName') -and $existing.taskName -eq $e.taskName) }
+                    "scheduledtask" { $isDupe = ($existing.PSObject.Properties['taskName'] -and $e.Contains('taskName') -and $existing.taskName -eq $e.taskName -and (Get-BackupTaskPath $existing) -eq (Get-BackupTaskPath $e)) }
                     "bootconfig"    { $isDupe = ($existing.PSObject.Properties['key'] -and $e.Contains('key') -and $existing.key -eq $e.key) }
                     "powerplan"     { $isDupe = ($existing.PSObject.Properties['originalGuid'] -and $e.Contains('originalGuid') -and $existing.originalGuid -eq $e.originalGuid) }
                     "nic_adapter"   { $isDupe = ($existing.PSObject.Properties['adapterName'] -and $e.Contains('adapterName') -and $existing.adapterName -eq $e.adapterName -and $existing.propertyName -eq $e.propertyName) }
@@ -217,7 +209,191 @@ function Get-BackupData {
 
 function Save-BackupData($data) {
     Save-JsonAtomic -Data $data -Path $CFG_BackupFile -Depth 10
-    Set-SecureAcl -Path $CFG_BackupFile
+    Set-SecureAcl -Path $CFG_BackupFile -Required
+}
+
+function Get-BackupTaskPath($Entry) {
+    if ($Entry -is [System.Collections.IDictionary] -and $Entry.Contains('taskPath') -and $Entry['taskPath']) { return [string]$Entry['taskPath'] }
+    if ($Entry.PSObject.Properties['taskPath'] -and $Entry.taskPath) { return [string]$Entry.taskPath }
+    return $null
+}
+
+function Test-ScheduledTaskBackupIdentity {
+    [CmdletBinding()]
+    param($Entry)
+
+    $taskName = [string]$Entry.taskName
+    $taskPath = Get-BackupTaskPath $Entry
+    if ([string]::IsNullOrWhiteSpace($taskName) -or [string]::IsNullOrWhiteSpace($taskPath)) { return $false }
+    if ($taskName -match '[\\/\*\?\[\]\x00]' -or $taskPath -match '[\*\?\[\]\x00]') { return $false }
+    if (-not $taskPath.StartsWith("\")) { return $false }
+    if (-not $taskPath.EndsWith("\")) { return $false }
+    return $true
+}
+
+function Test-ScheduledTaskRestoreAllowed {
+    [CmdletBinding()]
+    param($Entry)
+
+    if (-not (Test-ScheduledTaskBackupIdentity -Entry $Entry)) { return $false }
+    $taskName = [string]$Entry.taskName
+    $taskPath = Get-BackupTaskPath $Entry
+
+    if ($taskPath -eq "\" -and $taskName -eq "CS2_Optimize_CCD_Affinity") { return $true }
+
+    $allowedMicrosoftTaskPaths = @(
+        "\Microsoft\Windows\Application Experience\",
+        "\Microsoft\Windows\Customer Experience Improvement Program\"
+    )
+    foreach ($allowedPath in $allowedMicrosoftTaskPaths) {
+        if ($taskPath.Equals($allowedPath, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+
+    $allowedNvidiaTaskPatterns = @(
+        "NvDriverUpdateCheckDaily*",
+        "NVIDIA GeForce*",
+        "NvNodeLauncher*",
+        "NvBackend*",
+        "NvTmRep*",
+        "NvProfileUpdater*",
+        "NvTelemetry*"
+    )
+    if ($taskPath.Equals("\", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $taskPath.Equals("\NVIDIA\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        foreach ($pattern in $allowedNvidiaTaskPatterns) {
+            if ($taskName -like $pattern) { return $true }
+        }
+    }
+
+    return $false
+}
+
+function Test-ServiceRestoreAllowed {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$ServiceName)
+
+    if ([string]::IsNullOrWhiteSpace($ServiceName)) { return $false }
+    $allowedPatterns = @(
+        "NVDisplay.ContainerLocalSystem",
+        "NvTelemetryContainer",
+        "NvContainerNetworkService",
+        "NvContainerLocalSystem",
+        "NVDisplay*",
+        "nvsvc",
+        "AMD External Events Utility",
+        "AMDRyzenMasterDriverV*",
+        "amdlog",
+        "amdfendr*",
+        "igfxCUIService*",
+        "IntelGraphicsControlPanel*",
+        "DiagTrack",
+        "dmwappushservice",
+        "SysMain",
+        "WSearch",
+        "qWave",
+        "XblAuthManager",
+        "XblGameSave",
+        "XboxNetApiSvc",
+        "XboxGipSvc",
+        "wuauserv",
+        "UsoSvc",
+        "WaaSMedicSvc"
+    )
+    foreach ($pattern in $allowedPatterns) {
+        if ($ServiceName -like $pattern) { return $true }
+    }
+    return $false
+}
+
+function Test-BootConfigRestoreAllowed {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Key,
+        [AllowEmptyString()][string]$Value,
+        [bool]$Existed
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Key)) { return $false }
+    $normalizedKey = $Key.ToLowerInvariant()
+    if ($normalizedKey -notin @("safeboot", "disabledynamictick", "useplatformtick", "useplatformclock")) {
+        return $false
+    }
+    if (-not $Existed) { return $true }
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+
+    $normalizedValue = $Value.ToLowerInvariant()
+    switch ($normalizedKey) {
+        "safeboot" { return ($normalizedValue -in @("minimal", "network", "alternateshell")) }
+        "disabledynamictick" { return ($normalizedValue -in @("yes", "no", "true", "false", "on", "off", "0", "1")) }
+        "useplatformtick" { return ($normalizedValue -in @("yes", "no", "true", "false", "on", "off", "0", "1")) }
+        "useplatformclock" { return ($normalizedValue -in @("yes", "no", "true", "false", "on", "off", "0", "1")) }
+        default { return $false }
+    }
+}
+
+function Test-RegistryRestoreAllowed {
+    <#  Treat backup.json as untrusted restore input.
+        This allowlist is intentionally narrower than Set-RegistryValue's write
+        validation because restore runs later from persisted JSON that could be
+        edited outside the suite.  #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Path,
+        [AllowEmptyString()][string]$Name
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or [string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name -match '[\\/\x00]') { return $false }
+    $normalized = $Path -replace '/', '\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKEY_LOCAL_MACHINE\\', 'HKLM:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKEY_CURRENT_USER\\', 'HKCU:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKEY_CLASSES_ROOT\\', 'HKCR:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKEY_USERS\\', 'HKU:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKEY_CURRENT_CONFIG\\', 'HKCC:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKLM\\', 'HKLM:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKCU\\', 'HKCU:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKCR\\', 'HKCR:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKU\\', 'HKU:\'
+    $normalized = $normalized -replace '^Microsoft\.PowerShell\.Core\\Registry::HKCC\\', 'HKCC:\'
+    if ($normalized -notmatch '^(HKLM:|HKCU:|HKCR:|HKU:|HKCC:)\\') { return $false }
+    if ($normalized -match '\\CurrentVersion\\Run(Once|Services|ServicesOnce)?(\\|$)') { return $false }
+
+    $allowedPrefixes = @(
+        'HKLM:\SYSTEM\CurrentControlSet\Control\Class\',
+        'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem',
+        'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers',
+        'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl',
+        'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\',
+        'HKLM:\SYSTEM\CurrentControlSet\Enum\',
+        'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\',
+        'HKLM:\SOFTWARE\Microsoft\Dfrg\',
+        'HKLM:\SOFTWARE\Microsoft\FTH',
+        'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer',
+        'HKLM:\SOFTWARE\Microsoft\Windows\Dwm',
+        'HKLM:\SOFTWARE\Policies\Microsoft\Windows\GameDVR',
+        'HKCU:\Control Panel\Desktop',
+        'HKCU:\Control Panel\Mouse',
+        'HKCU:\SOFTWARE\Microsoft\GameBar',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects',
+        'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers',
+        'HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences',
+        'HKCU:\SOFTWARE\Microsoft\Multimedia\Audio',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR',
+        'HKCU:\Software\Valve\Steam',
+        'HKCU:\System\GameConfigStore'
+    )
+    foreach ($prefix in $allowedPrefixes) {
+        if ($prefix.EndsWith("\")) {
+            if ($normalized.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        } elseif (
+            $normalized.Equals($prefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $normalized.StartsWith("$prefix\", [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Backup-RegistryValue {
@@ -383,21 +559,32 @@ function Invoke-BootConfigRestoreCommand {
 function Backup-ScheduledTask {
     <#  Records whether a scheduled task existed and its enabled state before we modify it.
         Entries are buffered in memory and flushed at step boundaries.  #>
-    param([string]$TaskName, [string]$StepTitle, [string]$ScriptPath = "")
+    param([string]$TaskName, [string]$StepTitle, [string]$ScriptPath = "", [string]$TaskPath = "\")
     if ($SCRIPT:DryRun) { return }
+    $identity = [PSCustomObject]@{ taskName = $TaskName; taskPath = $TaskPath }
+    if (-not (Test-ScheduledTaskBackupIdentity -Entry $identity)) {
+        Write-Warn "Backup-ScheduledTask: invalid task identity '$TaskPath$TaskName' — skipped."
+        return
+    }
     $existed = $false
     $wasEnabled = $false
     try {
-        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        $task = if ($TaskPath -and $TaskPath -ne "\") {
+            Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
+        } else {
+            Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        }
         $existed = ($null -ne $task)
         if ($existed) {
             $wasEnabled = ($task.State -ne "Disabled")
+            if ($task.PSObject.Properties['TaskPath'] -and $task.TaskPath) { $TaskPath = $task.TaskPath }
         }
     } catch { Write-DebugLog "Backup-ScheduledTask: could not query task '$TaskName' — assuming it does not exist." }
 
     $entry = [ordered]@{
         type       = "scheduledtask"
         taskName   = $TaskName
+        taskPath   = $TaskPath
         existed    = $existed
         wasEnabled = $wasEnabled
         scriptPath = $ScriptPath
@@ -405,7 +592,7 @@ function Backup-ScheduledTask {
         timestamp  = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     }
     $SCRIPT:_backupPending.Add($entry)
-    Write-DebugLog "Backup-ScheduledTask: '$TaskName' existed=$existed wasEnabled=$wasEnabled"
+    Write-DebugLog "Backup-ScheduledTask: '$TaskPath$TaskName' existed=$existed wasEnabled=$wasEnabled"
 }
 
 function Backup-NicAdapterProperty {
@@ -783,15 +970,8 @@ function Restore-StepChanges {
         try {
             switch ($e.type) {
                 "registry" {
-                    # SECURITY: Validate registry path from backup.json — a tampered backup could
-                    # inject writes to arbitrary registry locations (e.g., Run keys for persistence).
-                    if ($e.path -notmatch '^(HKLM:|HKCU:|HKCR:|HKU:|HKCC:|Microsoft\.PowerShell\.Core\\Registry::(HKLM|HKCU|HKCR|HKU|HKCC)\\)') {
-                        Write-Warn "Registry restore: invalid path — rejected: $($e.path)"
-                        $restoreFail++
-                        continue
-                    }
-                    if ($e.name -match '[\\/\x00]') {
-                        Write-Warn "Registry restore: name contains invalid characters — rejected: $($e.name)"
+                    if (-not (Test-RegistryRestoreAllowed -Path $e.path -Name $e.name)) {
+                        Write-Warn "Registry restore: path/name outside restore allowlist — rejected: $($e.path) :: $($e.name)"
                         $restoreFail++
                         continue
                     }
@@ -857,6 +1037,11 @@ function Restore-StepChanges {
                         $restoreFail++
                         continue
                     }
+                    if (-not (Test-ServiceRestoreAllowed -ServiceName $e.name)) {
+                        Write-Warn "Service restore skipped — service outside restore allowlist: '$($e.name)'"
+                        $restoreFail++
+                        continue
+                    }
                     $startMap = @{ "Auto"="Automatic"; "Manual"="Manual"; "Disabled"="Disabled"; "Auto Delayed"="AutomaticDelayedStart" }
                     $mapped = if ($startMap[$e.originalStartType]) { $startMap[$e.originalStartType] } else { $e.originalStartType }
                     # Boot/System/Unknown are kernel driver start types — Set-Service cannot change them.
@@ -867,6 +1052,11 @@ function Restore-StepChanges {
                         $restoreOk++
                         continue
                     } else {
+                        if ($mapped -notin @("Automatic", "Manual", "Disabled", "AutomaticDelayedStart")) {
+                            Write-Warn "Service restore skipped — unsupported start type '$($e.originalStartType)' for '$($e.name)'"
+                            $restoreFail++
+                            continue
+                        }
                         # Verify the service still exists before attempting restore — if it was
                         # uninstalled (e.g., Xbox services removed by system update), Set-Service
                         # with -ErrorAction SilentlyContinue silently fails and we'd report success.
@@ -891,19 +1081,14 @@ function Restore-StepChanges {
                     }
                 }
                 "bootconfig" {
-                    # SECURITY: Validate bcdedit key/value from backup.json — a tampered backup
-                    # could inject arbitrary bcdedit arguments for code execution or boot corruption.
-                    if ($e.key -notmatch '^[a-zA-Z][a-zA-Z0-9_]*$') {
-                        Write-Warn "bcdedit restore: invalid key format '$($e.key)' — skipping (security)"
+                    # SECURITY: backup.json is untrusted; restore only the BCD elements this
+                    # suite actually manages, with per-key value allowlists.
+                    if (-not (Test-BootConfigRestoreAllowed -Key $e.key -Value $e.originalValue -Existed ([bool]$e.existed))) {
+                        Write-Warn "bcdedit restore: key/value outside restore allowlist '$($e.key)' = '$($e.originalValue)' — skipping (security)"
                         $restoreFail++
                         continue
                     }
                     if ($e.existed) {
-                        if ($e.originalValue -notmatch '^[a-zA-Z0-9_.{}\-]+$') {
-                            Write-Warn "bcdedit restore: invalid value format '$($e.originalValue)' — skipping (security)"
-                            $restoreFail++
-                            continue
-                        }
                         $bcdOut = Invoke-BootConfigRestoreCommand -Arguments @('/set', $e.key, $e.originalValue)
                         if ($LASTEXITCODE -ne 0) { Write-Warn "bcdedit restore failed for $($e.key): $bcdOut"; $restoreFail++ }
                         else { Write-OK "Restored: bcdedit $($e.key) = $($e.originalValue)"; $restoreOk++ }
@@ -952,17 +1137,35 @@ function Restore-StepChanges {
                 }
                 "scheduledtask" {
                     $taskRestoreFailed = $false
+                    $taskPath = Get-BackupTaskPath $e
+                    if (-not (Test-ScheduledTaskRestoreAllowed -Entry $e)) {
+                        Write-Warn "Scheduled task restore: task outside restore allowlist — rejected: $taskPath$($e.taskName)"
+                        $restoreFail++
+                        continue
+                    }
                     if (-not $e.existed) {
                         # Task didn't exist before we created it — remove it entirely
                         try {
-                            $task = Get-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                            $task = if ($taskPath -ne "\") {
+                                Get-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                            } else {
+                                Get-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                            }
                             if ($task) {
                                 # Stop the task first if it's running to avoid Unregister failure
                                 if ($task.State -eq "Running") {
-                                    Stop-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                                    if ($taskPath -ne "\") {
+                                        Stop-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                                    } else {
+                                        Stop-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                                    }
                                 }
-                                Unregister-ScheduledTask -TaskName $e.taskName -Confirm:$false
-                                Write-OK "Removed scheduled task: $($e.taskName)"
+                                if ($taskPath -ne "\") {
+                                    Unregister-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -Confirm:$false
+                                } else {
+                                    Unregister-ScheduledTask -TaskName $e.taskName -Confirm:$false
+                                }
+                                Write-OK "Removed scheduled task: $taskPath$($e.taskName)"
                             }
                         } catch {
                             Write-Warn "Could not remove scheduled task $($e.taskName): $_"
@@ -983,18 +1186,30 @@ function Restore-StepChanges {
                         # blindly re-enabling tasks that were already disabled before optimization.
                         $shouldBeEnabled = if ($e.PSObject.Properties['wasEnabled'] -and $null -ne $e.wasEnabled) { $e.wasEnabled } else { $true }
                         try {
-                            $task = Get-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                            $task = if ($taskPath -ne "\") {
+                                Get-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
+                            } else {
+                                Get-ScheduledTask -TaskName $e.taskName -ErrorAction SilentlyContinue
+                            }
                             if (-not $task) {
-                                Write-Warn "Scheduled task '$($e.taskName)' no longer exists — cannot restore."
+                                Write-Warn "Scheduled task '$taskPath$($e.taskName)' no longer exists — cannot restore."
                                 $taskRestoreFailed = $true
                             } elseif ($shouldBeEnabled -and $task.State -eq "Disabled") {
-                                Enable-ScheduledTask -TaskName $e.taskName -ErrorAction Stop | Out-Null
-                                Write-OK "Re-enabled scheduled task: $($e.taskName)"
+                                if ($taskPath -ne "\") {
+                                    Enable-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -ErrorAction Stop | Out-Null
+                                } else {
+                                    Enable-ScheduledTask -TaskName $e.taskName -ErrorAction Stop | Out-Null
+                                }
+                                Write-OK "Re-enabled scheduled task: $taskPath$($e.taskName)"
                             } elseif (-not $shouldBeEnabled -and $task.State -ne "Disabled") {
-                                Disable-ScheduledTask -TaskName $e.taskName -ErrorAction Stop | Out-Null
-                                Write-OK "Re-disabled scheduled task: $($e.taskName) (was disabled before optimization)"
+                                if ($taskPath -ne "\") {
+                                    Disable-ScheduledTask -TaskName $e.taskName -TaskPath $taskPath -ErrorAction Stop | Out-Null
+                                } else {
+                                    Disable-ScheduledTask -TaskName $e.taskName -ErrorAction Stop | Out-Null
+                                }
+                                Write-OK "Re-disabled scheduled task: $taskPath$($e.taskName) (was disabled before optimization)"
                             } else {
-                                Write-Info "Scheduled task '$($e.taskName)' already in correct state — kept."
+                                Write-Info "Scheduled task '$taskPath$($e.taskName)' already in correct state — kept."
                             }
                         } catch {
                             Write-Warn "Could not restore task $($e.taskName): $_"

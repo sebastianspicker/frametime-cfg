@@ -2,9 +2,9 @@ name: Security
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
-    branches: [main, dev]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
             'github_pat_[a-zA-Z0-9_]{82}'               # GitHub PAT (classic)
             'gho_[a-zA-Z0-9]{36}'                       # GitHub OAuth
             'glpat-[a-zA-Z0-9\-_]{20,}'                 # GitLab PAT
-            'sk-[a-zA-Z0-9]{20,}'                       # OpenAI / Stripe secret key
+            'sk-[a-zA-Z0-9]{20,}'                       # sk-style secret key
             'xox[boaprs]-[a-zA-Z0-9\-]+'                # Slack token
             'hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+' # Slack webhook
           )

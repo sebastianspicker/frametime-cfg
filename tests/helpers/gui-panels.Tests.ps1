@@ -108,6 +108,28 @@ Describe "Switch-Panel" {
     }
 }
 
+Describe "Video path trust" {
+
+    BeforeEach {
+        $Script:VideoTxtPath = $null
+        $Script:VideoSteamPath = $null
+    }
+
+    It "trusts a video.txt path under the recorded Steam root" {
+        $Script:VideoSteamPath = "C:\Program Files (x86)\Steam"
+        $Script:VideoTxtPath = "C:\Program Files (x86)\Steam\userdata\123\730\local\cfg\video.txt"
+
+        Test-CurrentVideoTxtPathTrusted | Should -BeTrue
+    }
+
+    It "rejects a video.txt path outside the recorded Steam root" {
+        $Script:VideoSteamPath = "C:\Program Files (x86)\Steam"
+        $Script:VideoTxtPath = "C:\Users\Public\userdata\123\730\local\cfg\video.txt"
+
+        Test-CurrentVideoTxtPathTrusted | Should -BeFalse
+    }
+}
+
 Describe "Network panel helpers" {
 
     BeforeEach {

@@ -64,16 +64,19 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
         function global:Get-Service { param($Name) $null }
     }
     if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
-        function global:Get-ScheduledTask { param($TaskName) $null }
+        function global:Get-ScheduledTask { param($TaskName, $TaskPath) $null }
     }
     if (-not (Get-Command Enable-ScheduledTask -ErrorAction SilentlyContinue)) {
-        function global:Enable-ScheduledTask { param($TaskName) $null }
+        function global:Enable-ScheduledTask { param($TaskName, $TaskPath) $null }
     }
     if (-not (Get-Command Disable-ScheduledTask -ErrorAction SilentlyContinue)) {
-        function global:Disable-ScheduledTask { param($TaskName) $null }
+        function global:Disable-ScheduledTask { param($TaskName, $TaskPath) $null }
     }
     if (-not (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue)) {
-        function global:Unregister-ScheduledTask { param($TaskName, [switch]$ConfirmAction) $null }
+        function global:Unregister-ScheduledTask { param($TaskName, $TaskPath, [switch]$Confirm) $null }
+    }
+    if (-not (Get-Command Stop-ScheduledTask -ErrorAction SilentlyContinue)) {
+        function global:Stop-ScheduledTask { param($TaskName, $TaskPath, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs) $null }
     }
     if (-not (Get-Command Set-Service -ErrorAction SilentlyContinue)) {
         function global:Set-Service { param($Name, $StartupType) $null }
@@ -232,14 +235,12 @@ function New-TestStateFile {
     param(
         [string]$TestProfile  = "RECOMMENDED",
         [string]$Mode         = "CONTROL",
-        [string]$LogLevel = "NORMAL",
-        [string[]]$AppliedSteps = @()
+        [string]$LogLevel = "NORMAL"
     )
     $state = [PSCustomObject]@{
-        profile      = $TestProfile
-        mode         = $Mode
-        logLevel     = $LogLevel
-        appliedSteps = $AppliedSteps
+        profile  = $TestProfile
+        mode     = $Mode
+        logLevel = $LogLevel
     }
     $state | ConvertTo-Json -Depth 5 | Set-Content $CFG_StateFile -Encoding UTF8
     return $CFG_StateFile
@@ -290,7 +291,6 @@ function Reset-TestState {
     $SCRIPT:Mode     = "CONTROL"
     $SCRIPT:LogLevel = "MINIMAL"
     $SCRIPT:CurrentStepTitle = $null
-    $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
     $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
 
     # Remove test JSON files so each test starts clean

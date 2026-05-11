@@ -22,10 +22,21 @@ Describe "lint workflow contract" {
         $script:LintWorkflow | Should -Match 'shell:\s+powershell'
     }
 
-    It "smoke-tests the shipped Safe Mode and verifier entrypoints" {
+    It "targets the protected main branch" {
+        $script:LintWorkflow | Should -Match 'branches:\s+\[main\]'
+        $script:SecurityWorkflow | Should -Match 'branches:\s+\[main\]'
+    }
+
+    It "smoke-tests the shipped entrypoints" {
         foreach ($scriptName in @(
+            'Run-Optimize.ps1',
+            'Cleanup.ps1',
             'Boot-SafeMode.ps1',
-            'Verify-Settings.ps1'
+            'SafeMode-DriverClean.ps1',
+            'PostReboot-Setup.ps1',
+            'FpsCap-Calculator.ps1',
+            'Verify-Settings.ps1',
+            'CS2-Optimize-GUI.ps1'
         )) {
             $escaped = [regex]::Escape($scriptName)
             $script:LintWorkflow | Should -Match $escaped
@@ -51,6 +62,11 @@ Describe "lint workflow contract" {
             $escaped = [regex]::Escape($target)
             $script:LintWorkflow | Should -Match $escaped
         }
+    }
+
+    It "runs the process-level E2E suite in CI" {
+        $script:LintWorkflow | Should -Match 'e2e:'
+        $script:LintWorkflow | Should -Match 'Invoke-Pester -Path \./tests/e2e -CI'
     }
 }
 

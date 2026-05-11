@@ -811,7 +811,6 @@ function New-Brush { [System.Windows.Media.BrushConverter]::new().ConvertFromStr
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
               <DataGridTextColumn Header="Reboot?" Binding="{Binding RebootLabel}" Width="60"/>
-              <DataGridTextColumn Header="Expected" Binding="{Binding EstLabel}"   Width="110"/>
             </DataGrid.Columns>
           </DataGrid>
           <Border Grid.Row="2" Background="#0d0d0d" BorderBrush="#1e1e1e" BorderThickness="0,1,0,0" Padding="28,12">
@@ -1152,11 +1151,11 @@ $InactiveStyle = $Window.Resources["NavBtn"]
 
 # ── Sidebar status helpers ────────────────────────────────────────────────────
 function Update-SidebarStatus {
-    $state = $null
-    try { if (Test-Path $CFG_StateFile) { $state = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } } catch {}
+    $state = Get-StateDataSafe
     $prof = if ($state) { $state.profile } else { "—" }
     $isDry = ($state -and $state.mode -eq "DRY-RUN")
     $phaseText = "—"
+    Ensure-SecureWorkDir -Path (Split-Path $CFG_ProgressFile -Parent)
     if (Test-Path $CFG_ProgressFile) {
         try {
             $prog = Get-Content $CFG_ProgressFile -Raw | ConvertFrom-Json

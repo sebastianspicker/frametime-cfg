@@ -1,6 +1,6 @@
 # Backup & Restore System — Deep Dive
 
-> Covers the backup-restore module (`helpers/backup-restore.ps1` loader + submodules `backup-restore/core.ps1`, `backup-restore/backup-capture.ps1`, `backup-restore/restore.ps1`) and `C:\CS2_OPTIMIZE\backup.json`.
+> Covers the backup-restore module (`helpers/backup-restore.ps1`) and `C:\CS2_OPTIMIZE\backup.json`.
 
 Every modification the suite makes is recorded before it happens. If something goes wrong — a setting causes an unexpected problem, a driver install fails, or you simply want to undo a step — the backup system lets you restore to pre-optimization state at any granularity: a single step, a group, or everything.
 
@@ -116,6 +116,7 @@ Recorded by `Backup-ScheduledTask` before creating the X3D CCD affinity task.
 {
   "type": "scheduledtask",
   "taskName": "CS2_Optimize_CCD_Affinity",
+  "taskPath": "\\",
   "existed": false,
   "wasEnabled": false,
   "scriptPath": "C:\\CS2_OPTIMIZE\\cs2_affinity.ps1",
@@ -124,7 +125,7 @@ Recorded by `Backup-ScheduledTask` before creating the X3D CCD affinity task.
 }
 ```
 
-If `existed: false` (the task was created by the suite), restore unregisters it and deletes the affinity script. If `existed: true`, restore uses `wasEnabled` to restore the exact enabled/disabled state rather than blindly re-enabling.
+If `existed: false` (the task was created by the suite), restore unregisters it and deletes the affinity script. If `existed: true`, restore uses `taskPath`, `taskName`, and `wasEnabled` to restore the exact task identity and enabled/disabled state rather than blindly re-enabling by name.
 
 ---
 

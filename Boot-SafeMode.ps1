@@ -26,7 +26,7 @@ if ($SmokeTest) {
     exit 0
 }
 
-Ensure-Dir $CFG_WorkDir
+Ensure-SecureWorkDir -Path $CFG_WorkDir
 Ensure-Dir $CFG_LogDir
 Initialize-ScriptDefaults
 Initialize-Log
@@ -97,7 +97,7 @@ if ($confirm -notmatch "^[jJyY]$") {
 # -- 1. Copy scripts to work directory ----------------------------------------
 Write-Host ""
 Write-Step "Copying scripts to $CFG_WorkDir..."
-Ensure-Dir $CFG_WorkDir
+Ensure-SecureWorkDir -Path $CFG_WorkDir
 Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
 
 # -- 2. Register Phase 2 RunOnce ----------------------------------------------

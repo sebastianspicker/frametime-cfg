@@ -39,7 +39,7 @@ Describe "Registry backup and restore roundtrip" {
 
     It "Backup-RegistryValue captures existing value and Restore writes it back" {
         # Mock reading the existing value
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKLM:\SOFTWARE\Test" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
         Mock Get-ItemProperty {
             return [PSCustomObject]@{ TestName = 42 }
         } -ParameterFilter { $Name -eq "TestName" }
@@ -47,15 +47,15 @@ Describe "Registry backup and restore roundtrip" {
             $mock = New-Object PSObject
             $mock | Add-Member -MemberType ScriptMethod -Name GetValueKind -Value { "DWord" }
             return $mock
-        } -ParameterFilter { $Path -eq "HKLM:\SOFTWARE\Test" }
+        } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
 
         # Perform backup
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\Test" -Name "TestName" -StepTitle "Registry Test Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "TestName" -StepTitle "Registry Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
         $entry.type | Should -Be "registry"
-        $entry.path | Should -Be "HKLM:\SOFTWARE\Test"
+        $entry.path | Should -Be "HKCU:\System\GameConfigStore"
         $entry.name | Should -Be "TestName"
         $entry.originalValue | Should -Be 42
         $entry.existed | Should -Be $true
@@ -79,9 +79,9 @@ Describe "Registry backup and restore roundtrip" {
 
     It "Backup-RegistryValue captures non-existent key and Restore removes it" {
         # Mock: key does not exist
-        Mock Test-Path { $false } -ParameterFilter { $Path -eq "HKLM:\SOFTWARE\NewKey" }
+        Mock Test-Path { $false } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
 
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\NewKey" -Name "NewProp" -StepTitle "Registry Test Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\NewKey" -Name "NewProp" -StepTitle "Registry Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
@@ -92,8 +92,8 @@ Describe "Registry backup and restore roundtrip" {
         Flush-BackupBuffer
 
         # Restore should call Remove-ItemProperty for non-existent originals
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKLM:\SOFTWARE\NewKey" }
-        Mock Get-ItemProperty { [PSCustomObject]@{ NewProp = "some_value" } } -ParameterFilter { $Path -eq "HKLM:\SOFTWARE\NewKey" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
+        Mock Get-ItemProperty { [PSCustomObject]@{ NewProp = "some_value" } } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
         Mock Remove-ItemProperty {} -Verifiable
 
         Restore-StepChanges -StepTitle "Registry Test Step"
@@ -102,7 +102,7 @@ Describe "Registry backup and restore roundtrip" {
     }
 
     It "Multiple registry entries are backed up and restored as a group" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -like "HKLM:\SOFTWARE\Multi*" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -like "HKCU:\System\GameConfigStore\Multi*" }
         Mock Get-ItemProperty {
             if ($Name -eq "ValA") { return [PSCustomObject]@{ ValA = 10 } }
             if ($Name -eq "ValB") { return [PSCustomObject]@{ ValB = 20 } }
@@ -113,8 +113,8 @@ Describe "Registry backup and restore roundtrip" {
             return $mock
         }
 
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\MultiA" -Name "ValA" -StepTitle "Multi Step"
-        Backup-RegistryValue -Path "HKLM:\SOFTWARE\MultiB" -Name "ValB" -StepTitle "Multi Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\MultiA" -Name "ValA" -StepTitle "Multi Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\MultiB" -Name "ValB" -StepTitle "Multi Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 2
 
@@ -154,11 +154,11 @@ Describe "Service backup and restore roundtrip" {
         # Mock service query
         Mock Get-Service {
             return [PSCustomObject]@{
-                Name = "TestSvc"
+                Name = "DiagTrack"
                 Status = "Running"
                 StartType = "Automatic"
             }
-        } -ParameterFilter { $Name -eq "TestSvc" }
+        } -ParameterFilter { $Name -eq "DiagTrack" }
 
         Mock Get-CimInstance {
             return [PSCustomObject]@{ StartMode = "Auto" }
@@ -168,12 +168,12 @@ Describe "Service backup and restore roundtrip" {
             return [PSCustomObject]@{ DelayedAutostart = 0 }
         } -ParameterFilter { $Name -eq "DelayedAutostart" }
 
-        Backup-ServiceState -ServiceName "TestSvc" -StepTitle "Service Test Step"
+        Backup-ServiceState -ServiceName "DiagTrack" -StepTitle "Service Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
         $entry.type | Should -Be "service"
-        $entry.name | Should -Be "TestSvc"
+        $entry.name | Should -Be "DiagTrack"
         $entry.originalStartType | Should -Be "Auto"
         $entry.originalStatus | Should -Be "Running"
 
@@ -294,7 +294,7 @@ Describe "BootConfig backup and restore roundtrip" {
             return "The operation completed successfully."
         }
 
-        Backup-BootConfig -Key "testkey" -StepTitle "Boot Test Step"
+        Backup-BootConfig -Key "useplatformtick" -StepTitle "Boot Test Step"
         Flush-BackupBuffer
         Restore-StepChanges -StepTitle "Boot Test Step"
 
@@ -368,15 +368,15 @@ Describe "ScheduledTask backup and restore roundtrip" {
 
     It "Backup-ScheduledTask captures existing enabled task" {
         Mock Get-ScheduledTask {
-            return [PSCustomObject]@{ TaskName = "TestTask"; State = "Ready" }
+            return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
 
-        Backup-ScheduledTask -TaskName "TestTask" -StepTitle "Task Test Step"
+        Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
         $entry.type | Should -Be "scheduledtask"
-        $entry.taskName | Should -Be "TestTask"
+        $entry.taskName | Should -Be "CS2_Optimize_CCD_Affinity"
         $entry.existed | Should -Be $true
         $entry.wasEnabled | Should -Be $true
     }
@@ -384,7 +384,7 @@ Describe "ScheduledTask backup and restore roundtrip" {
     It "Backup-ScheduledTask captures non-existent task" {
         Mock Get-ScheduledTask { $null }
 
-        Backup-ScheduledTask -TaskName "NewTask" -StepTitle "Task Test Step" -ScriptPath "C:\test.ps1"
+        Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step" -ScriptPath "C:\test.ps1"
 
         $entry = $SCRIPT:_backupPending[0]
         $entry.existed | Should -Be $false
@@ -394,12 +394,12 @@ Describe "ScheduledTask backup and restore roundtrip" {
 
     It "Restore removes task that did not exist before" {
         Mock Get-ScheduledTask { $null }
-        Backup-ScheduledTask -TaskName "CreatedTask" -StepTitle "Task Test Step" -ScriptPath "C:\fake.ps1"
+        Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step" -ScriptPath "C:\fake.ps1"
         Flush-BackupBuffer
 
         # Mock for restore: task now exists and should be removed
         Mock Get-ScheduledTask {
-            return [PSCustomObject]@{ TaskName = "CreatedTask"; State = "Ready" }
+            return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
         Mock Unregister-ScheduledTask {}
         Mock Test-Path { $false } -ParameterFilter { $Path -eq "C:\fake.ps1" }
@@ -411,14 +411,14 @@ Describe "ScheduledTask backup and restore roundtrip" {
 
     It "Restore re-enables task that was enabled before" {
         Mock Get-ScheduledTask {
-            return [PSCustomObject]@{ TaskName = "EnabledTask"; State = "Ready" }
+            return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
         }
-        Backup-ScheduledTask -TaskName "EnabledTask" -StepTitle "Task Test Step"
+        Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step"
         Flush-BackupBuffer
 
         # Mock for restore: task is now disabled
         Mock Get-ScheduledTask {
-            return [PSCustomObject]@{ TaskName = "EnabledTask"; State = "Disabled" }
+            return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Disabled" }
         }
         Mock Enable-ScheduledTask {}
 
@@ -573,6 +573,36 @@ Describe "Restore security validation" {
         $malicious = @([ordered]@{
             type = "bootconfig"; key = "evil;shutdown /s";
             originalValue = "yes"; existed = $true; step = "BCD Tamper";
+            timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        })
+        New-TestBackupFile -Entries $malicious
+
+        Mock Invoke-BootConfigRestoreCommand {}
+
+        Restore-StepChanges -StepTitle "BCD Tamper"
+
+        Should -Not -Invoke Invoke-BootConfigRestoreCommand
+    }
+
+    It "Rejects bcdedit restore with unsupported but syntactically valid key" {
+        $malicious = @([ordered]@{
+            type = "bootconfig"; key = "hypervisorlaunchtype";
+            originalValue = "off"; existed = $true; step = "BCD Tamper";
+            timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        })
+        New-TestBackupFile -Entries $malicious
+
+        Mock Invoke-BootConfigRestoreCommand {}
+
+        Restore-StepChanges -StepTitle "BCD Tamper"
+
+        Should -Not -Invoke Invoke-BootConfigRestoreCommand
+    }
+
+    It "Rejects bcdedit restore with unsupported value for an allowed key" {
+        $malicious = @([ordered]@{
+            type = "bootconfig"; key = "safeboot";
+            originalValue = "debug"; existed = $true; step = "BCD Tamper";
             timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         })
         New-TestBackupFile -Entries $malicious

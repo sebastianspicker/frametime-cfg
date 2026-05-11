@@ -132,11 +132,54 @@ function Calculate-FpsCap($avgFps) {
 
 # ── Steam + CS2 Install Path ─────────────────────────────────────────────────
 
+function Test-TrustedLocalPath {
+    <#  Validates user-controlled Windows paths before the suite reads/writes below them.  #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $normalized = $Path.Trim() -replace '/', '\'
+    if ($normalized -match "`0") { return $false }
+    if ($normalized.StartsWith("\\")) { return $false }
+    if ($normalized -notmatch '^[A-Za-z]:\\') { return $false }
+    if ($normalized -match '(^|\\)\.\.(\\|$)') { return $false }
+    if (Test-Path -LiteralPath $Path -ErrorAction SilentlyContinue) {
+        $current = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        while ($current) {
+            if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+            $parent = Split-Path -LiteralPath $current.FullName -Parent
+            if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current.FullName) { break }
+            if (-not (Test-Path -LiteralPath $parent -ErrorAction SilentlyContinue)) { break }
+            $current = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $true
+}
+
+function Test-TrustedVideoTxtPath {
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][string]$Path,
+        [AllowEmptyString()][string]$SteamPath
+    )
+
+    if (-not (Test-TrustedLocalPath -Path $Path)) { return $false }
+    if (-not (Test-TrustedLocalPath -Path $SteamPath)) { return $false }
+    $candidate = ($Path.Trim() -replace '/', '\')
+    $root = ($SteamPath.Trim() -replace '/', '\').TrimEnd('\')
+    if (-not $candidate.StartsWith("$root\", [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+    if ($candidate -notmatch '\\userdata\\[^\\]+\\730\\local\\cfg\\video\.txt$') { return $false }
+    return $true
+}
+
 function Get-SteamPath {
     <#  Returns the Steam installation root directory from the registry, or $null.
         Single source of truth for all callers that need the Steam base path.  #>
     $reg = Get-ItemProperty "HKCU:\SOFTWARE\Valve\Steam" -Name "SteamPath" -ErrorAction SilentlyContinue
-    if ($reg -and $reg.PSObject.Properties['SteamPath'] -and $reg.SteamPath) { return $reg.SteamPath }
+    if ($reg -and $reg.PSObject.Properties['SteamPath'] -and $reg.SteamPath) {
+        if (Test-TrustedLocalPath -Path $reg.SteamPath) { return $reg.SteamPath }
+        Write-DebugLog "SteamPath rejected as untrusted: $($reg.SteamPath)"
+    }
     return $null
 }
 

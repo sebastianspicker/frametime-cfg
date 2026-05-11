@@ -293,17 +293,6 @@ Describe "Invoke-TieredStep" {
             $state.executed  | Should -Be $true
         }
 
-        It "DRY-RUN does not record EstimateKey" {
-            $SCRIPT:Profile = "RECOMMENDED"
-            $SCRIPT:DryRun = $true
-            $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-
-            Invoke-TieredStep -Tier 1 -Title "Test DryRun" -Why "Testing" `
-                -Risk "SAFE" -EstimateKey "Test Key" -Action { }
-
-            $SCRIPT:AppliedSteps | Should -Not -Contain "Test Key"
-        }
-
         It "DRY-RUN skips steps filtered by SAFE profile" {
             $SCRIPT:Profile = "SAFE"
             $SCRIPT:DryRun = $true
@@ -314,31 +303,6 @@ Describe "Invoke-TieredStep" {
 
             $result          | Should -Be $false
             $state.executed  | Should -Be $false
-        }
-    }
-
-    Context "EstimateKey tracking" {
-        It "records EstimateKey on successful execution" {
-            $SCRIPT:Profile = "SAFE"
-            $SCRIPT:DryRun = $false
-            $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-
-            Invoke-TieredStep -Tier 1 -Title "Test Step" -Why "Testing" `
-                -Risk "SAFE" -EstimateKey "Clear Shader Cache" -Action { }
-
-            $SCRIPT:AppliedSteps | Should -Contain "Clear Shader Cache"
-        }
-
-        It "does not record EstimateKey when step fails" {
-            $SCRIPT:Profile = "SAFE"
-            $SCRIPT:DryRun = $false
-            $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Warn {}
-
-            Invoke-TieredStep -Tier 1 -Title "Failing Step" -Why "Testing" `
-                -Risk "SAFE" -EstimateKey "Should Not Record" -Action { throw "Intentional failure" }
-
-            $SCRIPT:AppliedSteps | Should -Not -Contain "Should Not Record"
         }
     }
 
@@ -447,109 +411,5 @@ Describe "Test-YoloProfile" {
     It "returns false for other profiles" {
         $SCRIPT:Profile = "RECOMMENDED"
         Test-YoloProfile | Should -Be $false
-    }
-}
-
-# ── Get-ImprovementEstimate ──────────────────────────────────────────────────
-Describe "Get-ImprovementEstimate" {
-
-    BeforeEach {
-        Reset-TestState
-    }
-
-    It "returns zeros with no applied steps" {
-        $result = Get-ImprovementEstimate
-        $result.P1LowMin | Should -Be 0
-        $result.P1LowMax | Should -Be 0
-        $result.Count     | Should -Be 0
-    }
-
-    It "sums estimates for multiple applied steps" {
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        $SCRIPT:AppliedSteps.Add("Fullscreen Optimizations")
-
-        $result = Get-ImprovementEstimate
-        $result.Count    | Should -Be 2
-        # Clear Shader Cache: P1 0-5, Fullscreen: P1 1-5
-        $result.P1LowMin | Should -Be 1
-        $result.P1LowMax | Should -Be 10
-    }
-
-    It "ignores unknown estimate keys gracefully" {
-        $SCRIPT:AppliedSteps.Add("NonexistentKey")
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-
-        $result = Get-ImprovementEstimate
-        $result.Count | Should -Be 1  # Only the valid key counts
-    }
-
-    It "handles negative AvgMin values (FPS Cap reduces avg)" {
-        $SCRIPT:AppliedSteps.Add("FPS Cap")
-
-        $result = Get-ImprovementEstimate
-        $result.AvgMin | Should -BeLessThan 0
-    }
-}
-
-# ── Save-AppliedSteps / Load-AppliedSteps round-trip ─────────────────────────
-Describe "Save-AppliedSteps / Load-AppliedSteps" {
-
-    BeforeEach {
-        Reset-TestState
-        Mock Write-DebugLog {}
-        Mock Write-Warn {}
-    }
-
-    It "round-trips applied steps through state.json" {
-        # Create a state file first (Save-AppliedSteps requires it to exist)
-        New-TestStateFile -TestProfile "RECOMMENDED"
-
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        $SCRIPT:AppliedSteps.Add("FPS Cap")
-        Save-AppliedSteps | Should -Be $true
-
-        # Reset and reload
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        Load-AppliedSteps
-
-        $SCRIPT:AppliedSteps | Should -Contain "Clear Shader Cache"
-        $SCRIPT:AppliedSteps | Should -Contain "FPS Cap"
-        $SCRIPT:AppliedSteps.Count | Should -Be 2
-    }
-
-    It "does not duplicate steps on repeated loads" {
-        New-TestStateFile -TestProfile "RECOMMENDED"
-
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        Save-AppliedSteps | Should -Be $true
-
-        # Load twice
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        Load-AppliedSteps
-        Load-AppliedSteps
-
-        $SCRIPT:AppliedSteps.Count | Should -Be 1
-    }
-
-    It "does nothing when state file does not exist" {
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        # No state file created
-        Save-AppliedSteps | Should -Be $true
-        { Load-AppliedSteps } | Should -Not -Throw
-        $SCRIPT:AppliedSteps.Count | Should -Be 0
-    }
-
-    It "returns false and warns when persistence fails" {
-        New-TestStateFile -TestProfile "RECOMMENDED" | Out-Null
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        Mock Save-JsonAtomic { throw "disk full" }
-
-        $result = Save-AppliedSteps
-
-        $result | Should -Be $false
-        Should -Invoke Write-Warn -Times 1
     }
 }

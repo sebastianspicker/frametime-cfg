@@ -49,7 +49,7 @@ Runs a non-destructive system health scan. No changes are made. Results take 5�
 
 **Export CSV** — saves the full results table to `C:\CS2_OPTIMIZE\analysis_<timestamp>.csv`. Useful for before/after comparison or sharing for support.
 
-Each row includes a `StepRef` column showing which step addresses it (e.g., "Phase 1 Step 27") and an `Impact` estimate.
+Each row includes a `StepRef` column showing which step addresses it (e.g., "Phase 1 Step 27") and an `Impact` note.
 
 **Storage Health strip** — the Analyze footer also shows TRIM maintenance state. `Enable TRIM` only corrects `DisableDeleteNotify` if it is off. `ReTrim…` is an optional storage-maintenance action for eligible fixed volumes. Neither action is documented as a competitive-performance meta tweak.
 

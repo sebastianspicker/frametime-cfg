@@ -1,5 +1,6 @@
 # CS2 Windows 11 Optimization Suite
 
+[![CI](https://github.com/sebastianspicker/cs2-opt/actions/workflows/lint.yml/badge.svg)](https://github.com/sebastianspicker/cs2-opt/actions/workflows/lint.yml)
 ![PowerShell 5.1+](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
 ![Windows 11](https://img.shields.io/badge/Windows-11-0078D6.svg)
@@ -20,6 +21,8 @@
 - [Quick Start](#quick-start)
 - [GUI Dashboard](#gui-dashboard)
 - [File Overview](#file-overview)
+- [Maintainer Orientation](#maintainer-orientation)
+- [Development / Verification](#development--verification)
 - [Phase Breakdown](#phase-breakdown)
 - [Key Engineering Decisions](#key-engineering-decisions)
 - [Zero External Tools](#zero-external-tools)
@@ -203,6 +206,24 @@ CS2-Optimize-Suite/
 ```
 
 All state is stored in `C:\CS2_OPTIMIZE\`. Logs in `C:\CS2_OPTIMIZE\Logs\`. Backups in `C:\CS2_OPTIMIZE\backup.json`. FPS history stays in `benchmark_history.json`; latency runs are stored separately in `latency_history.json`.
+
+## Maintainer Orientation
+
+If you are reading the code rather than running the suite, start with [`docs/architecture.md`](docs/architecture.md). It maps the public entrypoints, three-phase reboot handoff, shared helper modules, runtime state files, backup/restore invariants, and verification gates.
+
+## Development / Verification
+
+The CI source of truth is [`.github/workflows/lint.yml`](.github/workflows/lint.yml). Before opening a PR, run the relevant local checks:
+
+```powershell
+pwsh -NoProfile -Command "Invoke-Pester tests -CI"
+pwsh -NoProfile -Command "Invoke-Pester tests/e2e -CI"
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\CS2-Optimize-GUI.ps1 -SmokeTest
+```
+
+The E2E suite is process-level Pester coverage: it starts the shipped entry scripts as real `pwsh` child processes in `-SmokeTest` mode and checks exit code, stderr, smoke markers, and repo-local state artifacts. It does not use external services, secrets, sleeps, or machine-specific paths.
+
+For script changes, also run PSScriptAnalyzer with [`PSScriptAnalyzerSettings.psd1`](PSScriptAnalyzerSettings.psd1) and parse-check the touched `.ps1` files. Windows PowerShell 5.1 compatibility and the full entrypoint smoke matrix run in CI on Windows.
 
 ---
 
@@ -418,7 +439,8 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 
 | Document | Covers |
 |----------|--------|
-| [`docs/evidence.md`](docs/evidence.md) | Per-optimization impact estimates, cumulative improvement, risk trade-off analysis, full step decision matrix |
+| [`docs/architecture.md`](docs/architecture.md) | Maintainer map: entrypoints, helper boundaries, runtime state, phase handoff, backup/restore invariants, verification |
+| [`docs/evidence.md`](docs/evidence.md) | Per-optimization impact notes, risk trade-off analysis, full step decision matrix |
 | [`docs/debunked.md`](docs/debunked.md) | 40+ debunked settings with evidence, contested optimizations, AMD Anti-Lag history, known limitations |
 | [`docs/gui.md`](docs/gui.md) | GUI dashboard panels, interaction details, layout examples |
 | [`docs/network-diagnostics.md`](docs/network-diagnostics.md) | Valve Region Latency Diagnostic, DNS workflow, history model, wording constraints |

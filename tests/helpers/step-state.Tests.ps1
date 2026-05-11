@@ -257,6 +257,45 @@ Describe "Load-Progress with corrupted JSON" {
     }
 }
 
+# ── Show-ResumePrompt ────────────────────────────────────────────────────────
+Describe "Show-ResumePrompt resume position" {
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:Profile = "SAFE"
+    }
+
+    It "resumes after contiguous completed steps when lastCompletedStep is stale" {
+        New-TestProgressFile -Phase 1 -LastStep 0 -CompletedSteps @("P1:1", "P1:2") | Out-Null
+
+        Show-ResumePrompt -phase 1 -totalSteps 5 | Should -Be 3
+    }
+
+    It "treats skipped steps as processed for contiguous resume" {
+        New-TestProgressFile -Phase 1 -LastStep 0 -CompletedSteps @("P1:1") -SkippedSteps @("P1:2") | Out-Null
+
+        Show-ResumePrompt -phase 1 -totalSteps 5 | Should -Be 3
+    }
+
+    It "does not skip unverified earlier steps for sparse completed steps" {
+        New-TestProgressFile -Phase 1 -LastStep 4 -CompletedSteps @("P1:4") | Out-Null
+
+        Show-ResumePrompt -phase 1 -totalSteps 5 | Should -Be 1
+    }
+
+    It "uses only steps from the requested phase" {
+        New-TestProgressFile -Phase 1 -LastStep 0 -CompletedSteps @("P1:1", "P3:2") | Out-Null
+
+        Show-ResumePrompt -phase 1 -totalSteps 5 | Should -Be 2
+    }
+
+    It "falls back to lastCompletedStep when no phase-scoped step keys exist" {
+        New-TestProgressFile -Phase 1 -LastStep 2 | Out-Null
+
+        Show-ResumePrompt -phase 1 -totalSteps 5 | Should -Be 3
+    }
+}
+
 # ── Integration: Complete + Skip + Resume ────────────────────────────────────
 Describe "Integration: mixed complete and skip steps" {
 

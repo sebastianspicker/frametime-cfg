@@ -246,6 +246,74 @@ Describe "Install-NvidiaDriverClean" {
         $result | Should -Be $false
     }
 
+    It "refuses to execute an unsigned or invalid driver package even when confirmed" {
+        $SCRIPT:DryRun = $false
+        $driver = Join-Path $SCRIPT:TestTempRoot "unsigned.exe"
+        Set-Content -Path $driver -Value "fake driver" -Encoding UTF8
+        Mock Get-AuthenticodeSignature { [PSCustomObject]@{ Status = "NotSigned"; SignerCertificate = $null } }
+        Mock Read-Host { "Y" }
+        Mock Start-Process {}
+        Mock Write-Err {}
+
+        $result = Install-NvidiaDriverClean -DriverExe $driver
+
+        $result | Should -Be $false
+        Should -Invoke Read-Host -Exactly 0
+        Should -Invoke Start-Process -Exactly 0
+    }
+
+    It "refuses to execute a driver package signed by a non-NVIDIA publisher" {
+        $SCRIPT:DryRun = $false
+        $driver = Join-Path $SCRIPT:TestTempRoot "wrong-signer.exe"
+        Set-Content -Path $driver -Value "fake driver" -Encoding UTF8
+        Mock Get-AuthenticodeSignature {
+            [PSCustomObject]@{
+                Status = "Valid"
+                SignerCertificate = [PSCustomObject]@{ Subject = "CN=Example Publisher" }
+            }
+        }
+        Mock Read-Host { "Y" }
+        Mock Start-Process {}
+        Mock Write-Err {}
+
+        $result = Install-NvidiaDriverClean -DriverExe $driver
+
+        $result | Should -Be $false
+        Should -Invoke Read-Host -Exactly 0
+        Should -Invoke Start-Process -Exactly 0
+    }
+
+    It "allows a valid NVIDIA-signed driver package to reach extraction" {
+        $SCRIPT:DryRun = $false
+        $driver = Join-Path $SCRIPT:TestTempRoot "nvidia.exe"
+        Set-Content -Path $driver -Value "fake driver" -Encoding UTF8
+        $extractProcess = [PSCustomObject]@{}
+        $extractProcess | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param($Timeout) $false }
+        Mock Get-AuthenticodeSignature {
+            [PSCustomObject]@{
+                Status = "Valid"
+                SignerCertificate = [PSCustomObject]@{ Subject = "CN=NVIDIA Corporation" }
+            }
+        }
+        Mock Start-Process { $extractProcess }
+        Mock Stop-Process {}
+        Mock Write-DebugLog {}
+        Mock Write-Step {}
+        Mock Write-Info {}
+        Mock Write-Err {}
+
+        $oldTemp = $env:TEMP
+        $env:TEMP = $SCRIPT:TestTempRoot
+        try {
+            $result = Install-NvidiaDriverClean -DriverExe $driver
+        } finally {
+            $env:TEMP = $oldTemp
+        }
+
+        $result | Should -Be $false
+        Should -Invoke Start-Process -Exactly 1 -ParameterFilter { $FilePath -eq $driver }
+    }
+
     It "validates Authenticode signature (security)" {
         # Verify that the function checks for Authenticode signatures
         # by confirming the pattern exists in the source

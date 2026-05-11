@@ -91,23 +91,30 @@ function Test-StepDone([int]$phase, [int]$stepNum) {
 function Show-ResumePrompt($phase, $totalSteps) {
     $prog = Load-Progress
     if (-not $prog -or $prog.phase -ne $phase) { return 1 }
-    $hasSkipped = $prog.skippedSteps -and @($prog.skippedSteps).Count -gt 0
-    if ($prog.lastCompletedStep -eq 0 -and -not $hasSkipped) { return 1 }
-    # Consider both completed and skipped steps for resume position.
-    # Use phase-scoped keys to find the highest step number in the current phase,
-    # not the raw lastSkippedStep scalar which may belong to a different phase.
-    $lastProcessed = $prog.lastCompletedStep
     $phasePrefix = "P${phase}:"
-    $lastSkippedInPhase = 0
-    if ($prog.skippedSteps) {
-        @($prog.skippedSteps) | Where-Object { $_ -like "${phasePrefix}*" } | ForEach-Object {
-            if ($_ -match ':(\d+)$') { $lastSkippedInPhase = [math]::Max($lastSkippedInPhase, [int]$Matches[1]) }
+    $processedSteps = @()
+    foreach ($stepKey in @($prog.completedSteps) + @($prog.skippedSteps)) {
+        if ($stepKey -like "${phasePrefix}*" -and $stepKey -match ':(\d+)$') {
+            $processedSteps += [int]$Matches[1]
         }
     }
-    if ($lastSkippedInPhase -gt $lastProcessed) {
-        $lastProcessed = $lastSkippedInPhase
+
+    # Resume from the first unprocessed step, not from the highest scalar.
+    # This preserves sparse recovery when a user chose to skip an earlier step
+    # or when a previous version wrote lastCompletedStep inconsistently.
+    if ($processedSteps.Count -gt 0) {
+        $nextStep = 1
+        while ($nextStep -le $totalSteps -and $nextStep -in $processedSteps) {
+            $nextStep++
+        }
+        $lastProcessed = $nextStep - 1
+    } else {
+        $lastProcessed = $prog.lastCompletedStep
+        $nextStep = $lastProcessed + 1
     }
-    $nextStep = $lastProcessed + 1
+
+    if ($nextStep -eq 1 -and $lastProcessed -eq 0) { return 1 }
+
     if ($nextStep -gt $totalSteps) {
         Write-Info "All steps in this phase already completed."
         if ($SCRIPT:Profile -eq "YOLO") { return ($totalSteps + 1) }

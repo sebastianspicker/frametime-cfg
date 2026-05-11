@@ -153,6 +153,48 @@ Describe "Get-SteamPath" {
 
         Get-SteamPath | Should -BeNullOrEmpty
     }
+
+    It "rejects UNC SteamPath values from HKCU" {
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{ SteamPath = "\\attacker\share\Steam" }
+        } -ParameterFilter { $Path -like "*Valve\Steam*" }
+        Mock Write-DebugLog {}
+
+        Get-SteamPath | Should -BeNullOrEmpty
+    }
+
+    It "rejects relative traversal SteamPath values from HKCU" {
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{ SteamPath = "C:\Steam\..\Windows" }
+        } -ParameterFilter { $Path -like "*Valve\Steam*" }
+        Mock Write-DebugLog {}
+
+        Get-SteamPath | Should -BeNullOrEmpty
+    }
+}
+
+Describe "Test-TrustedVideoTxtPath" {
+
+    It "accepts video.txt below the trusted Steam userdata tree" {
+        Test-TrustedVideoTxtPath `
+            -SteamPath "C:\Program Files (x86)\Steam" `
+            -Path "C:\Program Files (x86)\Steam\userdata\123\730\local\cfg\video.txt" |
+            Should -BeTrue
+    }
+
+    It "rejects video.txt outside the trusted Steam root" {
+        Test-TrustedVideoTxtPath `
+            -SteamPath "C:\Program Files (x86)\Steam" `
+            -Path "C:\Users\Public\userdata\123\730\local\cfg\video.txt" |
+            Should -BeFalse
+    }
+
+    It "rejects trusted-looking video.txt paths with traversal" {
+        Test-TrustedVideoTxtPath `
+            -SteamPath "C:\Program Files (x86)\Steam" `
+            -Path "C:\Program Files (x86)\Steam\userdata\123\..\..\config\video.txt" |
+            Should -BeFalse
+    }
 }
 
 # ── Calculate-FpsCap ──────────────────────────────────────────────────────────

@@ -60,43 +60,10 @@ function Reset-MockTracker {
     }
 }
 
-function Get-MockCallCount {
-    <#  Returns the total number of write-type mock calls across all categories.  #>
-    $total = 0
-    foreach ($key in @($SCRIPT:MockTracker.Keys)) {
-        $total += $SCRIPT:MockTracker[$key].Count
-    }
-    return $total
-}
-
-function Get-MockCalls {
-    <#  Returns all calls for a specific mock category.  #>
-    param([string]$Category)
-    if ($SCRIPT:MockTracker.ContainsKey($Category)) {
-        return @($SCRIPT:MockTracker[$Category])
-    }
-    return @()
-}
-
 # ── Integration temp directory ───────────────────────────────────────────────
 # Extends the base temp directory with integration-specific subdirs.
 $SCRIPT:IntegrationTempRoot = Join-Path $SCRIPT:TestTempRoot "integration"
 New-Item -ItemType Directory -Path $SCRIPT:IntegrationTempRoot -Force | Out-Null
-
-function New-IntegrationTempDir {
-    <#  Creates a unique temp subdirectory for a single test. Returns the path.  #>
-    param([string]$Label = "test")
-    $dir = Join-Path $SCRIPT:IntegrationTempRoot "$Label-$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    return $dir
-}
-
-function Remove-IntegrationTemp {
-    <#  Removes the integration temp directory tree.  #>
-    if ($SCRIPT:IntegrationTempRoot -and (Test-Path $SCRIPT:IntegrationTempRoot)) {
-        Remove-Item $SCRIPT:IntegrationTempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
 
 # ── Convenience: Reset full integration state ────────────────────────────────
 function Reset-IntegrationState {

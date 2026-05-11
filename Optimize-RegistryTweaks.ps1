@@ -13,7 +13,7 @@ if ($startStep -le 23) {
         -Why "Fast Startup writes a hibernation snapshot on shutdown and resumes from it on boot, preserving driver state from the previous session. MSI interrupt registry changes and NIC affinity settings only fully take effect after a cold boot — Fast Startup bypasses this." `
         -Evidence "valleyofdoom/PC-Tuning: confirmed that MSI interrupt settings can fail to persist when Fast Startup is active. Multiple forum reports of MSI registry writes being present but not applied until cold reboot. HiberbootEnabled=0 disables only the hybrid shutdown — full hibernate mode is unaffected." `
         -Caveat "Boot time increases by 5-15 seconds (no hibernation resume shortcut). Hibernate mode (Sleep) is not affected by this change — only the 'Shut Down' behavior changes." `
-        -Risk "SAFE" -Depth "REGISTRY" -EstimateKey "HiberbootEnabled=0" `
+        -Risk "SAFE" -Depth "REGISTRY" `
         -Improvement "Ensures MSI interrupts, NIC affinity, and all driver-level registry changes take effect on the next boot" `
         -SideEffects "Slightly longer shutdown and startup time (cold boot instead of hybrid boot)" `
         -Undo "Set HiberbootEnabled = 1 in HKLM:\SYSTEM\...\Power (or re-enable in Power Options -> Choose what the power buttons do)" `
@@ -145,7 +145,7 @@ if ($startStep -le 27) {
         -Why "Reserves less CPU for MMCSS multimedia scheduling. Win32PrioritySeparation=0x2A gives the foreground app (CS2) a 3x scheduler quantum boost with fixed quantum on thread wakeup — djdallmann confirmed via WinDbg kernel analysis. NoLazyMode=1 shifts MMCSS from idle-detection to realtime-only operation, eliminating periodic idle-switching overhead. DisablePagingExecutive keeps kernel/driver code in physical RAM. Intel 12th gen+: PowerThrottlingOff prevents E-core mismatch frametime spikes. NetworkThrottlingIndex is deliberately NOT set — see Caveat. Fault Tolerant Heap (FTH): Windows silently patches CS2 heap allocations after any crash event, slowing subsequent allocations 10-15% until process restart — disabled preemptively. Automatic Maintenance fires RunFullMemoryDiagnostic at scheduled intervals with 12-14% measured CPU consumption mid-game (djdallmann xperf). NTFS: DisableLastAccessUpdate stops per-read metadata writes; Disable8dot3NameCreation eliminates legacy 8.3 alias generation overhead. DisableCoInstallers: prevents third-party co-installer DLLs from executing during PnP device enumeration events." `
         -Evidence "Microsoft-documented: SystemResponsiveness 0-100. Win32PrioritySeparation 0x2A = short, fixed quantum, max foreground boost (2025 Blur Busters: fixed gives better 1% lows than variable 0x26; djdallmann WinDbg confirmed PspForegroundQuantum and PsPrioritySeparation). NoLazyMode: djdallmann GamingPCSetup MMCSS research. DisablePagingExecutive: standard Windows Server tuning. PowerThrottlingOff: confirmed by Hardware Unboxed for Intel 12th gen+. FTH: djdallmann xperf analysis — heap patching confirmed measurable overhead. Maintenance: djdallmann — RunFullMemoryDiagnostic measured 12-14% CPU mid-game. NTFS: valleyofdoom/PC-Tuning — DisableLastAccessUpdate reduces filesystem write I/O; Disable8dot3NameCreation standard Windows Server tuning. DisableCoInstallers: valleyofdoom/PC-Tuning." `
         -Caveat "NetworkThrottlingIndex 0xFFFFFFFF is a common guide recommendation that djdallmann xperf analysis found INCREASES DPC latency on Intel NICs — deliberately left at default (10). NoLazyMode=1 may slightly increase background CPU cycles. PowerThrottlingOff: Intel 12th gen+ only (auto-detected). FTH: heap allocation errors that FTH would have silently handled may surface as crashes in rare cases. Maintenance: automatic system maintenance tasks won't run automatically — trigger manually from Task Scheduler if needed." `
-        -Risk "SAFE" -Depth "REGISTRY" -EstimateKey "Win32PrioritySeparation" `
+        -Risk "SAFE" -Depth "REGISTRY" `
         -Improvement "Foreground 3x scheduler quantum; MMCSS realtime scheduling; kernel in RAM; Intel E-core fix; FTH heap slowdown prevented; no 12-14% maintenance CPU spikes mid-game; NTFS metadata write elimination" `
         -SideEffects "Background media apps get slightly less priority. NoLazyMode: marginally higher CPU cycles. FTH disabled: rare heap errors may not be silently suppressed. Maintenance won't run automatically. NTFS: 8.3 filename aliases removed (breaks legacy 16-bit app compatibility)." `
         -Undo "Set SystemResponsiveness=20, Win32PrioritySeparation=2, delete Games/NoLazyMode keys; FTH\Enabled=1; MaintenanceDisabled=0; Delete NtfsDisableLastAccessUpdate or set to 2 (system-managed enabled); NtfsDisable8dot3NameCreation=0; DisableCoInstallers=0" `
@@ -242,7 +242,7 @@ if ($startStep -le 28) {
         -Why "Reduces system timer from ~15.6ms to the highest requested resolution. CS2 benefits from more precise scheduling." `
         -Evidence "Microsoft-documented since Win10 2004. GlobalTimerResolutionRequests = 1 allows apps to lower timer resolution." `
         -Caveat "Minimally increases power consumption (CPU wakes more often). Desktop PCs only, not laptops on battery." `
-        -Risk "SAFE" -Depth "REGISTRY" -EstimateKey "Timer Resolution" `
+        -Risk "SAFE" -Depth "REGISTRY" `
         -Improvement "More precise system timer — better thread scheduling for CS2" `
         -SideEffects "Minimal CPU power increase (CPU wakes more frequently)" `
         -Undo "Delete GlobalTimerResolutionRequests from kernel registry key" `
@@ -268,7 +268,7 @@ if ($startStep -le 28) {
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 29) {
     Write-Section "Step 29 — Disable Mouse Acceleration"
-    Invoke-TieredStep -Tier 2 -Title "Disable mouse acceleration + reduce mouclass kernel queue depth" -EstimateKey "Mouse Acceleration Off" `
+    Invoke-TieredStep -Tier 2 -Title "Disable mouse acceleration + reduce mouclass kernel queue depth" `
         -Why "Mouse acceleration scales pointer speed with movement speed -> inconsistent aim. mouclass kernel queue: Windows allocates a nonpaged pool buffer for 100 mouse events by default. At 1kHz polling this means the kernel can buffer up to ~100ms of input events before being forced to flush. Reducing to 50 bounds the worst-case kernel-side input buffering to ~50ms. Source: djdallmann/GamingPCSetup mouclass.sys kernel analysis. NOTE: 2025 testing showed zero measurable impact — buffer drains faster than it fills at 1kHz." `
         -Evidence "100% of CS pros play without acceleration (prosettings.net). Consistent aim requires 1:1 input. mouclass queue: djdallmann — mouclass.sys analysis of kernel input event buffer depth vs. polling rate and frame latency. Queue of 50 is a safe conservative reduction (values below 30 can cause skipping on some hardware)." `
         -Caveat "Desktop navigation feels 'slower'. In CS2: acceleration only relevant if raw_input 0. mouclass queue: values below 30 can cause mouse skipping on some hardware — 50 is conservative." `
@@ -368,7 +368,7 @@ if ($startStep -le 30) {
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 31) {
     Write-Section "Step 31 — Disable Xbox Game Bar + Game DVR"
-    Invoke-TieredStep -Tier 2 -Title "Disable Game Bar, Game DVR and App Capture" -EstimateKey "Game DVR / Game Bar Off" `
+    Invoke-TieredStep -Tier 2 -Title "Disable Game Bar, Game DVR and App Capture" `
         -Why "Game Bar / DVR records in the background consuming GPU resources (encoder + VRAM)." `
         -Evidence "Multiple benchmark tests show 2-5% less avg FPS with active Game DVR." `
         -Caveat "Gaming Debloat (Step 13) partially already disables this. Explicit registry safety here." `
@@ -392,7 +392,7 @@ if ($startStep -le 31) {
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 32) {
     Write-Section "Step 32 — Disable Overlays"
-    Invoke-TieredStep -Tier 2 -Title "Steam Overlay + overlay tips" -EstimateKey "Disable Overlays" `
+    Invoke-TieredStep -Tier 2 -Title "Steam Overlay + overlay tips" `
         -Why "Overlays (Steam, Discord, GeForce) inject code into the render loop -> frame pacing disruptions." `
         -Evidence "Known effect since Source 1. Steam Overlay is measurably 1-3% overhead." `
         -Caveat "Steam Overlay needed for screenshots (F12) and Shift+Tab. Discord/GFE: disable manually." `

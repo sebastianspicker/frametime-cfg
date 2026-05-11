@@ -197,7 +197,7 @@ if ($startStep -le 3) {
     Invoke-TieredStep -Tier 1 -Title "Clear Shader Cache" `
         -Why "Stale shaders after Windows/driver updates -> stutter on first frame. Clean cache = no mid-match compile." `
         -Evidence "T1: Directly measurable after driver change. Known cause (incremental cache becomes inconsistent)." `
-        -Risk "SAFE" -Depth "FILESYSTEM" -EstimateKey "Clear Shader Cache" `
+        -Risk "SAFE" -Depth "FILESYSTEM" `
         -Improvement "Eliminates stutter from stale/corrupt shaders after driver or Windows update" `
         -SideEffects "First CS2 launch takes 30-60s longer (shader recompile)" `
         -Undo "Shaders rebuild automatically on next launch" `
@@ -268,7 +268,7 @@ if ($startStep -le 4) {
     Invoke-TieredStep -Tier 1 -Title "Disable Fullscreen Optimizations for cs2.exe" `
         -Why "Windows DWM compositing layer in 'Fullscreen' creates variable frame pacing -> worse 1% lows." `
         -Evidence "T1: Demonstrated live by G2 pro m0NESY. Confirmed multiple times in community. Zero downside." `
-        -Risk "SAFE" -Depth "REGISTRY" -EstimateKey "Fullscreen Optimizations" `
+        -Risk "SAFE" -Depth "REGISTRY" `
         -Improvement "More consistent frametimes in fullscreen — directly measurable" `
         -SideEffects "None — only affects cs2.exe rendering mode" `
         -Undo "Delete AppCompatFlags\Layers entry for cs2.exe" `
@@ -324,7 +324,7 @@ if ($startStep -le 5 -and $gpuInput -in @("1","2")) {
                         try {
                             $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
                             $st | Add-Member -NotePropertyName "rollbackDriver" -NotePropertyValue $NVIDIA_STABLE_VERSION -Force
-                            Save-JsonAtomic -Data $st -Path $CFG_StateFile
+                            Save-SuiteState -State $st
                         } catch { Write-Warn "Could not persist rollback flag: $_" }
                     } else {
                         Write-Host "  [DRY-RUN] Would persist rollback driver flag: $NVIDIA_STABLE_VERSION" -ForegroundColor Magenta
@@ -356,7 +356,7 @@ if ($startStep -le 6) {
     Invoke-TieredStep -Tier 1 -Title "Create CS2 Optimized Power Plan (native, tiered)" `
         -Why "Eliminates CPU core parking, disables USB/disk power saving, vendor-aware CPU freq tuning. No binary import — pure PowerShell." `
         -Evidence "T1: CPU parking measurably harmful in CPU-bound games. T2: EPP=0 + boost policy unlock CPPC2/PB2 on modern CPUs. T3: C-state exit adds >100µs latency — measurable in DPC tools." `
-        -Risk "MODERATE" -Depth "REGISTRY" -EstimateKey "CS2 Optimized Power Plan" `
+        -Risk "MODERATE" -Depth "REGISTRY" `
         -Improvement "Tiered low-latency plan — T1: parking+USB+sleep, T2: CPU freq+NVMe, T3: C-states off" `
         -SideEffects "Higher idle power (~5-15W on T1/T2). T3 adds +5-15°C CPU idle temp. DC/battery settings untouched." `
         -Undo "powercfg /setactive <original GUID> (auto-backed up) or START.bat [7] Restore/Rollback" `
@@ -451,7 +451,7 @@ if ($startStep -le 7) {
             -Why "HAGS lets the GPU manage its own render queue -> less CPU overhead." `
             -Evidence "2026: MPO removal in Win11 24H2 fixed HAGS-related stutters. RTX 40/50 + AMD 9000: ON recommended (ThourCS2, Blur Busters). RTX 3000/RDNA2: test both. RTX 2000 and older: can worsen 1% lows. X3D guide (B22): Off (Default)." `
             -Caveat "Post-MPO (Win11 24H2+): HAGS ON is safe for modern GPUs. Always benchmark (CapFrameX) before and after on older hardware.$(if ($isX3D) { ' X3D guide defaults to Off — test On with RTX 50/40.' })" `
-            -Risk "MODERATE" -Depth "REGISTRY" -EstimateKey "HAGS Toggle" `
+            -Risk "MODERATE" -Depth "REGISTRY" `
             -Improvement "Less CPU overhead for GPU scheduling — +2-5% on RTX 3000+" `
             -SideEffects "RTX 2000 and older: may worsen 1% lows. Post-MPO (Win11 24H2+): most stutter reports resolved. Benchmark to verify on older GPUs." `
             -Undo "Set HwSchMode = 1 (or toggle in Windows Settings -> Display -> Graphics)" `

@@ -205,22 +205,11 @@ Describe "Invoke-TieredStep DRY-RUN integration with write functions" {
         New-TestProgressFile -Phase 1 -LastStep 0
 
         Invoke-TieredStep -Tier 1 -Title "DRY-RUN No Progress" -Why "Testing" `
-            -Risk "SAFE" -EstimateKey "DryRunTestKey" -Action { }
+            -Risk "SAFE" -Action { }
 
-        # EstimateKey should not be tracked in DRY-RUN
-        $SCRIPT:AppliedSteps | Should -Not -Contain "DryRunTestKey"
         # progress.json should remain at lastStep 0 (not updated)
         $prog = Get-Content $CFG_ProgressFile -Raw | ConvertFrom-Json
         $prog.lastCompletedStep | Should -Be 0
-    }
-
-    It "DRY-RUN does not track EstimateKey" {
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-
-        Invoke-TieredStep -Tier 1 -Title "DRY Estimate" -Why "Testing" `
-            -Risk "SAFE" -EstimateKey "TestEstimate" -Action { }
-
-        $SCRIPT:AppliedSteps.Count | Should -Be 0
     }
 }
 

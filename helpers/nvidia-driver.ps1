@@ -147,8 +147,8 @@ function Test-NvidiaDriverSignature {
         tampered binary (CDN compromise or MitM with cert injection). Failing this
         check deletes the file and returns $false.
 
-        This is called immediately after download. Install-NvidiaDriverClean has its
-        own interactive signature check as a second gate before execution.
+        This is called immediately after download. Install-NvidiaDriverClean repeats
+        the same fail-closed signature check before execution.
     .PARAMETER FilePath
         Path to the downloaded driver .exe file.
     .OUTPUTS
@@ -230,7 +230,8 @@ function Install-NvidiaDriverClean {
     }
     # Verify file has Authenticode signature (NVIDIA drivers are always signed).
     # This is an execution boundary: the installer runs as admin, so invalid or
-    # non-NVIDIA signatures must fail closed instead of relying on a prompt.
+    # non-NVIDIA signatures must fail closed. Manual/persisted driver paths are
+    # untrusted because they can cross an admin execution boundary.
     $sig = Get-AuthenticodeSignature $DriverExe -ErrorAction SilentlyContinue
     if (-not $sig -or $sig.Status -ne 'Valid') {
         Write-Err "Driver .exe has no valid Authenticode signature (status: $(if($sig){$sig.Status}else{'N/A'})). Refusing to execute."
@@ -238,7 +239,7 @@ function Install-NvidiaDriverClean {
     }
     $sigSubject = $sig.SignerCertificate.Subject
     if ($sigSubject -notmatch 'NVIDIA') {
-        Write-Err "Driver .exe is signed but NOT by NVIDIA (signer: $sigSubject). Refusing to execute."
+        Write-Err "Driver .exe is signed but not by NVIDIA (signer: $sigSubject). Refusing to execute."
         return $false
     }
     Write-DebugLog "Driver Authenticode signature valid: $sigSubject"

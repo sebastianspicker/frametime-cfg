@@ -268,8 +268,7 @@ if (-not $state -or $startStep -eq 1) {
         gpuInput = $gpuInput; pagefileMB = 0
         workDir = $CFG_WorkDir; scriptRoot = $ScriptRoot
     }
-    Save-JsonAtomic -Data $state -Path $CFG_StateFile
-    Set-SecureAcl -Path $CFG_StateFile
+    Save-SuiteState -State $state
     Complete-Step $PHASE 1 "Configuration"
 } else {
     # Restore saved config but honor the fresh profile/DRY-RUN choice made above
@@ -282,7 +281,6 @@ if (-not $state -or $startStep -eq 1) {
     # Update state file with the fresh profile choice
     $state.mode     = $SCRIPT:Mode
     $state.profile  = $SCRIPT:Profile
-    Save-JsonAtomic -Data $state -Path $CFG_StateFile
-    Set-SecureAcl -Path $CFG_StateFile
+    Save-SuiteState -State $state
     Write-Info "Configuration loaded from previous session (Profile: $($SCRIPT:Profile)$(if($SCRIPT:DryRun){' [DRY-RUN]'}))."
 }

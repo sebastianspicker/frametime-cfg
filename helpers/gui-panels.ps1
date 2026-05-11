@@ -14,6 +14,7 @@ $Script:StartupDriftChecked = $false
 
 function Get-StateDataSafe {
     try {
+        Ensure-SecureWorkDir -Path (Split-Path $CFG_StateFile -Parent)
         if (Test-Path $CFG_StateFile) {
             return Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         }
@@ -25,8 +26,7 @@ function Get-StateDataSafe {
 
 function Save-StateDataSafe {
     param([Parameter(Mandatory)]$State)
-    Save-JsonAtomic -Data $State -Path $CFG_StateFile
-    Set-SecureAcl -Path $CFG_StateFile
+    Save-SuiteState -State $State
 }
 
 function New-DefaultState {
@@ -221,7 +221,11 @@ function Load-Dashboard {
             $hags = try { (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" "HwSchMode" -ErrorAction Stop).HwSchMode } catch { $null }
             $cs2  = Get-CS2InstallPath
             $stPath = Get-SteamPath
-            $vtxt = if ($stPath) { Get-ChildItem "$stPath\userdata\*\730\local\cfg\video.txt" -ErrorAction SilentlyContinue | Select-Object -First 1 } else { $null }
+            $vtxt = if ($stPath) {
+                Get-ChildItem "$stPath\userdata\*\730\local\cfg\video.txt" -ErrorAction SilentlyContinue |
+                    Where-Object { Test-TrustedVideoTxtPath -Path $_.FullName -SteamPath $stPath } |
+                    Select-Object -First 1
+            } else { $null }
             $optExists = if ($cs2) { Test-Path "$cs2\game\csgo\cfg\optimization.cfg" } else { $false }
             $UISync.Hw = @{
                 CpuName  = $cpu
@@ -407,8 +411,6 @@ function Load-Optimize {
     $completed = if ($prog) { $prog.completedSteps } else { @() }
     $skipped   = if ($prog) { $prog.skippedSteps }   else { @() }
 
-    $estimates = $CFG_ImprovementEstimates
-
     $rows = foreach ($s in $SCRIPT:StepCatalog) {
         $stepKey = "P$($s.Phase):$($s.Step)"
         $isDone  = $stepKey -in $completed
@@ -425,14 +427,6 @@ function Load-Optimize {
             default      { "#6b7280" }
         }
 
-        $est = ""
-        if ($s.EstKey -and $estimates.ContainsKey($s.EstKey)) {
-            $e = $estimates[$s.EstKey]
-            if ($e.P1LowMin -ne 0 -or $e.P1LowMax -ne 0) {
-                $est = "+$($e.P1LowMin)-$($e.P1LowMax)% P1"
-            }
-        }
-
         [PSCustomObject]@{
             PhLabel     = "P$($s.Phase)"
             StepLabel   = "$($s.Step)"
@@ -447,7 +441,6 @@ function Load-Optimize {
             StatusLabel = $statusLabel
             StatusColor = $statusColor
             RebootLabel = if ($s.Reboot) { "Yes" } else { "" }
-            EstLabel    = $est
             _Step       = $s
         }
     }
@@ -780,10 +773,21 @@ function Load-Backup {
 })
 
 (El "BtnClearBackup").Add_Click({
+    if (Test-BackupLock) {
+        [System.Windows.MessageBox]::Show(
+            "Another CS2 Optimization process is running. Wait for it to finish first.",
+            "Locked", "OK", "Warning")
+        return
+    }
     $r = [System.Windows.MessageBox]::Show("Delete all backup data?`nThis cannot be undone.","Clear Backups","YesNo","Warning")
     if ($r -eq "Yes") {
-        if (Test-Path "$CFG_WorkDir\backup.json") { Remove-Item "$CFG_WorkDir\backup.json" -Force }
-        Load-Backup
+        Set-BackupLock
+        try {
+            Save-BackupData (New-BackupDataObject)
+            Load-Backup
+        } finally {
+            Remove-BackupLock
+        }
     }
 })
 
@@ -1053,6 +1057,13 @@ function Invoke-GuiDnsProfileChange {
 # VIDEO
 # ══════════════════════════════════════════════════════════════════════════════
 $Script:VideoTxtPath = $null
+$Script:VideoSteamPath = $null
+
+function Test-CurrentVideoTxtPathTrusted {
+    if (-not $Script:VideoTxtPath) { return $false }
+    $steamPath = if ($Script:VideoSteamPath) { $Script:VideoSteamPath } else { Get-SteamPath }
+    return (Test-TrustedVideoTxtPath -Path $Script:VideoTxtPath -SteamPath $steamPath)
+}
 
 function Load-Video {
     # Populate tier picker
@@ -1064,15 +1075,19 @@ function Load-Video {
     $steamPath = Get-SteamPath
     $vtxt = if ($steamPath) {
         Get-ChildItem "$steamPath\userdata\*\730\local\cfg\video.txt" -ErrorAction SilentlyContinue |
+            Where-Object { Test-TrustedVideoTxtPath -Path $_.FullName -SteamPath $steamPath } |
             Sort-Object LastWriteTime -Descending | Select-Object -First 1
     }
 
     if ($vtxt) {
         $Script:VideoTxtPath = $vtxt.FullName
+        $Script:VideoSteamPath = $steamPath
         (El "VideoTxtPath").Text = $vtxt.FullName
         (El "BtnVideoWrite").IsEnabled = $true
         (El "BtnVideoWriteFooter").IsEnabled = $true
     } else {
+        $Script:VideoTxtPath = $null
+        $Script:VideoSteamPath = $null
         (El "VideoTxtPath").Text = "video.txt not found — launch CS2 once to generate it"
         (El "BtnVideoWrite").IsEnabled = $false
         (El "BtnVideoWriteFooter").IsEnabled = $false
@@ -1145,7 +1160,7 @@ function Refresh-VideoGrid {
     $recommended = $Script:VideoPresets[$tier]
 
     $current = @{}
-    if ($Script:VideoTxtPath -and (Test-Path $Script:VideoTxtPath)) {
+    if ((Test-CurrentVideoTxtPathTrusted) -and (Test-Path $Script:VideoTxtPath)) {
         Get-Content $Script:VideoTxtPath | ForEach-Object {
             if ($_ -match '^\s*"([^"]+)"\s+"([^"]*)"') { $current[$Matches[1]] = $Matches[2] }
         }
@@ -1176,6 +1191,10 @@ function Refresh-VideoGrid {
 
 $writeVideo = {
     if (-not $Script:VideoTxtPath) { [System.Windows.MessageBox]::Show("video.txt not found.","Write"); return }
+    if (-not (Test-CurrentVideoTxtPathTrusted)) {
+        [System.Windows.MessageBox]::Show("video.txt path is outside the trusted Steam userdata tree.","Write","OK","Error")
+        return
+    }
 
     $tier = Get-ResolvedVideoTier (El "VideoTierPicker").SelectedItem
 
@@ -1248,7 +1267,7 @@ $writeVideo = {
 # ══════════════════════════════════════════════════════════════════════════════
 function Load-Settings {
     $state = $null
-    try { if (Test-Path $CFG_StateFile) { $state = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } } catch { Write-DebugLog "Settings state load failed: $($_.Exception.Message)" }
+    $state = Get-StateDataSafe
 
     $prof = if ($state) { $state.profile } else { "RECOMMENDED" }
     switch ($prof) {
@@ -1275,14 +1294,13 @@ function Save-SettingsToState {
     }
     try {
         $state = $null
-        if (Test-Path $CFG_StateFile) { $state = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        $state = Get-StateDataSafe
         # Skip write if nothing changed
         if ($state -and $state.PSObject.Properties['profile'] -and $state.PSObject.Properties['mode'] -and $state.profile -eq $prof -and $state.mode -eq $mode) { return }
         if (-not $state) { $state = [PSCustomObject]@{ mode = $mode; profile = $prof } }
         $state | Add-Member -NotePropertyName "profile" -NotePropertyValue $prof -Force
         $state | Add-Member -NotePropertyName "mode"    -NotePropertyValue $mode -Force
-        Save-JsonAtomic -Data $state -Path $CFG_StateFile
-        Set-SecureAcl -Path $CFG_StateFile
+        Save-SuiteState -State $state
     } catch {
         Write-DebugLog "Settings state save failed: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show(

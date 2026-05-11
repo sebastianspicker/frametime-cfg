@@ -114,21 +114,6 @@ Describe "state.json persistence roundtrip" {
         $loaded.nicName    | Should -Be "Realtek RTL8125"
     }
 
-    It "Save-AppliedSteps persists step keys into state.json" {
-        New-TestStateFile -TestProfile "RECOMMENDED"
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        $SCRIPT:AppliedSteps.Add("Fullscreen Optimizations")
-        $SCRIPT:AppliedSteps.Add("FPS Cap")
-
-        Save-AppliedSteps | Should -Be $true
-
-        $raw = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
-        $raw.appliedSteps | Should -Contain "Clear Shader Cache"
-        $raw.appliedSteps | Should -Contain "Fullscreen Optimizations"
-        $raw.appliedSteps | Should -Contain "FPS Cap"
-        @($raw.appliedSteps).Count | Should -Be 3
-    }
 }
 
 # ── Initialize-ScriptDefaults (soft state load) ─────────────────────────────
@@ -441,22 +426,14 @@ Describe "Simulated reboot cycle (Phase 1 save -> Phase 3 load)" {
         Complete-Step -phase 1 -stepNum 2 -stepName "Shader Cache"
         Skip-Step -phase 1 -stepNum 3 -stepName "Optional Step"
 
-        # Phase 1: Track applied steps
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
-        $SCRIPT:AppliedSteps.Add("Clear Shader Cache")
-        $SCRIPT:AppliedSteps.Add("Power Plan")
-        Save-AppliedSteps
-
         # --- SIMULATE REBOOT: Reset all in-memory state ---
         $SCRIPT:Profile = $null
         $SCRIPT:Mode = $null
         $SCRIPT:LogLevel = $null
         $SCRIPT:DryRun = $false
-        $SCRIPT:AppliedSteps = [System.Collections.Generic.List[string]]::new()
 
         # --- Phase 3: Load everything back ---
         $loaded = Load-State $CFG_StateFile
-        Load-AppliedSteps
 
         # Verify state restored
         $SCRIPT:Profile  | Should -Be "COMPETITIVE"
@@ -471,9 +448,5 @@ Describe "Simulated reboot cycle (Phase 1 save -> Phase 3 load)" {
         Test-StepDone -phase 1 -stepNum 2 | Should -Be $true
         Test-StepDone -phase 1 -stepNum 3 | Should -Be $true  # Skipped counts as done for resume
 
-        # Verify applied steps restored
-        $SCRIPT:AppliedSteps | Should -Contain "Clear Shader Cache"
-        $SCRIPT:AppliedSteps | Should -Contain "Power Plan"
-        $SCRIPT:AppliedSteps.Count | Should -Be 2
     }
 }

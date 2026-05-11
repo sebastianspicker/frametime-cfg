@@ -65,7 +65,8 @@ try {
         if ($gpu.Name -match "AMD|Radeon") { $detectedGpu = "3" }
         elseif ($gpu.Name -match "Intel") { $detectedGpu = "4" }
     } catch { Write-DebugLog "GPU auto-detection via WMI failed in Safe Mode: $_" }
-    $state = [PSCustomObject]@{ gpuInput=$detectedGpu; mode="CONTROL"; logLevel="NORMAL"; profile="RECOMMENDED"; fpsCap=0; avgFps=0; rollbackDriver=$null; nvidiaDriverPath=$null; appliedSteps=@(); baselineAvg=$null; baselineP1=$null }
+    $state = [PSCustomObject]@{ gpuInput=$detectedGpu; mode="CONTROL"; logLevel="NORMAL"; profile="RECOMMENDED"; fpsCap=0; avgFps=0; rollbackDriver=$null; nvidiaDriverPath=$null; baselineAvg=$null; baselineP1=$null }
+    Save-SuiteState -State $state
     $SCRIPT:Mode = "CONTROL"; $SCRIPT:LogLevel = "NORMAL"; $SCRIPT:Profile = "RECOMMENDED"; $SCRIPT:DryRun = $false
 }
 Initialize-Log
