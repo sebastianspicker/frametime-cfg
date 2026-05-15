@@ -953,14 +953,45 @@ function New-Brush { [System.Windows.Media.BrushConverter]::new().ConvertFromStr
               <Button x:Name="BtnNetDnsRestore" Content="Restore Previous DNS" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
             </WrapPanel>
 
-            <TextBlock Text="LATEST BASELINE VS POST" Style="{StaticResource SectionHeader}"/>
+            <TextBlock Text="REGION FOCUS" Style="{StaticResource SectionHeader}"/>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,18">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <ComboBox x:Name="NetDiagRegionPicker" Width="200" HorizontalAlignment="Left"/>
+                  <TextBlock Grid.Column="1" x:Name="NetDiagRegionSummary" Text="Run a baseline test to choose a region." FontSize="12" Foreground="#9ca3af" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </Grid>
+                <WrapPanel Margin="0,12,0,0">
+                  <Button x:Name="BtnNetBlockRegion" Content="Block Focus Region" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <Button x:Name="BtnNetUnblockRegion" Content="Unblock Focus Region" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <Button x:Name="BtnNetUnblockAllRegions" Content="Unblock All Network Blocks" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <TextBlock x:Name="NetDiagFirewallSummary" Text="" FontSize="12" Foreground="#9ca3af" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+
+            <Grid Margin="0,0,0,8">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="LATEST BASELINE VS POST" Style="{StaticResource SectionHeader}" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="Sort:" FontSize="12" Foreground="#9ca3af" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox x:Name="NetDiagSortPicker" Width="130"/>
+              </StackPanel>
+            </Grid>
             <DataGrid x:Name="NetDiagComparisonGrid" SelectionUnit="FullRow" CanUserSortColumns="True" Margin="0,0,0,18">
               <DataGrid.Columns>
-                <DataGridTextColumn Header="Region" Binding="{Binding TargetLabel}" Width="110"/>
-                <DataGridTextColumn Header="Baseline Avg" Binding="{Binding BaselineAvgMs}" Width="95"/>
-                <DataGridTextColumn Header="Post Avg" Binding="{Binding PostAvgMs}" Width="85"/>
-                <DataGridTextColumn Header="Δ ms" Binding="{Binding DeltaMs}" Width="70"/>
-                <DataGridTextColumn Header="Timeouts" Binding="{Binding TimeoutSummary}" Width="90"/>
+                <DataGridTextColumn Header="Region" Binding="{Binding TargetLabel}" Width="210"/>
+                <DataGridTextColumn Header="PoP" Binding="{Binding RegionCode}" Width="55"/>
+                <DataGridTextColumn Header="Baseline Avg" Binding="{Binding BaselineAvgMs}" SortMemberPath="BaselineSort" Width="95"/>
+                <DataGridTextColumn Header="Post Avg" Binding="{Binding PostAvgMs}" SortMemberPath="PostSort" Width="85"/>
+                <DataGridTextColumn Header="Δ ms" Binding="{Binding DeltaMs}" SortMemberPath="DeltaSort" Width="70"/>
+                <DataGridTextColumn Header="Timeouts" Binding="{Binding TimeoutSummary}" SortMemberPath="TimeoutSort" Width="90"/>
                 <DataGridTextColumn Header="Protocol" Binding="{Binding ProtocolUsed}" Width="70"/>
                 <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" Width="*"/>
               </DataGrid.Columns>
@@ -973,7 +1004,8 @@ function New-Brush { [System.Windows.Media.BrushConverter]::new().ConvertFromStr
                 <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="70"/>
                 <DataGridTextColumn Header="Adapter" Binding="{Binding AdapterName}" Width="120"/>
                 <DataGridTextColumn Header="DNS" Binding="{Binding DnsProvider}" Width="90"/>
-                <DataGridTextColumn Header="Avg RTT" Binding="{Binding AvgRttMs}" Width="80"/>
+                <DataGridTextColumn Header="Focus Region" Binding="{Binding SelectedRegion}" Width="150"/>
+                <DataGridTextColumn Header="Region RTT" Binding="{Binding RegionRttMs}" Width="80"/>
                 <DataGridTextColumn Header="Regions OK" Binding="{Binding RegionsOk}" Width="80"/>
               </DataGrid.Columns>
             </DataGrid>

@@ -10,7 +10,7 @@ CS2's audio is a Steam Audio-based pipeline running on top of Windows WASAPI. Th
 
 Head-Related Transfer Function (HRTF) is the mechanism by which the audio engine simulates 3D sound positioning using stereo headphones. Instead of simple left/right panning, HRTF applies per-frequency filtering that mimics how sound waves interact with the shape of a human head and ears, creating the perception of sounds coming from specific directions including above, below, and behind.
 
-For competitive CS2, accurate directional audio — hearing whether footsteps are above you, in front, or behind — is directly relevant to gameplay. HRTF is not a "premium feature"; it is the correct mode for headphone users.
+For competitive CS2, accurate directional audio — hearing whether footsteps are above you, in front, or behind — is directly relevant to gameplay. The suite keeps a headphone-focused spatial baseline, but audio is headphone- and listener-dependent; treat these as strong defaults to test, not Valve-mandated universal settings.
 
 ### The current suite baseline
 
@@ -22,15 +22,13 @@ The repo no longer documents a separate `snd_use_hrtf` toggle as an active CS2 C
 
 **2. `snd_spatialize_lerp "0"` — Suite default**
 
-Controls how quickly the HRTF filter updates as a sound source moves. Value `0.5` (default) interpolates between HRTF positions over time, smoothing transitions but introducing a subtle smearing of the 3D position during movement. Value `0` snaps to the correct HRTF position immediately.
+Controls how quickly the spatial filter updates as a sound source moves. Value `0.5` interpolates between positions over time, smoothing transitions but potentially smearing the perceived 3D position during movement. Value `0` is the suite default for the current headphone-focused path.
 
-The suite uses `0` as its current headphone-focused spatial default. Treat this as a community-preferred setting rather than as a Valve requirement.
-
-62.5% of professional CS2 players use `snd_spatialize_lerp 0` (source: esportfire.com pro settings study, 2026).
+The suite uses `0` as its current headphone-focused spatial default. Treat this as a community-preferred, listening-dependent setting rather than as a Valve requirement. Current 2026 audio guides disagree here, so this remains user-tunable.
 
 **3. `snd_steamaudio_enable_perspective_correction "1"`**
 
-Enables perspective correction in the Steam Audio engine — adjusts HRTF filtering based on listener head orientation rather than using a fixed forward-facing response. This makes sounds that pass across the listener's field of view track more accurately.
+Enables perspective correction in the Steam Audio engine — adjusts spatial filtering based on listener orientation rather than using a fixed forward-facing response. Some 2026 guides recommend it on and others prefer it off; the suite keeps it on because it is coherent with the headphone spatial baseline.
 
 ---
 

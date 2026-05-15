@@ -18,7 +18,7 @@
 //          M = Mid-range (RTX 3060/4060, 150-300 avg FPS) — annotated where differs
 //          L = Low-end   (GTX 1650/1660, <150 avg FPS)    — annotated where differs
 //
-//  SOURCES: ThourCS2 benchmarks, prosettings.net (866 pros), esportfire.com
+//  SOURCES: ThourCS2 benchmarks, prosettings.net (883 pros, Apr 2026), esportfire.com
 //           CS2 Options Menu CVars guide (Steam ID 3046217806)
 //
 //  NOTE:   This file controls settings the in-game menu writes.
@@ -56,13 +56,15 @@
     // Controlled separately by r_fullscreen_gamma in autoexec.cfg.
     "setting.brightness"                       "0.000000"
 
-    // V-Sync — always OFF. Adds 1-3 frames of render queue latency.
+    // V-Sync — OFF for fixed-refresh lowest-latency play. If you use a
+    // tuned G-SYNC/VRR stack, validate that separately in NVCP.
     "setting.mat_vsync"                        "0"
 
     // ── ANTI-ALIASING ─────────────────────────────────────────────────────
     // ThourCS2 benchmark (7800X3D + RTX 4070Ti):
     //   None=619.7 | CMAA2=610.3 | 2x=608.0 | 4x=600.1 | 8x=547.9 avg FPS
-    //   Key finding: 4x produces better 1% lows AND frame consistency vs None.
+    //   Key finding from community benches: 4x can produce better 1% lows
+    //   and frame consistency vs None on some high/mid-tier systems.
     //   8x: -11.6% avg FPS on H-tier, -29.4% on M-tier. Not worth it below 300 FPS.
     // H: 4x    M: 4x (or 2x if <200 FPS)    L: None (use CMAA2 instead — see below)
     "setting.msaa_samples"                     "4"    // 0=None, 2=2x, 4=4x, 8=8x
@@ -88,9 +90,9 @@
     "setting.r_low_latency"                    "1"    // H/M/L: 1 (or 0 if using -noreflex)
 
     // ── SHADOW QUALITY ────────────────────────────────────────────────────
-    // CRITICAL for competitive: Low removes foot shadows that reveal enemy positions
-    // (Nuke vents, Inferno B apartments). Medium = tactical cues visible, FPS reasonable.
-    // csm_enabled: master shadow toggle. Keep 1 (off=no enemy foot shadows at all).
+    // CRITICAL for competitive: keep the shadow system enabled. Dynamic Shadows
+    // is the 2026 competitive information setting; global quality can be tiered.
+    // csm_enabled: master shadow toggle. Keep 1 (off=no enemy shadow cues at all).
     "setting.csm_enabled"                      "1"    // 1=shadows on (strongly recommended)
 
     // Shadow cascade count controls shadow draw distance and quality.
@@ -107,8 +109,9 @@
     "setting.lb_shadow_texture_height_override" "512"
 
     // Dynamic shadows from non-sun light sources (lamps, muzzle flash)
-    // "All" = dynamic point light shadows. Adds minor GPU cost, no tactical loss if off.
-    // H/M: 1 (All)    L: 0 (Sun Only)
+    // "All" = dynamic point light shadows. Current 2026 meta favors All for
+    // tactical shadow cues; drop only if your GPU cannot hold target FPS.
+    // H/M/L: 1 (All)
     "setting.videocfg_dynamic_shadows"         "1"    // 0=Sun Only, 1=All
 
     // Viewmodel shadows (your weapon casting shadows). Cosmetic only.
@@ -120,7 +123,8 @@
     // ── SHADER / TEXTURE / PARTICLE DETAIL ───────────────────────────────
     // Shader Detail: Low=0, High=1
     // High adds lighting/material complexity computation. No competitive visibility
-    // advantage. H: High (GPU has headroom)    M/L: Low
+    // advantage. H: High is a suite quality default when GPU headroom exists;
+    // pure performance meta uses Low.
     "setting.shaderquality"                    "1"    // H: 1  |  M/L: 0
 
     // Texture Filtering: AF 16x (5) is near-zero cost on any GPU from last 6 years.
@@ -178,7 +182,7 @@
 //    msaa_samples 0 | r_csgo_cmaa_enable 1 (CMAA2 — free AA when msaa=0)
 //    csm_max_num_cascades_override 2 | lb_shadow_texture 256 | shaderquality 0
 //    r_texturefilteringquality 0 | r_character_decal_resolution 256
-//    videocfg_dynamic_shadows 0 | Tip: use 4:3 stretched for ~30% FPS gain
+//    videocfg_dynamic_shadows 1 | Tip: use 4:3 stretched for ~30% FPS gain
 //
 //  MID-RANGE (RTX 3060/4060, RX 6700/7600, 150-300 avg FPS):
 //    msaa_samples 4 | csm_max_num_cascades_override 3 | lb_shadow_texture 512
@@ -198,8 +202,8 @@
 //  mat_monitorgamma_tv_enabled 0  Computer Monitor color mode
 //  r_fullscreen_gamma 2.2         Brightness (exclusive fullscreen only; try 1.6-1.8)
 //  speaker_config 1               Headphone-mode suite baseline
-//  snd_headphone_eq 0             Natural EQ (community-preferred default)
-//  snd_spatialize_lerp 0          Current headphone/spatial suite default
+//  snd_headphone_eq 0             Natural EQ (suite default; Crisp is also common)
+//  snd_spatialize_lerp 0          Current headphone/spatial suite default; listening-dependent
 //  snd_mixahead 0.05              Stability-oriented suite default
 //  snd_musicvolume / snd_*_volume Music fully muted (8 CVars)
 //

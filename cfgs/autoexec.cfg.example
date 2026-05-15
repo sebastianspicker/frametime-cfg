@@ -10,7 +10,7 @@
 //    1. Network & Interpolation
 //    2. Engine & FPS
 //    3. Mouse & Input
-//    4. Audio — HRTF Stack
+//    4. Audio — Headphone Spatial Baseline
 //    5. Audio — Volumes & Music
 //    6. Video & Rendering
 //    7. Gameplay & Prediction
@@ -57,12 +57,12 @@ cl_interp_ratio "1"                             // Deprecated in sub-tick; kept 
 cl_interp "0"                                   // Deprecated in sub-tick; kept for safety
 cl_updaterate "128"                             // Belt-and-suspenders; server controls actual rate
 cl_net_buffer_ticks "0"                         // Minimum receive buffer (0 = lowest latency)
-cl_net_buffer_ticks_use_interp "1"              // Link buffer ticks to interp setting
-cl_tickpacket_desired_queuelength "0"           // Minimum queue depth
+cl_net_buffer_ticks_use_interp "1"              // Advanced suite default; less public evidence than cl_net_buffer_ticks
+cl_tickpacket_desired_queuelength "0"           // Advanced low-latency queue target; benchmark if changing
 cl_timeout "30"                                 // Disconnect timeout (seconds)
-cl_resend "0.5"                                 // Retry spread (seconds)
+cl_resend "0.5"                                 // Advanced example-only retry timing tweak; not emitted by generator
 net_client_steamdatagram_enable_override "1"    // Force Valve SDR relay (DDoS protection + better routing)
-mm_dedicated_search_maxping "80"                // Server search max ping (25 is too restrictive in most regions)
+mm_dedicated_search_maxping "40"                // EU/current meta baseline; raise to 80-150 in low-server-density regions
 mm_session_search_qos_timeout "20"              // Faster QoS timeout for matchmaking
 
 
@@ -70,7 +70,7 @@ mm_session_search_qos_timeout "20"              // Faster QoS timeout for matchm
 
 engine_low_latency_sleep_after_client_tick "1"  // Current low-latency suite default; current public convar text ties it to r_low_latency
 engine_no_focus_sleep "0"                       // Don't throttle when alt-tabbed
-fps_max "0"                                     // Uncapped (lowest input latency — cap only if GPU thermal issues)
+fps_max "0"                                     // Uncapped default; use benchmarked NVCP/FPS cap if frametimes improve
 fps_max_ui "200"                                // Cap menus at 200 (saves GPU heat, no benefit above)
 fps_max_tools "144"                             // Cap tools/workshop
 con_enable "1"                                  // Console enabled
@@ -108,7 +108,7 @@ option_duck_method "0"                          // Hold-to-duck (0) vs toggle (1
 option_speed_method "0"                         // Hold-to-walk (0) vs toggle (1)
 
 
-// ── 4. AUDIO — HRTF STACK ──────────────────────────────────────
+// ── 4. AUDIO — HEADPHONE SPATIAL BASELINE ──────────────────────
 //
 //    Headphone-focused spatial chain used by this suite:
 //      1. speaker_config 1    — headphone mode
@@ -123,16 +123,16 @@ option_speed_method "0"                         // Hold-to-walk (0) vs toggle (1
 //    The legacy headphone geometry CVars (snd_headphone_pan_exponent,
 //    snd_headphone_pan_radial_weight, snd_front/rear_headphone_position)
 //    are BYPASSED when spatialize_lerp = 0 — they only feed the stereo
-//    panner which HRTF replaces. Omitted intentionally.
+//    panner which the current spatial path bypasses. Omitted intentionally.
 
 // Headphone-focused spatial defaults
 speaker_config "1"                              // Headphone mode
-snd_spatialize_lerp "0"                         // Suite default for the current headphone/spatial path
+snd_spatialize_lerp "0"                         // Suite default; audio guides disagree, listen/benchmark if unsure
 
-// HRTF enhancement
+// Spatial enhancement
 snd_steamaudio_enable_perspective_correction "1" // Perspective correction for movement and head rotation
-snd_steamaudio_enable_reverb "0"                // Disable room reverb — masks footstep transients and muddies HRTF cues
-snd_headphone_eq "0"                            // Natural EQ (current community-preferred default)
+snd_steamaudio_enable_reverb "0"                // Disable room reverb — masks footstep transients and muddies cues
+snd_headphone_eq "0"                            // Natural EQ suite default
                                                 // Alt: "1" (Crisp) boosts footstep frequencies
 
 // Audio system
@@ -154,9 +154,9 @@ snd_mute_losefocus "0"                          // Don't mute when alt-tabbed
 //
 //    The headphone geometry CVars below are ONLY active when
 //    snd_spatialize_lerp > 0 (i.e., legacy stereo is in use).
-//    With HRTF on (lerp = 0), they are completely ignored.
+//    With this suite's spatial path (lerp = 0), they are treated as inactive.
 //
-//    To switch: comment HRTF section, uncomment this block, restart CS2.
+//    To switch: comment the spatial baseline section, uncomment this block, restart CS2.
 //
 // ── Core ──
 // speaker_config "1"                            // Headphones mode (still required for proper stereo panning)
@@ -181,7 +181,7 @@ snd_mute_losefocus "0"                          // Don't mute when alt-tabbed
 //
 // ── Stereo enhancement ──
 // snd_steamaudio_enable_perspective_correction "0" // Optional if you dislike the default spatial presentation
-// snd_steamaudio_enable_reverb "0"              // Still off for competitive (masks footsteps regardless of HRTF)
+// snd_steamaudio_enable_reverb "0"              // Still off for competitive (masks footsteps)
 // snd_headphone_eq "1"                          // Crisp EQ alternative — boosts footstep frequencies
 //
 // ── Audio system ──
@@ -192,26 +192,26 @@ snd_mute_losefocus "0"                          // Don't mute when alt-tabbed
 
 // ── 5. AUDIO — VOLUMES & MUSIC ──────────────────────────────────
 //
-//    HRTF encodes direction via subtle frequency differences between
+//    CS2 spatial audio encodes direction via subtle frequency differences between
 //    ears. Loud competing audio (VOIP, music) masks these cues.
 //    Strategy: kill all non-essential audio, reduce VOIP ducking impact.
 
 // Master / Voice
 snd_gamevolume "1.0"                            // Master volume (control at OS/headset level)
 snd_gamevoicevolume "1.0"                       // System voices neutral
-snd_voipvolume "0.5"                            // VOIP lower — preserves HRTF spatial cues during comms
+snd_voipvolume "0.5"                            // VOIP lower — preserves positional cues during comms
 volume "1.0"
 
-// Ducking — tuned for HRTF preservation
+// Ducking — tuned for positional-audio preservation
 //   Default ducking drops game audio to 0.55 during VOIP, destroying
-//   HRTF spatial info mid-callout. Higher ducktovolume + higher
+//   positional info mid-callout. Higher ducktovolume + higher
 //   threshold = spatial cues survive teammate comms.
-snd_ducktovolume "0.75"                         // Only 25% duck (default 0.55 = 45% — too aggressive for HRTF)
+snd_ducktovolume "0.75"                         // Only 25% duck (default 0.55 = 45% — often too aggressive)
 snd_duckerattacktime "0.5"                      // Quick onset
 snd_duckerreleasetime "1.5"                     // Fast recovery — spatial awareness back sooner after callout
 snd_duckerthreshold "0.25"                      // Higher threshold = only loud VOIP triggers ducking
 
-// Music — all off (any music masks HRTF frequency cues)
+// Music — all off (music masks positional audio cues)
 snd_musicvolume "0"                             // Master music off (overrides per-category if >0)
 snd_menumusic_volume "0"
 snd_roundstart_volume "0"
@@ -263,18 +263,18 @@ cl_hud_telemetry_serverrecvmargin_graph_show "0"
 // In-game video settings (set via menu — documented for reproducibility):
 //
 //   Low-end (GTX 1650/1660):
-//     MSAA: Off | Shadows: Medium | Texture: Low | AF: 2x | AO: Off | HDR: Performance
+//     MSAA: Off | Shadows: Low | Dynamic Shadows: All | Texture: Low | AF: 2x | AO: Off | HDR: Performance
 //
 //   Mid-range (RTX 3060/4060):
-//     MSAA: 2x | Shadows: Medium | Texture: Medium | AF: 8x | AO: Off | HDR: Performance
+//     MSAA: 2x/4x | Shadows: Low/Medium | Dynamic Shadows: All | Texture: Medium | AF: 8x/16x | AO: Off | HDR: Performance
 //
 //   High-end (RTX 4070+):
-//     MSAA: 4x | Shadows: Medium | Texture: High | AF: 16x | AO: Off | HDR: Performance
+//     MSAA: 4x | Shadows: Low/Medium | Dynamic Shadows: All | Texture: High | AF: 16x | AO: Off | HDR: Performance
 //
 //   All tiers:
 //     Display Mode: Fullscreen | V-Sync: Disabled | NVIDIA Reflex: Enabled
 //     Global Shadow Quality: Low | Shader Detail: Low | Particle Detail: Low
-//     HDR: Performance (suite default; benchmark-dependent)
+//     HDR: Performance (suite default; benchmark/display-dependent)
 //     FSR: Disabled (native sharpness) | Dynamic Shadows: All (positional info)
 
 

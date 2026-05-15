@@ -135,6 +135,24 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
             $null
         }
     }
+    if (-not (Get-Command Get-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        function global:Get-NetFirewallRule {
+            param($DisplayName, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        function global:New-NetFirewallRule {
+            param($DisplayName, $Description, $Direction, $Action, $RemoteAddress, $Protocol, $Profile, $Enabled, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command Remove-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        function global:Remove-NetFirewallRule {
+            param($DisplayName, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
     if (-not (Get-Command Test-Connection -ErrorAction SilentlyContinue)) {
         function global:Test-Connection {
             param($ComputerName, $Count, $Quiet, $ErrorAction, $TimeoutSeconds, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
@@ -298,6 +316,7 @@ function Reset-TestState {
     Remove-Item $CFG_ProgressFile -Force -ErrorAction SilentlyContinue
     Remove-Item $CFG_BackupFile   -Force -ErrorAction SilentlyContinue
     Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+    Remove-Item $CFG_LatencyHistoryFile -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $SCRIPT:TestTempRoot "backup.*.json") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $SCRIPT:TestTempRoot "backup.corrupt.*.json") -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $SCRIPT:TestTempRoot "state.json.corrupt*") -Force -ErrorAction SilentlyContinue

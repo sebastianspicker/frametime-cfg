@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-#  Guide-VideoSettings.ps1  —  CS2 Video Settings Guide (Feb 2026 community meta)
+#  Guide-VideoSettings.ps1  —  CS2 Video Settings Guide (May 2026)
 # ==============================================================================
 
 function Show-CS2SettingsGuide {
@@ -49,7 +49,7 @@ function Show-CS2SettingsGuide {
     Write-Blank
 
     Write-Host "  Which launch option do you want in your clipboard?" -ForegroundColor White
-    Write-Host "  [1]  -noreflex  (community meta, more 1% lows in tests)" -ForegroundColor Cyan
+    Write-Host "  [1]  -noreflex  (contested test path; compare on your system)" -ForegroundColor Cyan
     Write-Host "  [2]  No -noreflex  (Reflex ON in-game, less input lag)" -ForegroundColor Green
     Write-Host "  [3]  Show both, I'll decide myself" -ForegroundColor DarkGray
     do { $reflexChoice = Read-Host "  [1/2/3]" } while ($reflexChoice -notin @("1","2","3"))
@@ -162,12 +162,12 @@ function Show-CS2SettingsGuide {
         "4" { @{ w=$null;  h=$null;  ar="0" } }   # custom — filled from existing file
     }
 
-    # ── VIDEO SETTINGS — FEB 2026 META ───────────────────────────────────
+    # ── VIDEO SETTINGS — MAY 2026 META ───────────────────────────────────
     Write-Blank
     Write-Host "  ╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  CS2 VIDEO SETTINGS — FEB 2026 META                        ║" -ForegroundColor Cyan
+    Write-Host "  ║  CS2 VIDEO SETTINGS — MAY 2026 META                        ║" -ForegroundColor Cyan
     Write-Host "  ║  Tailored for: $($pcTier.PadRight(9)) GPU  ·  $($resLabel.PadRight(14))                ║" -ForegroundColor Cyan
-    Write-Host "  ║  Sources: community benchmarks, surveys, Blur Busters meta ║" -ForegroundColor DarkGray
+    Write-Host "  ║  Sources: pro databases, community benches, vendor docs     ║" -ForegroundColor DarkGray
     Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Blank
 
@@ -183,7 +183,7 @@ function Show-CS2SettingsGuide {
     # Determine recommended values per tier
     $msaa       = switch ($pcTier) { "LOW" {"None + CMAA2"}    "MID" {"4x (sweet spot)"}  "HIGH" {"4x (community bench favorite)"} }
     $shadows    = switch ($pcTier) { "LOW" {"Low"}             "MID" {"Medium"}            "HIGH" {"Medium"} }
-    $dynShadows = switch ($pcTier) { "LOW" {"Sun Only"}        "MID" {"All"}               "HIGH" {"All"} }
+    $dynShadows = switch ($pcTier) { "LOW" {"All"}             "MID" {"All"}               "HIGH" {"All"} }
     $shaderDet  = switch ($pcTier) { "LOW" {"Low"}             "MID" {"Low"}               "HIGH" {"High"} }
     $texFilter  = switch ($pcTier) { "LOW" {"Bilinear"}        "MID" {"16x Anisotropic"}   "HIGH" {"16x Anisotropic"} }
     $modelTex   = switch ($pcTier) { "LOW" {"Low"}             "MID" {"Medium"}            "HIGH" {"Medium"} }
@@ -192,8 +192,8 @@ function Show-CS2SettingsGuide {
 
     $msaaNote   = switch ($pcTier) {
         "LOW"  {"CMAA2: post-process, near-zero FPS cost."}
-        "MID"  {"ThourCS2: 4x = better 1% lows than None. -12% avg."}
-        "HIGH" {"ThourCS2 community benches: 4x better lows. 8x: -18%, no benefit."}
+        "MID"  {"Community benches can favor 4x; use 2x if FPS budget is tight."}
+        "HIGH" {"Community benches can favor 4x. 8x costs too much for little return."}
     }
 
     Write-Host "  [BENCHMARK-BACKED / COMMON DEFAULTS]" -ForegroundColor Green
@@ -201,26 +201,26 @@ function Show-CS2SettingsGuide {
   ┌──────────────────────────────────────────────────────────────────────┐
   │ Setting                  │ Value          │ Proof / Source            │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Display Mode             │ Fullscreen     │ Measurable: lowest       │
-  │                          │                │ input lag + best lows    │
+  │ Display Mode             │ Fullscreen     │ Common low-latency       │
+  │                          │                │ competitive default      │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Boost Player Contrast    │ ON             │ ThourCS2: +5% 1% lows    │
-  │                          │                │ r_player_visibility_mode │
-  │                          │                │ 1 set in autoexec        │
+  │ Boost Player Contrast    │ ON             │ Common readability       │
+  │                          │                │ default; benchmark cost  │
+  │                          │                │ on your own system       │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
   │ Ambient Occlusion        │ OFF            │ ~30 FPS cost (multiple   │
   │                          │                │ tests). No comp. adv.    │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ HDR (light shader)       │ Performance    │ Quality can wash out     │
-  │                          │                │ window/sun areas on maps │
+  │ HDR (light shader)       │ Performance    │ Suite default; compare   │
+  │                          │                │ visually on your display │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ FidelityFX Super Res.    │ OFF            │ Blur harms enemy         │
-  │                          │                │ recognition. Consensus   │
+  │ FidelityFX Super Res.    │ OFF            │ Native clarity default;  │
+  │                          │                │ lower res before FSR     │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
   │ Motion Blur              │ N/A (removed)  │ Disabled engine-wide by  │
   │                          │                │ Valve (AMD GPU bug fix)  │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ V-Sync                   │ OFF            │ Universal, clear         │
+  │ V-Sync                   │ OFF            │ Fixed-refresh default    │
   └──────────────────────────┴────────────────┴──────────────────────────┘
   Tip: see docs/video.txt for a copy-ready 2026 meta video.txt example.
 "@ -ForegroundColor Green
@@ -232,9 +232,9 @@ function Show-CS2SettingsGuide {
     Write-Host "  ├──────────────────────────┼────────────────┼──────────────────────────┤" -ForegroundColor Cyan
     Write-Host "  │ Resolution               │ $($resLabel.PadRight(14)) │ $(if($resChoice -eq '1'){'~80% pros. Wider models.'}elseif($resChoice -eq '2'){'More FOV. Clear image.'}elseif($resChoice -eq '3'){'Visual quality. GPU-heavy.'}else{'Your preference.'})$((' ' * [math]::Max(0,24 - $(if($resChoice -eq '1'){'~80% pros. Wider models.'}elseif($resChoice -eq '2'){'More FOV. Clear image.'}elseif($resChoice -eq '3'){'Visual quality. GPU-heavy.'}else{'Your preference.'}).Length)))  │" -ForegroundColor White
     Write-Host "  │ MSAA                     │ $($msaa.PadRight(14)) │ $(if ($msaaNote.Length -gt 24) { $msaaNote.Substring(0, 21) + '...' } else { $msaaNote.PadRight(24) })  │" -ForegroundColor White
-    Write-Host "  │ Global Shadow Quality    │ $($shadows.PadRight(14)) │ $(if($pcTier -eq 'LOW'){'Saves ~15 FPS.          '}else{'Low=disadvantage (Nuke).  '})│" -ForegroundColor White
-    Write-Host "  │ Dynamic Shadows          │ $($dynShadows.PadRight(14)) │ $(if($pcTier -eq 'LOW'){'Sun Only saves FPS.      '}else{'Player shadows visible.   '})│" -ForegroundColor White
-    Write-Host "  │ Shader Detail            │ $($shaderDet.PadRight(14)) │ $(if($pcTier -eq 'LOW'){'Saves FPS. Visual loss.  '}else{'Cleaner shadows. Low cost.'})│" -ForegroundColor White
+    Write-Host "  │ Global Shadow Quality    │ $($shadows.PadRight(14)) │ Tiered by FPS budget.    │" -ForegroundColor White
+    Write-Host "  │ Dynamic Shadows          │ $($dynShadows.PadRight(14)) │ Keeps tactical cues.     │" -ForegroundColor White
+    Write-Host "  │ Shader Detail            │ $($shaderDet.PadRight(14)) │ $(if($pcTier -eq 'HIGH'){'Quality default; optional'}else{'Performance default.     '})│" -ForegroundColor White
     Write-Host "  │ Texture Filtering        │ $($texFilter.PadRight(14)) │ $(if($pcTier -eq 'LOW'){'Saves ~5 FPS.            '}else{'Nearly no FPS cost.       '})│" -ForegroundColor White
     Write-Host "  │ Model / Texture Detail   │ $($modelTex.PadRight(14)) │ No FPS difference.        │" -ForegroundColor White
     Write-Host "  │ Particle Detail          │ $($particle.PadRight(14)) │ Community consensus.      │" -ForegroundColor White
@@ -246,12 +246,12 @@ function Show-CS2SettingsGuide {
         Write-Host "  LOW-END TIPS:" -ForegroundColor Yellow
         Write-Host "  -> 4:3 stretched (1280x960) gives ~25-40% more FPS than 1080p" -ForegroundColor White
         Write-Host "  -> If <100 FPS: use MSAA None, Shadow Low, Shader Low" -ForegroundColor White
-        Write-Host "  -> Consider FSR if GPU-bound (check GPU usage with Task Manager)" -ForegroundColor White
+        Write-Host "  -> Lower resolution before using FSR; keep FSR off for clarity by default" -ForegroundColor White
         Write-Host "  -> CS2 is CPU-bound: if CPU at 100% and GPU at 60%, lower settings won't help" -ForegroundColor DarkYellow
     } elseif ($pcTier -eq "MID") {
         Write-Blank
         Write-Host "  MID-RANGE TIPS:" -ForegroundColor Yellow
-        Write-Host "  -> MSAA 4x is worth the cost: ThourCS2 showed better 1% lows than None" -ForegroundColor White
+        Write-Host "  -> MSAA 4x is a strong default; use 2x if your FPS budget is tight" -ForegroundColor White
         Write-Host "  -> At 1080p these settings should give 200-350 FPS" -ForegroundColor White
         Write-Host "  -> If GPU-bound: 4:3 stretched frees ~30% GPU headroom" -ForegroundColor White
         Write-Host "  -> 8 GB VRAM GPUs (4060/7600): restart CS2 every 2-3h (VRAM leak)" -ForegroundColor DarkYellow
@@ -259,7 +259,7 @@ function Show-CS2SettingsGuide {
         Write-Blank
         Write-Host "  HIGH-END TIPS:" -ForegroundColor Yellow
         Write-Host "  -> CPU is your bottleneck, not GPU. Higher settings won't cost FPS." -ForegroundColor White
-        Write-Host "  -> MSAA 4x: community benches favor it for 1% lows. Don't go 8x (-18% for little return)." -ForegroundColor White
+        Write-Host "  -> MSAA 4x: community benches can favor it. Don't go 8x; cost outweighs return." -ForegroundColor White
         Write-Host "  -> At 1080p you should see 400+ FPS. At 1440p: 300+ FPS." -ForegroundColor White
         Write-Host "  -> FPS cap is MORE important for you: high FPS = more frametime variance" -ForegroundColor DarkYellow
     }
@@ -379,7 +379,7 @@ function Show-CS2SettingsGuide {
     $rec_msaa       = switch ($pcTier) { "LOW" {"0"}    "MID" {"4"}    "HIGH" {"4"} }
     $rec_cascades   = switch ($pcTier) { "LOW" {"2"}    "MID" {"3"}    "HIGH" {"3"} }
     $rec_shadowTex  = switch ($pcTier) { "LOW" {"256"}  "MID" {"512"}  "HIGH" {"512"} }
-    $rec_dynShadows = switch ($pcTier) { "LOW" {"0"}    "MID" {"1"}    "HIGH" {"1"} }
+    $rec_dynShadows = switch ($pcTier) { "LOW" {"1"}    "MID" {"1"}    "HIGH" {"1"} }
     $rec_shaderQ    = switch ($pcTier) { "LOW" {"0"}    "MID" {"0"}    "HIGH" {"1"} }
     $rec_texFilter  = switch ($pcTier) { "LOW" {"0"}    "MID" {"5"}    "HIGH" {"5"} }
     $rec_charDecal  = switch ($pcTier) { "LOW" {"256"}  "MID" {"512"}  "HIGH" {"512"} }

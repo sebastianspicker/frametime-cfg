@@ -42,6 +42,10 @@ Describe "CS2 Autoexec configuration" {
         $CFG_CS2_Autoexec["rate"] | Should -Be "1000000"
     }
 
+    It "matchmaking max ping defaults to the May 2026 EU baseline" {
+        $CFG_CS2_Autoexec["mm_dedicated_search_maxping"] | Should -Be "40"
+    }
+
     It "fps_max is 0 (uncapped default, user sets via FPS Cap calculator)" {
         $CFG_CS2_Autoexec["fps_max"] | Should -Be "0"
     }
@@ -52,6 +56,13 @@ Describe "CS2 Autoexec configuration" {
 
     It "does not emit the removed snd_use_hrtf CVar" {
         $CFG_CS2_Autoexec.Keys | Should -Not -Contain "snd_use_hrtf"
+    }
+
+    It "does not force Source 2 thread pool selection by default" {
+        $CFG_CS2_Autoexec.Keys | Should -Not -Contain "thread_pool_option"
+
+        $content = Get-Content "$script:ProjectRoot/Optimize-GameConfig.ps1" -Raw
+        $content | Should -Not -Match 'effectiveAutoexec\["thread_pool_option"\]'
     }
 
     It "Optimize-GameConfig treats m_rawinput as a no-op documentation stub" {

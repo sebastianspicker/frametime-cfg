@@ -11,6 +11,8 @@ CS2's network CVars do not fix a bad connection — they trade latency for resil
 
 Use from the CS2 console: `exec net_stable`, `exec net_bad`, etc. Reset with `exec net_stable`.
 
+Important May 2026 caveat: `cl_net_buffer_ticks` is the broadly supported public setting. `cl_net_buffer_ticks_use_interp` and `cl_tickpacket_desired_queuelength` are real current-convar settings, but public evidence is much thinner; the repo keeps them as advanced suite defaults and optional profile tuning, not as settled meta.
+
 ---
 
 ## The Two Failure Modes

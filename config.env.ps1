@@ -129,10 +129,13 @@ $CFG_LatencyTargetsFile = if ($PSScriptRoot) { Join-Path $PSScriptRoot "cfgs\val
 # ── CS2 Autoexec Defaults ────────────────────────────────────────────────────
 # Notes:
 #   rate 1000000      — actual CS2 max; 786432 shows "Extremely restricted" in UI (display bug).
-#   cl_net_buffer_ticks 0 — authoritative interp control in CS2; cl_interp_ratio/cl_interp are
-#     belt-and-suspenders. engine_low_latency_sleep_after_client_tick remains in the current
-#     public convar surface and is documented as interacting with r_low_latency; the repo keeps
-#     it enabled as a suite default without claiming fps_max 0 is what activates it.
+#   cl_net_buffer_ticks 0 — broadly supported stable-connection setting. cl_interp_ratio/cl_interp
+#     are belt-and-suspenders. cl_net_buffer_ticks_use_interp and
+#     cl_tickpacket_desired_queuelength are advanced current-convar defaults with less public
+#     evidence than cl_net_buffer_ticks, not hard 2026 meta.
+#   engine_low_latency_sleep_after_client_tick remains in the current public convar surface and
+#     is documented as interacting with r_low_latency; the repo keeps it enabled as a suite
+#     default without claiming fps_max 0 is what activates it.
 #   fps_max 0 — uncapped default. If you prefer a cap, set it explicitly after benchmarking or
 #     via the FPS Cap Calculator guidance.
 #   net_client_steamdatagram_enable_override 1 — forces Valve SDR routing (helps most regions).
@@ -148,7 +151,8 @@ $CFG_LatencyTargetsFile = if ($PSScriptRoot) { Join-Path $PSScriptRoot "cfgs\val
 #   snd_mixahead 0.05 — conservative community-preferred audio buffer. The current public
 #     convar dump shows a much lower engine default, so the repo treats 0.05 as a stability-
 #     oriented suite default rather than as Valve's current default.
-#   mm_dedicated_search_maxping 80 — tune by region: EU → 40, SEA → 80-150.
+#   mm_dedicated_search_maxping 40 — EU/current meta baseline; raise to 80-150
+#     in low-server-density regions.
 #   r_fullscreen_gamma 2.2 — exclusive fullscreen only (no-op in fullscreen windowed).
 #     Competitive players use 1.6-1.8 to brighten dark corners. 2.2 = system default.
 #   r_player_visibility_mode 1 — Boost Player Contrast. Community benchmarking reports low
@@ -170,14 +174,14 @@ $CFG_CS2_Autoexec = [ordered]@{
     "cl_net_buffer_ticks"                          = "0"
     "cl_net_buffer_ticks_use_interp"               = "1"
     "cl_tickpacket_desired_queuelength"            = "0"
-    "mm_dedicated_search_maxping"                  = "80"
+    "mm_dedicated_search_maxping"                  = "40"
     "mm_session_search_qos_timeout"                = "20"
     "cl_timeout"                                   = "30"
     "net_client_steamdatagram_enable_override"     = "1"
     # ── Engine / FPS ──────────────────────────────────────────────────────
     "engine_low_latency_sleep_after_client_tick"   = "1"     # Current convar exists; kept as a suite default without claiming fps_max 0 activates it
     "engine_no_focus_sleep"                        = "0"
-    "fps_max"                                      = "0"     # Uncapped default — use FPS Cap Calculator to set optimal cap (enables low_latency_sleep above)
+    "fps_max"                                      = "0"     # Uncapped default — use FPS Cap Calculator/NVCP if a cap improves frametimes
     "fps_max_ui"                                   = "200"
     "fps_max_tools"                                = "144"
     # ── Gameplay ──────────────────────────────────────────────────────────

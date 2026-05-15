@@ -36,7 +36,7 @@ These flags are processed by the engine before any config files load. Use them f
 
 ## Video Settings — 2026 Competitive Baseline
 
-Based on: ThourCS2 benchmarks (driver 581.08), prosettings.net aggregation of 866 professional CS2 players, and Blur Busters forum testing.
+Based on: ThourCS2 benchmarks (driver 581.08), prosettings.net aggregation of 883 professional CS2 players in its April 2026 CS2 options guide, and Blur Busters forum testing.
 
 ### Display Mode: Fullscreen (Exclusive)
 
@@ -72,7 +72,7 @@ The explanation: without anti-aliasing, the rasterizer must render more complex 
 
 **CMAA2** (Conservative Morphological Anti-Aliasing 2, Intel's algorithm) is CS2's "free" AA option: post-process edge smoothing with near-zero GPU cost. On LOW tier (where MSAA is disabled for FPS budget reasons), CMAA2 provides some visual quality improvement without FPS cost.
 
-### Ambient Occlusion: Always Off
+### Ambient Occlusion: Off For Competitive Play
 
 ```
 "setting.r_aoproxy_enable"  "0"
@@ -80,7 +80,7 @@ The explanation: without anti-aliasing, the rasterizer must render more complex 
 
 AO adds realistic contact shadowing where objects meet surfaces. In CS2 this costs 10–15% GPU time (ThourCS2 measurement). The visual improvement is entirely cosmetic — AO on floors and walls provides no competitive information. Turn it off.
 
-### Shadows: On, Medium Quality
+### Shadows: On, Quality Tiered
 
 ```
 "setting.csm_enabled"               "1"   // Dynamic shadows from map lights
@@ -89,13 +89,13 @@ AO adds realistic contact shadowing where objects meet surfaces. In CS2 this cos
 
 The one setting where "lower = better" is incorrect for competitive play:
 
-**Why shadows matter competitively:** Player shadows cast through doorways and onto floor surfaces reveal enemy positions before the player model becomes visible. A player peeking through a doorway with a light source behind them casts their shadow first. Disabling shadows removes this information.
+**Why shadows matter competitively:** Player shadows cast through doorways and onto floor surfaces can reveal enemy positions before the player model becomes visible. A player peeking through a doorway with a light source behind them may cast their shadow first. Disabling shadows removes this information.
 
-**Why not High quality:** High shadow quality enables cascaded shadow maps with higher sample counts — visually prettier, but Shadow Quality = Medium already enables player shadows without the full cascade. Medium is the sweet spot.
+**2026 update:** Valve's Dynamic Shadows setting decoupled much of the competitive shadow information from the old global shadow-quality ladder. Keep shadows enabled and keep Dynamic Shadows enabled; use Low/Medium shadow quality based on FPS budget. Medium remains the suite's balanced high/mid-tier default, but it is not a universal rule.
 
-**Why LOW tier doesn't use Low:** Even on LOW tier, player shadows are enabled. Removing them is a competitive disadvantage that outweighs the minor FPS gain.
+**Low tier:** Do not disable shadows entirely. Lower shadow quality/resolution first, but keep the shadow system on.
 
-### Texture Filtering: Always 16x Anisotropic
+### Texture Filtering: 16x Anisotropic When FPS Allows
 
 ```
 "setting.r_texturefilteringquality"  "5"  // 16x AF (HIGH and MID)
@@ -106,7 +106,7 @@ Since NVIDIA Pascal (2016) and AMD GCN 3rd gen (2015), the hardware anisotropic 
 
 What 16x AF does: sharpens textures viewed at oblique angles (floors, walls, the ground between cover). Without AF, floors and walls become blurry at shallow viewing angles — blurry surfaces where enemies might be hiding.
 
-### HDR: Performance for All Tiers
+### HDR: Performance Suite Default
 
 ```
 "setting.sc_hdr_enabled_override"  "3"  // Performance (all tiers)
@@ -116,7 +116,7 @@ CS2's HDR setting is a tone-mapping preference, not a resolution or sample count
 
 **Why Performance, not Quality?** This is the suite's current default based on community benchmarking and player preference. Some benchmarkers report that HDR Quality washes out high-contrast lit areas, but this is not a Valve-documented competitive rule. Benchmark and compare visually on your own display.
 
-### FidelityFX Super Resolution: Always Off
+### FidelityFX Super Resolution: Off By Default
 
 ```
 "setting.r_csgo_fsr_upsample"  "0"
@@ -130,7 +130,7 @@ If you need more FPS, lower the resolution explicitly rather than using FSR. Exp
 
 ```
 "setting.r_low_latency"  "1"  // Enabled (default recommendation)
-// Or: launch with -noreflex (community meta — contested)
+// Or: launch with -noreflex (contested test path)
 ```
 
 See [The Reflex Controversy](../README.md#the-reflex-controversy). The suite presents both options and lets you choose. Benchmark both configurations on your system.
@@ -160,11 +160,11 @@ The autoexec is generated and written by Step 34. Here's the rationale for each 
 
 **`rate 1000000`** — Maximum network bandwidth for receiving game state updates. CS2 servers send denser updates than CS:GO — this removes any artificial bandwidth cap.
 
-**`cl_net_buffer_ticks 0`**, **`cl_net_buffer_ticks_use_interp 1`**, **`cl_tickpacket_desired_queuelength 0`** — Minimize network-side buffering. `cl_net_buffer_ticks 0` disables the receive tick buffer (immediate rendering). `cl_net_buffer_ticks_use_interp 1` ties any remaining buffering to the interpolation window. `cl_tickpacket_desired_queuelength 0` removes the packet queue target. For unstable connections, the `cfgs/` network condition configs adjust these values.
+**`cl_net_buffer_ticks 0`**, **`cl_net_buffer_ticks_use_interp 1`**, **`cl_tickpacket_desired_queuelength 0`** — Minimize network-side buffering. `cl_net_buffer_ticks 0` is the broadly supported stable-connection setting. `cl_net_buffer_ticks_use_interp 1` and `cl_tickpacket_desired_queuelength 0` are advanced current-convar settings with less public evidence than `cl_net_buffer_ticks`, so the suite treats them as defensible low-latency defaults rather than universal 2026 meta. For unstable connections, the `cfgs/` network condition configs adjust these values.
 
 **`cl_interp_ratio 1`**, **`cl_interp 0`**, **`cl_updaterate 128`** — Deprecated in CS2 Source 2. The sub-tick system handles interpolation differently; `cl_net_buffer_ticks` is the actual control. These are kept as harmless belt-and-suspenders (silently ignored by the engine but cause no harm if set).
 
-**`mm_dedicated_search_maxping 80`** and **`mm_session_search_qos_timeout 20`** — Maximum matchmaking ping and QoS probe timeout. 80ms works for most regions (EU players can lower to 40; SEA players may need 80–150). Value 40 used by some guides is too aggressive in low-server-density regions.
+**`mm_dedicated_search_maxping 40`** and **`mm_session_search_qos_timeout 20`** — Maximum matchmaking ping and QoS probe timeout. 40ms is a practical EU/current-meta baseline. Raise to 80–150 in low-server-density regions or when queue times get unreasonable.
 
 **`cl_timeout 30`** — Seconds before the client disconnects from an unresponsive server. Default is appropriate for stable connections; the `cfgs/net_unstable` and `cfgs/net_bad` configs raise this to 60.
 
@@ -316,15 +316,9 @@ This disables NVIDIA Reflex entirely at the engine level. See [The Reflex Contro
 
 ---
 
-## The Intel Hybrid Thread Pool Exception
+## Thread Pool Policy
 
-For Intel 12th gen+ CPUs (Alder Lake, Raptor Lake), the autoexec generator adds one additional CVar:
-
-```
-thread_pool_option 2
-```
-
-This remains a suite heuristic for Intel hybrid CPUs, not a Valve-documented recommendation. It is auto-detected by matching `Win32_Processor.Name` against `1[2-9]\d{3}[A-Z]` (12th-19th gen series).
+The suite no longer auto-adds `thread_pool_option`. Current 2026 guidance is to leave Source 2 thread scheduling alone unless you have benchmark evidence on your specific CPU that a manual override improves frametimes.
 
 ---
 

@@ -11,6 +11,7 @@
 
 $Script:DashboardLastLoad = [datetime]::MinValue
 $Script:StartupDriftChecked = $false
+$Script:NetworkRegionPickerUpdating = $false
 
 function Get-StateDataSafe {
     try {
@@ -34,6 +35,32 @@ function New-DefaultState {
         mode    = "AUTO"
         profile = "RECOMMENDED"
     }
+}
+
+function Get-UISyncValue {
+    param(
+        [Parameter(Mandatory)]$Store,
+        [Parameter(Mandatory)][string]$Name
+    )
+    if ($Store -is [System.Collections.IDictionary]) {
+        if ($Store.Contains($Name)) { return $Store[$Name] }
+        return $null
+    }
+    if ($Store.PSObject.Properties[$Name]) { return $Store.$Name }
+    return $null
+}
+
+function Set-UISyncValue {
+    param(
+        [Parameter(Mandatory)]$Store,
+        [Parameter(Mandatory)][string]$Name,
+        $Value
+    )
+    if ($Store -is [System.Collections.IDictionary]) {
+        $Store[$Name] = $Value
+        return
+    }
+    $Store | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
 
 function Should-SkipStartupDriftCheck {
@@ -227,7 +254,7 @@ function Load-Dashboard {
                     Select-Object -First 1
             } else { $null }
             $optExists = if ($cs2) { Test-Path "$cs2\game\csgo\cfg\optimization.cfg" } else { $false }
-            $UISync.Hw = @{
+            $UISync["Hw"] = @{
                 CpuName  = $cpu
                 GpuName  = $gpuN; GpuDriver = $gpuD; GpuVendor = (Get-ChipsetVendor)
                 RamGb    = if ($ram) { "$($ram.TotalGB) GB" } else { "?" }
@@ -250,12 +277,12 @@ function Load-Dashboard {
                 OptOk    = $optExists
                 VtxtOk   = ($null -ne $vtxt)
             }
-        } catch { $UISync.HwErr = $_.Exception.Message }
-        $UISync.HwDone = $true
+        } catch { $UISync["HwErr"] = $_.Exception.Message }
+        $UISync["HwDone"] = $true
     } -WorkArgs @($Script:Root, $Script:UISync) -OnDone {
-        $hw = $Script:UISync.Hw
+        $hw = Get-UISyncValue -Store $Script:UISync -Name "Hw"
         if (-not $hw) {
-            $hwErr = $Script:UISync.HwErr
+            $hwErr = Get-UISyncValue -Store $Script:UISync -Name "HwErr"
             (El "CardCpuName").Text = if ($hwErr) { "Error: $hwErr" } else { "Detection failed" }
             return
         }
@@ -298,17 +325,19 @@ function Start-Analysis {
     (El "BtnRunAnalysis").Content   = "Scanning…"
     (El "AnalyzeScanTime").Text     = "Scanning…"
     (El "AnalysisGrid").ItemsSource = $null
+    Set-UISyncValue -Store $Script:UISync -Name "AnalysisError" -Value $null
+    Set-UISyncValue -Store $Script:UISync -Name "AnalysisResults" -Value @()
 
     Invoke-Async -Work {
         param($ScriptRoot, $UISync)
         . "$ScriptRoot\config.env.ps1"
         . "$ScriptRoot\helpers.ps1"
         . "$ScriptRoot\helpers\system-analysis.ps1"
-        try { $UISync.AnalysisResults = Invoke-SystemAnalysis }
-        catch { $UISync.AnalysisError = $_.Exception.Message }
+        try { $UISync["AnalysisResults"] = @(Invoke-SystemAnalysis) }
+        catch { $UISync["AnalysisError"] = $_.Exception.Message }
     } -WorkArgs @($Script:Root, $Script:UISync) -OnDone {
-        $analysisErr = $Script:UISync.AnalysisError
-        $res = $Script:UISync.AnalysisResults
+        $analysisErr = Get-UISyncValue -Store $Script:UISync -Name "AnalysisError"
+        $res = @(Get-UISyncValue -Store $Script:UISync -Name "AnalysisResults")
         if (-not $res) { $res = @() }
         (El "AnalysisGrid").ItemsSource = $res
         $ok   = @($res | Where-Object Status -eq "OK").Count
@@ -327,8 +356,8 @@ function Start-Analysis {
         }
         Refresh-StorageHealthCard
         # Clear for next run
-        $Script:UISync.AnalysisError   = $null
-        $Script:UISync.AnalysisResults = $null
+        Set-UISyncValue -Store $Script:UISync -Name "AnalysisError" -Value $null
+        Set-UISyncValue -Store $Script:UISync -Name "AnalysisResults" -Value $null
     }
 }
 
@@ -562,9 +591,9 @@ function Start-InlineVerify {
             }
         } catch {}
 
-        $UISync.VerifyResults = @($verified)
+        $UISync["VerifyResults"] = @($verified)
     } -WorkArgs @($Script:Root, $Script:UISync) -OnDone {
-        $verified = $Script:UISync.VerifyResults
+        $verified = Get-UISyncValue -Store $Script:UISync -Name "VerifyResults"
         if (-not $verified) { $verified = @() }
 
         # Update progress.json with verified steps
@@ -611,7 +640,7 @@ function Start-InlineVerify {
             "Verified: $total steps applied.`nProgress already up to date."
         }
         [System.Windows.MessageBox]::Show($msg, "Verification Complete")
-        $Script:UISync.VerifyResults = $null
+        Set-UISyncValue -Store $Script:UISync -Name "VerifyResults" -Value $null
     }
 }
 
@@ -926,7 +955,7 @@ function Draw-BenchChart {
     if ($parsed) {
         (El "BenchCapLabel").Text = "→  Cap:"
         (El "BenchCapValue").Text = "$($parsed.Cap)"
-        $Script:UISync.LastCap = $parsed.Cap
+        Set-UISyncValue -Store $Script:UISync -Name "LastCap" -Value $parsed.Cap
     } else {
         (El "BenchCapLabel").Text = "⚠  No [VProf] FPS line detected"
         (El "BenchCapValue").Text = ""
@@ -934,7 +963,7 @@ function Draw-BenchChart {
 })
 
 (El "BtnBenchCopy").Add_Click({
-    $cap = $Script:UISync.LastCap
+    $cap = Get-UISyncValue -Store $Script:UISync -Name "LastCap"
     if ($cap) {
         try { [System.Windows.Clipboard]::SetText("$cap") }
         catch { Write-DebugLog "Clipboard copy failed: $_" }
@@ -956,7 +985,99 @@ function Draw-BenchChart {
 # ══════════════════════════════════════════════════════════════════════════════
 # NETWORK
 # ══════════════════════════════════════════════════════════════════════════════
+function Get-NetSelectedRegion {
+    $selected = (El "NetDiagRegionPicker").SelectedItem
+    if ($selected) { return [string]$selected }
+    return ""
+}
+
+function Get-NetSortMode {
+    $selected = (El "NetDiagSortPicker").SelectedItem
+    if ($selected) { return [string]$selected }
+    return "Ping"
+}
+
+function Initialize-NetSortPicker {
+    $picker = El "NetDiagSortPicker"
+    if ($picker.Items.Count -gt 0) { return }
+    foreach ($mode in @("Ping", "Region", "Delta", "Timeouts", "Blocked")) {
+        [void]$picker.Items.Add($mode)
+    }
+    $picker.SelectedItem = "Ping"
+}
+
+function Update-NetRegionPicker {
+    param($ComparisonRows)
+
+    $picker = El "NetDiagRegionPicker"
+    $current = Get-NetSelectedRegion
+    $regions = @($ComparisonRows | ForEach-Object { $_.TargetLabel } | Where-Object { $_ } | Select-Object -Unique)
+
+    $Script:NetworkRegionPickerUpdating = $true
+    try {
+        $picker.Items.Clear()
+        foreach ($region in $regions) {
+            [void]$picker.Items.Add($region)
+        }
+
+        if ($regions.Count -eq 0) {
+            $picker.SelectedIndex = -1
+            return ""
+        }
+
+        if ($current -and $current -in $regions) {
+            $picker.SelectedItem = $current
+            return $current
+        }
+
+        $picker.SelectedIndex = 0
+        return [string]$regions[0]
+    } finally {
+        $Script:NetworkRegionPickerUpdating = $false
+    }
+}
+
+function Update-NetRegionSummary {
+    param(
+        [string]$SelectedRegion,
+        $ComparisonRows
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SelectedRegion)) {
+        (El "NetDiagRegionSummary").Text = "Run a baseline test to choose a region."
+        return
+    }
+
+    $row = @($ComparisonRows | Where-Object { $_.TargetLabel -eq $SelectedRegion } | Select-Object -First 1)
+    if (-not $row) {
+        (El "NetDiagRegionSummary").Text = "Selected region is not present in the latest run."
+        return
+    }
+
+    $baseline = if ($null -ne $row.BaselineAvgMs) { "$($row.BaselineAvgMs) ms" } else { "timeout" }
+    $post = if ($null -ne $row.PostAvgMs) { "$($row.PostAvgMs) ms" } else { "not run" }
+    $delta = if ($null -ne $row.DeltaMs) {
+        $sign = if ($row.DeltaMs -gt 0) { "+" } else { "" }
+        "  ·  Delta: $sign$($row.DeltaMs) ms"
+    } else { "" }
+    (El "NetDiagRegionSummary").Text = "$SelectedRegion  ·  Baseline: $baseline  ·  Post: $post$delta"
+}
+
+function Update-NetFirewallSummary {
+    try {
+        $blocked = @(Get-BlockedValveRelayRegions)
+        if ($blocked.Count -gt 0) {
+            (El "NetDiagFirewallSummary").Text = "Blocked: $(@($blocked.RegionName) -join ', ')"
+        } else {
+            (El "NetDiagFirewallSummary").Text = "No CS2 network blocks active."
+        }
+    } catch {
+        (El "NetDiagFirewallSummary").Text = "Firewall state unavailable."
+    }
+}
+
 function Load-NetworkDiagnostics {
+    Initialize-NetSortPicker
     $summary = Get-NetworkDiagnosticSummary
     if (-not $summary.AdapterFound) {
         (El "NetDiagAdapterSummary").Text = "Adapter: no active adapter found"
@@ -967,13 +1088,67 @@ function Load-NetworkDiagnostics {
         (El "NetDiagDnsSummary").Text = "DNS: $($summary.DnsProvider)  ·  $dnsText"
     }
 
-    $historyRows = @(Get-LatencyHistoryRows)
+    $comparisonRows = @(Get-ValveLatencyComparisonRows -SortBy (Get-NetSortMode))
+    $selectedRegion = Update-NetRegionPicker -ComparisonRows $comparisonRows
+    Update-NetRegionSummary -SelectedRegion $selectedRegion -ComparisonRows $comparisonRows
+
+    $historyRows = @(Get-LatencyHistoryRows -SelectedRegion $selectedRegion)
     (El "NetDiagHistoryGrid").ItemsSource = $historyRows
-    (El "NetDiagComparisonGrid").ItemsSource = @(Get-ValveLatencyComparisonRows)
+    (El "NetDiagComparisonGrid").ItemsSource = $comparisonRows
     (El "NetDiagHistorySummary").Text = if ($historyRows.Count -gt 0) {
-        "Latest run: $($historyRows[-1].Timestamp)  ·  $($historyRows[-1].Kind)"
+        $latest = $historyRows[-1]
+        $latestRegion = if ($latest.PSObject.Properties['SelectedRegion'] -and $latest.SelectedRegion) { [string]$latest.SelectedRegion } else { $selectedRegion }
+        $latestRegionRtt = if ($latest.PSObject.Properties['RegionRttMs']) { $latest.RegionRttMs } else { $null }
+        $rtt = if ($null -ne $latestRegionRtt) { "$latestRegionRtt ms" } else { "timeout" }
+        "Latest run: $($latest.Timestamp)  ·  $($latest.Kind)  ·  ${latestRegion}: $rtt"
     } else {
         "No latency diagnostics recorded yet."
+    }
+    Update-NetFirewallSummary
+}
+
+function Invoke-GuiValveRelayBlock {
+    param(
+        [ValidateSet("block", "unblock", "unblockAll")][string]$Action
+    )
+
+    try {
+        if ($Action -eq "unblockAll") {
+            $confirm = [System.Windows.MessageBox]::Show(
+                "Remove all firewall rules created by CS2 Optimize for Valve network blocking?",
+                "Valve Network Blocks", "YesNo", "Question")
+            if ($confirm -ne "Yes") { return }
+            $result = Unblock-AllValveRelayRegions
+            Load-NetworkDiagnostics
+            [System.Windows.MessageBox]::Show("Removed $($result.Count) network block rule(s).", "Valve Network Blocks")
+            return
+        }
+
+        $region = Get-NetSelectedRegion
+        if ([string]::IsNullOrWhiteSpace($region)) {
+            [System.Windows.MessageBox]::Show("Select a focus region first.", "Valve Network Blocks", "OK", "Warning")
+            return
+        }
+
+        if ($Action -eq "block") {
+            $confirm = [System.Windows.MessageBox]::Show(
+                "Block outbound traffic to Valve relay/server targets for:`n$region`n`nThis may prevent CS2 from using that region until you unblock it.",
+                "Block Focus Region", "YesNo", "Warning")
+            if ($confirm -ne "Yes") { return }
+            $result = Block-ValveRelayRegion -RegionName $region
+            Load-NetworkDiagnostics
+            [System.Windows.MessageBox]::Show("Blocked $($result.AddressCount) address(es) for $region.", "Valve Network Blocks")
+        } else {
+            $result = Unblock-ValveRelayRegion -RegionName $region
+            Load-NetworkDiagnostics
+            if ($result.Changed) {
+                [System.Windows.MessageBox]::Show("Unblocked $region.", "Valve Network Blocks")
+            } else {
+                [System.Windows.MessageBox]::Show("$region was not blocked by CS2 Optimize.", "Valve Network Blocks")
+            }
+        }
+    } catch {
+        [System.Windows.MessageBox]::Show("Firewall update failed:`n$($_.Exception.Message)`n`nRun the GUI as Administrator and make sure Windows Firewall is available.", "Valve Network Blocks", "OK", "Error")
     }
 }
 
@@ -986,18 +1161,20 @@ function Start-LatencyDiagnostic {
     (El "BtnNetBaseline").IsEnabled = $false
     (El "BtnNetPost").IsEnabled = $false
     (El $buttonName).Content = if ($Kind -eq "baseline") { "Running…" } else { "Retesting…" }
+    Set-UISyncValue -Store $Script:UISync -Name "LatencyError" -Value $null
+    Set-UISyncValue -Store $Script:UISync -Name "LatencyRun" -Value $null
 
     Invoke-Async -Work {
         param($ScriptRoot, $UISync, $RunKind)
         . "$ScriptRoot\config.env.ps1"
         . "$ScriptRoot\helpers.ps1"
         try {
-            $UISync.LatencyRun = Invoke-ValveRegionLatencyDiagnostic -Kind $RunKind
+            $UISync["LatencyRun"] = Invoke-ValveRegionLatencyDiagnostic -Kind $RunKind
         } catch {
-            $UISync.LatencyError = $_.Exception.Message
+            $UISync["LatencyError"] = $_.Exception.Message
         }
     } -WorkArgs @($Script:Root, $Script:UISync, $Kind) -OnDone {
-        $err = $Script:UISync.LatencyError
+        $err = Get-UISyncValue -Store $Script:UISync -Name "LatencyError"
         Load-NetworkDiagnostics
         (El "BtnNetBaseline").IsEnabled = $true
         (El "BtnNetPost").IsEnabled = $true
@@ -1006,12 +1183,12 @@ function Start-LatencyDiagnostic {
         if ($err) {
             [System.Windows.MessageBox]::Show("Latency diagnostic failed:`n$err", "Network Diagnostic", "OK", "Error")
         } else {
-            $run = $Script:UISync.LatencyRun
+            $run = Get-UISyncValue -Store $Script:UISync -Name "LatencyRun"
             $okRegions = @($run.Results | Where-Object { $null -ne $_.AvgRttMs }).Count
             [System.Windows.MessageBox]::Show("Saved $($run.Kind) run at $($run.Timestamp).`nResponsive regions: $okRegions / $(@($run.Results).Count)", "Network Diagnostic")
         }
-        $Script:UISync.LatencyRun = $null
-        $Script:UISync.LatencyError = $null
+        Set-UISyncValue -Store $Script:UISync -Name "LatencyRun" -Value $null
+        Set-UISyncValue -Store $Script:UISync -Name "LatencyError" -Value $null
     }
 }
 
@@ -1034,8 +1211,15 @@ function Invoke-GuiDnsProfileChange {
 }
 
 (El "BtnNetRefresh").Add_Click({ Load-NetworkDiagnostics })
+(El "NetDiagSortPicker").Add_SelectionChanged({ Load-NetworkDiagnostics })
+(El "NetDiagRegionPicker").Add_SelectionChanged({
+    if (-not $Script:NetworkRegionPickerUpdating) { Load-NetworkDiagnostics }
+})
 (El "BtnNetBaseline").Add_Click({ Start-LatencyDiagnostic -Kind baseline })
 (El "BtnNetPost").Add_Click({ Start-LatencyDiagnostic -Kind post })
+(El "BtnNetBlockRegion").Add_Click({ Invoke-GuiValveRelayBlock -Action block })
+(El "BtnNetUnblockRegion").Add_Click({ Invoke-GuiValveRelayBlock -Action unblock })
+(El "BtnNetUnblockAllRegions").Add_Click({ Invoke-GuiValveRelayBlock -Action unblockAll })
 (El "BtnNetDnsCloudflare").Add_Click({ Invoke-GuiDnsProfileChange -Provider Cloudflare })
 (El "BtnNetDnsGoogle").Add_Click({ Invoke-GuiDnsProfileChange -Provider Google })
 (El "BtnNetDnsDhcp").Add_Click({ Invoke-GuiDnsProfileChange -Provider DHCP })
@@ -1100,39 +1284,41 @@ function Load-Video {
 # Single source of truth for video tier presets (V=value, N=note for display)
 $Script:VideoPresets = @{
     "HIGH" = @{
-        "setting.msaa_samples"              = @{ V="4";  N="4x MSAA — better 1% lows than None (ThourCS2)" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Always OFF — adds render queue latency" }
+        "setting.msaa_samples"              = @{ V="4";  N="4x MSAA — high-end default; benchmark vs 2x/CMAA2" }
+        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh low-latency default" }
         "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen — bypasses DWM compositor" }
         "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On — saves 3-4ms input latency" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — artifacts harm enemy recognition" }
-        "setting.shaderquality"             = @{ V="1";  N="High — GPU has headroom at this tier" }
+        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — native clarity default" }
+        "setting.shaderquality"             = @{ V="1";  N="High — quality default when GPU has headroom" }
         "setting.r_texturefilteringquality" = @{ V="5";  N="AF16x — near-zero cost on modern GPUs" }
         "setting.r_csgo_cmaa_enable"        = @{ V="0";  N="Off — MSAA handles AA" }
         "setting.r_aoproxy_enable"          = @{ V="0";  N="AO off — purely cosmetic, up to 6% FPS cost" }
-        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance — Quality washes out sun/window areas" }
+        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance — suite default; compare visually" }
         "setting.r_particle_max_detail_level"=@{ V="0";  N="Low particles — no competitive disadvantage" }
-        "setting.csm_enabled"               = @{ V="1";  N="Shadows ON — foot shadows reveal enemy positions" }
+        "setting.csm_enabled"               = @{ V="1";  N="Shadows ON — keep tactical shadow cues" }
+        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All — current competitive cue default" }
     }
     "MID" = @{
-        "setting.msaa_samples"              = @{ V="4";  N="4x — or 2x if below 200 avg FPS" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Always OFF" }
+        "setting.msaa_samples"              = @{ V="4";  N="4x — or 2x if FPS budget is tight" }
+        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh default" }
         "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen" }
         "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF" }
+        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — native clarity default" }
         "setting.shaderquality"             = @{ V="0";  N="Low — saves GPU headroom on mid-tier" }
         "setting.r_texturefilteringquality" = @{ V="5";  N="AF16x" }
         "setting.r_csgo_cmaa_enable"        = @{ V="0";  N="Off — MSAA handles AA" }
         "setting.r_aoproxy_enable"          = @{ V="0";  N="AO off" }
-        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance" }
+        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance — suite default" }
         "setting.r_particle_max_detail_level"=@{ V="0";  N="Low" }
         "setting.csm_enabled"               = @{ V="1";  N="Shadows ON" }
+        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All" }
     }
     "LOW" = @{
         "setting.msaa_samples"              = @{ V="0";  N="None + CMAA2 — free AA alternative" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Always OFF" }
+        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh default" }
         "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen — critical for FPS" }
         "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF" }
+        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — lower resolution first" }
         "setting.shaderquality"             = @{ V="0";  N="Low" }
         "setting.r_texturefilteringquality" = @{ V="0";  N="Bilinear — legacy for max FPS" }
         "setting.r_csgo_cmaa_enable"        = @{ V="1";  N="CMAA2 ON — near-zero cost AA when MSAA=0" }
@@ -1140,6 +1326,7 @@ $Script:VideoPresets = @{
         "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance" }
         "setting.r_particle_max_detail_level"=@{ V="0";  N="Low" }
         "setting.csm_enabled"               = @{ V="1";  N="Shadows ON — keep even on low-end" }
+        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All — lower other shadow quality first" }
     }
 }
 

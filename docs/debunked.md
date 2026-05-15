@@ -22,7 +22,7 @@ These settings are actively present in popular guides. We have not included them
 | `mat_queue_mode 2` in autoexec | Async rendering boost | Source 1 CVar. No-op or undefined behavior in CS2 Source 2. | CS2 community testing |
 | `r_dynamic 0` in autoexec | Reduces dynamic lighting load | Disables muzzle flash and grenade lighting. Removes gameplay-relevant visual information for minimal FPS gain. | Community testing |
 | QoS DSCP tagging *(without NLA prerequisite)* | Network priority at router | Requires `Do not use NLA` registry key to actually take effect. Without it, `New-NetQosPolicy` silently succeeds but DSCP marks are never applied. The suite implements this correctly in Step 16. | Windows QoS documentation |
-| `mm_dedicated_search_maxping 40` | Forces low-ping servers | Value 40 is too aggressive for low-server-density regions. Suite uses 80ms with a note to tune by region. | CS2 community feedback |
+| `mm_dedicated_search_maxping 25` | Forces only very-low-ping servers | Value 25 is too restrictive for many queues. Suite uses 40ms as an EU/current-meta baseline and recommends 80–150 in low-server-density regions. | CS2 community feedback |
 | `cl_cmdrate` in autoexec | Forces command send rate | Removed in CS2. Source 2 sends inputs every frame. The CVar is parsed and silently ignored. | CS2 Source 2 architecture |
 | `net_graph 1` in autoexec | Shows network stats | Removed in CS2. Replaced by `cl_hud_telemetry_*` CVars. | CS2 changelog |
 | `-nojoy` launch option | Removes controller support | Single-digit MB freed. No measurable FPS or latency impact. | ArminC-AutoExec notes |

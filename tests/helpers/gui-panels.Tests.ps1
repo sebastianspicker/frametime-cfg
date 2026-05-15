@@ -164,6 +164,15 @@ Describe "Network panel helpers" {
         @((El "NetDiagComparisonGrid").ItemsSource).Count | Should -Be 1
         @((El "NetDiagHistoryGrid").ItemsSource).Count | Should -Be 1
     }
+
+    It "reads missing async result keys as null under StrictMode" {
+        $Script:UISync = [hashtable]::Synchronized(@{})
+
+        Get-UISyncValue -Store $Script:UISync -Name "LatencyError" | Should -BeNullOrEmpty
+
+        Set-UISyncValue -Store $Script:UISync -Name "LatencyError" -Value "boom"
+        Get-UISyncValue -Store $Script:UISync -Name "LatencyError" | Should -Be "boom"
+    }
 }
 
 Describe "Analyze storage helpers" {

@@ -459,10 +459,10 @@ if ($startStep -le 5) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 6 — CS2 LAUNCH OPTIONS + VIDEO SETTINGS (Feb 2026 Meta)
+# STEP 6 — CS2 LAUNCH OPTIONS + VIDEO SETTINGS (May 2026 Meta)
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 6) {
-    Write-Section "Step 6 — Launch Options + Video Settings (Feb 2026 Meta)"
+    Write-Section "Step 6 — Launch Options + Video Settings (May 2026 Meta)"
     Show-CS2SettingsGuide -fpsCap $fpsCap -avgFps $avgFps -gpuInput $gpuInput
     Complete-Step $PHASE 6 "CS2Settings"
 }

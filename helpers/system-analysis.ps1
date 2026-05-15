@@ -393,16 +393,16 @@ function Invoke-CheckCS2 {
 
     # optimization.cfg
     $optExists = Test-Path $optPath
-    $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "74 optimized CVars — network, audio, mouse, video"))
+        $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "73 optimized CVars — network, audio, mouse, video"))
 
     if ($optExists) {
         # Check key CVars in optimization.cfg
         $optContent = Get-Content $optPath -Raw -ErrorAction SilentlyContinue
         $keyChecks = @(
-            @{ CVar="snd_use_hrtf"; Expected="1"; Impact="Steam Audio HRTF enable" }
             @{ CVar="cl_autowepswitch"; Expected="0"; Impact="Prevents auto weapon switch on pickup" }
             @{ CVar="rate";         Expected="1000000"; Impact="CS2 max bandwidth rate" }
-            @{ CVar="speaker_config"; Expected="1"; Impact="Headphones mode — required for HRTF" }
+            @{ CVar="speaker_config"; Expected="1"; Impact="Headphone-mode suite baseline" }
+            @{ CVar="snd_spatialize_lerp"; Expected="0"; Impact="Headphone/spatial suite default; listening-dependent" }
         )
         foreach ($ck in $keyChecks) {
             if ($optContent -match "(?m)^\s*$([regex]::Escape($ck.CVar))\s+(\S+)") {
@@ -423,10 +423,10 @@ function Invoke-CheckCS2 {
             if ($vtxt) {
                 $vtContent = Get-Content $vtxt.FullName -Raw -ErrorAction SilentlyContinue
                 $vtChecks = @(
-                    @{ Key="setting.msaa_samples";         Expected="4";  Label="MSAA";            Impact="Community benchmark default for stronger 1% lows" }
+                    @{ Key="setting.msaa_samples";         Expected="4";  Label="MSAA";            Impact="High-end/mid default; benchmark against 2x or CMAA2 if FPS budget is tight" }
                     @{ Key="setting.r_low_latency";        Expected="1";  Label="NVIDIA Reflex";   Impact="Common low-latency default; benchmark if unsure" }
-                    @{ Key="setting.mat_vsync";            Expected="0";  Label="VSync";           Impact="Must be OFF — adds 1-3 frames render queue latency" }
-                    @{ Key="setting.sc_hdr_enabled_override"; Expected="3"; Label="HDR Shader"; Impact="Performance mode — Quality washes out window/sun areas" }
+                    @{ Key="setting.mat_vsync";            Expected="0";  Label="VSync";           Impact="Fixed-refresh low-latency default; validate separately for VRR/G-SYNC stacks" }
+                    @{ Key="setting.sc_hdr_enabled_override"; Expected="3"; Label="HDR Shader"; Impact="Performance mode suite default; compare visually on your display" }
                     @{ Key="setting.fullscreen";           Expected="1";  Label="Fullscreen Mode"; Impact="Exclusive FS bypasses DWM compositor — lower input latency" }
                 )
                 foreach ($vc in $vtChecks) {

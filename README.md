@@ -281,7 +281,7 @@ For script changes, also run PSScriptAnalyzer with [`PSScriptAnalyzerSettings.ps
 | 31 | Game Bar / Game DVR off | T2 | SAFE | `AppCaptureEnabled=0`, `GameDVR_Enabled=0`, `AllowGameDVR=0` |
 | 32 | Overlay disable | T2 | SAFE | Steam `GameOverlayDisabled=1` + GeForce Experience guide |
 | 33 | Audio optimization | T2 | SAFE | Exclusive mode guide + `UserDuckingPreference=3` (ducking off) |
-| 34 | Autoexec.cfg + launch options | T2 | SAFE | 73 CVars (10 categories), 4 network CFGs deployed, Intel `thread_pool_option=2` auto-detected |
+| 34 | Autoexec.cfg + launch options | T2 | SAFE | 73 CVars (10 categories), 4 network CFGs deployed, no automatic thread-pool forcing |
 | 35 | Chipset driver check | T2 | SAFE | AMD/Intel chipset update links |
 | 36 | Visual effects + Defender + HDR | T3 | SAFE | `VisualFXSetting=2`, cs2.exe Defender exclusion, `AutoHDREnabled=0` |
 | 37 | Services disable | T3 | MODERATE | SysMain, WSearch, qWave (DSCP survives), 4 Xbox services (warns about wireless controllers) |
@@ -485,7 +485,7 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | [fREQUENCYcs / FPSHeaven](https://fpsheaven.com) | Power plan (original .pow, which we decoded and bug-fixed), FPS cap formula, benchmark maps |
 | [valleyofdoom/PC-Tuning](https://github.com/valleyofdoom/PC-Tuning) | MPO, timer resolution, MSI interrupts, `tscsyncpolicy` WinDbg analysis, general Windows optimization |
 | [djdallmann/GamingPCSetup](https://github.com/djdallmann/GamingPCSetup) | NIC interrupt coalescing empirical test, MMCSS/NetworkThrottlingIndex xperf, FTH analysis, Automatic Maintenance CPU measurement, PS/2 vs USB DPC |
-| [prosettings.net](https://prosettings.net/guides/cs2-options/) | Pro settings aggregation (866 players), damage prediction study |
+| [prosettings.net](https://prosettings.net/guides/cs2-options/) | Pro settings aggregation (883 players, Apr 2026), damage prediction study |
 | [Orbmu2k/nvidiaProfileInspector](https://github.com/Orbmu2k/nvidiaProfileInspector) | `NvApiDriverSettings.h` + `CustomSettingNames.xml` for DRS setting decode |
 | [CXWorld/CapFrameX](https://github.com/CXWorld/CapFrameX) | Benchmark measurement tool |
 

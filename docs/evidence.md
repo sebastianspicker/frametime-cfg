@@ -121,7 +121,7 @@ Shows exactly how each step behaves under every profile. **DRY-RUN** is a modifi
 | 31 | Xbox Game Bar / Game DVR off | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | No more Win+G recording |
 | 32 | Overlay disable | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Discord/AMD/GFE require manual steps |
 | 33 | Audio optimization | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Guide only — manual Sound settings |
-| 34 | Autoexec.cfg generator + Launch Options | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | 73 CVars; m_rawinput stub; Intel thread_pool_option=2 auto-detected |
+| 34 | Autoexec.cfg generator + Launch Options | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | 73 CVars; m_rawinput stub; no automatic thread_pool_option forcing |
 | 35 | Chipset driver check | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Download link only; no auto-install |
 | 36 | Visual effects + Defender exclusions + Auto HDR off | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Defender: cs2.exe + shader cache exclusions; Win11 Auto HDR disabled |
 | 37 | SysMain + WSearch + qWave + Xbox services off | T3 | MODERATE | `skip` | `skip` | `prompted` | `prompted` | Measurable on HDD. qWave: UDP DPC noise redundant with Step 16. Xbox: skip if using Game Pass/wireless |

@@ -6,7 +6,7 @@ The GUI Network panel adds a before/after latency workflow without claiming to m
 
 This feature is intentionally framed as a **diagnostic proxy**:
 
-- It measures ICMP reachability and round-trip time to a versioned set of heuristic Valve/Steam region candidates.
+- It fetches Valve's live SDR relay config for CS2 (`ISteamApps/GetSDRConfig`, appid 730) and measures ICMP round-trip time to those relays.
 - It helps compare route quality before and after DNS changes.
 - It does **not** claim to be a Valve-official server ping or a guaranteed in-match latency predictor.
 
@@ -26,6 +26,7 @@ Each run records:
 
 Each region result records:
 
+- `RegionCode`
 - `TargetLabel`
 - `ResolvedEndpoint`
 - `ProtocolUsed`
@@ -51,7 +52,19 @@ That file is:
 - versioned
 - explicitly heuristic
 
-The current candidate sets were adapted from the public `cs2-omz` region list, but this repo uses PowerShell-native ICMP probing rather than TCP handshake timing. Some candidates will therefore show timeouts when ICMP is filtered. That is expected.
+The live target loading follows the same broad data source used by Server Picker X: Valve's `ISteamApps/GetSDRConfig/v1/?appid=730` response. The GUI parses `pops`, skips China/Perfect World entries, and probes each region's relay IPv4 list until one responds. If the API cannot be reached, the checked-in JSON remains an offline fallback.
+
+Valve's current CS2 SDR config lists `fsn` as Falkenstein, but does not expose CS2 relay IPs for it. The GUI therefore adds a separately labeled known-host target, `Falkenstein (Germany) - Hetzner hosted`, from public Valve Source server listings for `srcds1001-1007-fsn-hetz`:
+
+- `138.199.142.208`
+- `138.199.142.209`
+- `138.199.142.210`
+- `138.199.142.211`
+- `138.199.142.212`
+- `138.199.142.213`
+- `138.199.142.214`
+
+This target is deliberately not described as a current CS2 SDR relay set. It exists to separate Frankfurt (`fra`) from the known Falkenstein Hetzner-hosted Valve addresses when comparing and blocking regions.
 
 ## DNS Workflow
 
