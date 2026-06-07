@@ -77,6 +77,9 @@ function Set-NicRssConfig {
         vs. default Core 0 allocation."
     #>
 
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
     Write-Step "Configuring NIC RSS (Receive Side Scaling) distribution..."
 
     $nic = Get-ActiveNicAdapter
@@ -103,7 +106,7 @@ function Set-NicRssConfig {
         $subkeys = @()
         for ($i = 0; $i -le 30; $i++) {
             $subPath = "$classPath\$($i.ToString('D4'))"
-            try { $subkeys += Get-Item $subPath -ErrorAction Stop } catch { }
+            try { $subkeys += Get-Item $subPath -ErrorAction Stop } catch { $null = $_ }
         }
         if (-not $subkeys) {
             Write-Warn "RSS: could not access network class registry keys — skipping RSS configuration."
@@ -138,6 +141,9 @@ function Set-NicRssConfig {
     }
 
     Write-Info "RSS NIC: $($nic.InterfaceDescription)"
+    if (-not $PSCmdlet.ShouldProcess($driverKey, "Configure NIC RSS registry values for $($nic.InterfaceDescription)")) {
+        return
+    }
 
     # Ensure RSS master switch is enabled — some Realtek drivers ship with *RSS=0
     # which silently ignores all RSS sub-parameters (queues, base proc, etc.).
@@ -242,6 +248,8 @@ function Set-NicInterruptAffinity {
     .SYNOPSIS  Sets NIC interrupt affinity using the suite's last-core heuristic (avoids Core 0).
                Replaces GoInterruptPolicy for NIC interrupt binding.
     #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
 
     Write-Step "Setting NIC interrupt affinity..."
 
@@ -359,6 +367,9 @@ function Set-NicInterruptAffinity {
 
     $regBase = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($nic.InstanceId)"
     $affinityPath = "$regBase\Device Parameters\Interrupt Management\Affinity Policy"
+    if (-not $PSCmdlet.ShouldProcess($affinityPath, "Configure NIC interrupt affinity for $($nic.FriendlyName)")) {
+        return
+    }
 
     # Route DevicePolicy through Set-RegistryValue for consistent DRY-RUN/backup handling
     Set-RegistryValue $affinityPath "DevicePolicy" 4 "DWord" `

@@ -85,7 +85,9 @@ if (Test-Path $CFG_StateFile) {
     try {
         $_ps = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
         if ($_ps.profile -eq "YOLO") { $_preYolo = $true }
-    } catch {}
+    } catch {
+        Write-DebugLog "Could not inspect saved profile selection: $($_.Exception.Message)"
+    }
 }
 
 if ($_preYolo) {
@@ -104,14 +106,7 @@ if ($SCRIPT:DryRun) {
 
 $SCRIPT:Profile = switch ($pi) { "1" {"SAFE"} "2" {"RECOMMENDED"} "3" {"COMPETITIVE"} "4" {"CUSTOM"} "5" {"YOLO"} }
 # Mode is derived from profile (kept for backward-compat with Load-State / banner)
-$SCRIPT:Mode = switch ($SCRIPT:Profile) {
-    "SAFE"        { "AUTO" }
-    "RECOMMENDED" { "AUTO" }
-    "COMPETITIVE" { "CONTROL" }
-    "CUSTOM"      { "INFORMED" }
-    "YOLO"        { "YOLO" }
-}
-if ($SCRIPT:DryRun) { $SCRIPT:Mode = "DRY-RUN" }
+$SCRIPT:Mode = Get-ModeForProfile -Profile $SCRIPT:Profile -DryRun:$SCRIPT:DryRun
 
 # Log level — simplified for profiles
 if ($SCRIPT:Profile -eq "CUSTOM") {

@@ -4,7 +4,6 @@
 
 # ── CPU cache (lazy-initialized) ─────────────────────────────────────────────
 # Win32_Processor queries take ~50-200ms each. Cache the result for all callers.
-# Call Reset-CachedCpuInfo in tests to clear the cache between mocked scenarios.
 $Script:_cachedCpuInfo = $null
 function Get-CachedCpuInfo {
     if ($null -eq $Script:_cachedCpuInfo) {
@@ -13,7 +12,6 @@ function Get-CachedCpuInfo {
     }
     return $Script:_cachedCpuInfo
 }
-function Reset-CachedCpuInfo { $Script:_cachedCpuInfo = $null }
 
 # ── XMP / RAM ────────────────────────────────────────────────────────────────
 
@@ -66,12 +64,6 @@ function Get-RamInfo {
     }
 }
 
-function Test-XmpActive {
-    $ram = Get-RamInfo
-    if (-not $ram) { return $null }
-    return $ram.XmpActive
-}
-
 # ── NVIDIA Driver ────────────────────────────────────────────────────────────
 
 function Get-NvidiaDriverVersion {
@@ -110,17 +102,48 @@ $NVIDIA_STABLE_VERSION    = "566.36"
 
 # ── Benchmark Parser ─────────────────────────────────────────────────────────
 
+function ConvertTo-BenchmarkNumber {
+    param(
+        [AllowNull()][string]$Value,
+        [switch]$AllowZero
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch '^(?:0|[1-9]\d*)(?:\.\d+)?$') { return $null }
+
+    $parsed = 0.0
+    $ok = [double]::TryParse(
+        $trimmed,
+        [System.Globalization.NumberStyles]::Float,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [ref]$parsed)
+    if (-not $ok -or [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) { return $null }
+    if ($parsed -lt 0 -or (-not $AllowZero -and $parsed -le 0)) { return $null }
+    return $parsed
+}
+
 function Parse-BenchmarkOutput($text) {
-    $pattern = '\[VProf\]\s*FPS:\s*Avg\s*=\s*([\d.]+)\s*,\s*P1\s*=\s*([\d.]+)'
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    $pattern = '\[VProf\]\s*FPS:\s*Avg\s*=\s*(\S+?)\s*,\s*P1\s*=\s*(\S+)'
     $m = [regex]::Matches($text, $pattern)
     if ($m.Count -eq 0) { return $null }
-    $avgs = @($m | ForEach-Object { [float]::Parse($_.Groups[1].Value, [System.Globalization.CultureInfo]::InvariantCulture) })
-    $p1s  = @($m | ForEach-Object { [float]::Parse($_.Groups[2].Value, [System.Globalization.CultureInfo]::InvariantCulture) })
+    $avgs = [System.Collections.Generic.List[double]]::new()
+    $p1s  = [System.Collections.Generic.List[double]]::new()
+    foreach ($match in $m) {
+        $avg = ConvertTo-BenchmarkNumber $match.Groups[1].Value
+        $p1 = ConvertTo-BenchmarkNumber $match.Groups[2].Value -AllowZero
+        if ($null -ne $avg -and $null -ne $p1) {
+            $avgs.Add($avg) | Out-Null
+            $p1s.Add($p1) | Out-Null
+        }
+    }
+    if ($avgs.Count -eq 0) { return $null }
     return @{
         Avg    = [math]::Round(($avgs | Measure-Object -Average).Average, 1)
         P1     = [math]::Round(($p1s  | Measure-Object -Average).Average, 1)
-        Runs   = $m.Count
-        RawAvg = $avgs; RawP1 = $p1s
+        Runs   = $avgs.Count
+        RawAvg = $avgs.ToArray(); RawP1 = $p1s.ToArray()
     }
 }
 

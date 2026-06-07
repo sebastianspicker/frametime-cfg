@@ -26,6 +26,8 @@ Executed by the engine via `+exec autoexec` in launch options. This is CS2's scr
 
 **What belongs here:** Anything that can be set via the console — network settings, input settings, audio settings, HUD settings, gameplay preferences. Resolution and display mode do not belong here (they live in `video.txt`).
 
+Step 34 writes the suite's generated defaults to `optimization.cfg` and appends `exec optimization.cfg` to the user's `autoexec.cfg`. Optional standalone CFGs such as `net_stable`, `debug_hud`, and `audio_lowlatency_025` are copied into the same CS2 `cfg` directory, but they are not auto-executed.
+
 ### 3. Launch options — Engine initialization flags
 
 Set in Steam → Library → CS2 → Properties → Launch Options.
@@ -246,6 +248,15 @@ cl_hud_telemetry_serverrecvmargin_graph_show 0
 
 All set to 0 (hidden) in the autoexec. Show them individually if you're diagnosing specific issues.
 
+For a temporary full diagnostic overlay and console snapshot, use the optional Step 34 CFGs:
+
+```text
+exec debug_hud
+exec debug_hud_off
+```
+
+`debug_hud` enables the telemetry overlay and prints `net_print_sdr_ping_times`, `net_status`, and `cl_ticktiming print detail`. `debug_hud_off` returns telemetry visibility to the suite's quiet defaults.
+
 ### Audio Spatial + System (8 CVars)
 
 **`speaker_config 1`** — Sets the speaker configuration to Headphones. The suite treats this as the current headphone-focused spatial baseline.
@@ -257,6 +268,16 @@ The repo no longer documents a separate `snd_use_hrtf` toggle as an active CS2 C
 **`snd_spatialize_lerp 0`** — Controls interpolation smoothness for spatialized audio positions. The suite uses `0` as its current headphone-focused spatial default. Treat this as benchmark/listening-dependent, not as a hard competitive law.
 
 **`snd_mixahead 0.05`** — Audio buffer size in seconds (50ms). The suite uses this as a conservative, stability-oriented default. Some guides push much lower values, but those can be less tolerant of scheduling jitter. The current public convar dump shows a much lower engine default than older guides documented, so this repo now treats `0.05` as a suite choice, not as the Valve default.
+
+Step 34 also deploys optional audio CFGs for manual listen-and-benchmark testing:
+
+```text
+exec audio_lowlatency_025
+exec audio_lowlatency_001
+exec audio_stable
+```
+
+The low-latency CFGs keep `snd_autodetect_latency 1` and change only `snd_mixahead`. Revert with `exec audio_stable` if you hear crackle, dropouts, delayed cues, missing sounds, or audio/game desync.
 
 **`snd_mute_losefocus 0`** — Keeps audio playing when CS2 is not the foreground window. Useful for hearing game sounds while Alt-Tabbed to a reference image or map.
 

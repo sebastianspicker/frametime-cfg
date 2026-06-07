@@ -20,14 +20,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - Process priority: 9900X3D asymmetric CCD mask — 8+4 layout detected per-model instead of assuming symmetric `Floor(totalCores/2)`
 - NVIDIA driver: laptop GPU `psid`/`pfid` entries for RTX 30/40/50 Laptop series
 - Debloat: `Microsoft.Windows.PhoneLink` (Win11 23H2+ renamed package, alongside existing `Microsoft.YourPhone`)
+- Debloat: preflight inventory before Step 13 lists matched installed AppX packages, provisioned AppX packages, telemetry services, and telemetry scheduled tasks before removal/disable actions
+- Debloat: Win11 25H2 package IDs `Microsoft.OutlookForWindows`, `Microsoft.Windows.DevHome`, `MSTeams`, `Microsoft.BingSearch`, and `Microsoft.PowerAutomateDesktop`
+- Documentation: fresh Windows baseline guide recommending official Windows 11 25H2 media before running the suite and documenting why prebuilt debloated ISOs are not the default recommendation
 
-### Changed
+### Changed (initial release)
 - DRS profile: removed `279476686` (Variable refresh rate) — not present in NPI, likely inert; 6 remaining G-SYNC/VRR settings cover all paths
 - DRS profile: removed `1074665807` (CUDA Force P2 State) — undocumented duplicate; `1343646814` (CUDA_STABLE_PERF_LIMIT) handles same override
 - DRS profile: `Trilinear optimization` name corrected — value `0` means ON (driver perf shortcut enabled), not OFF
 - Power plan: PCIe ASPM GUIDs fixed — previous GUIDs were incorrect, meaning ASPM disable was never applied. Now uses correct subgroup `501a4d13-...` and setting `ee12f906-...`
 
-### Removed
+### Removed (initial release)
 - Simplicity First cleanup: removed unused wrappers/test helpers and the runtime improvement-estimate engine. Benchmark history remains the source of before/after comparison.
 
 ### Added (previous — initial release)
@@ -57,7 +60,8 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 - Step 16 (NIC): interrupt moderation set to Medium for ALL profiles (djdallmann empirical result — Disabled causes interrupt storms under background traffic)
 - `mouclass queue size`: 16 → 50 (2025 testing showed values below 30 cause event skipping)
 - `Win32PrioritySeparation`: `0x26` (variable) → `0x2A` (fixed) — 2025 Blur Busters: short fixed quantum improves 1% lows
-- Step 34 autoexec: 56 CVars (8 categories) → 74 CVars (10 categories). Added HUD/QoL (7), Privacy (5), updated Gameplay (17). `cl_predict_body/head_shot_fx` set to `0` per 95% pro consensus (ThourCS2 120-player study)
+- Step 34 autoexec: 56 CVars (8 categories) → 73 CVars (10 categories). Added HUD/QoL (7), Privacy (5), updated Gameplay (17). `cl_predict_body/head_shot_fx` set to `0` per 95% pro consensus (ThourCS2 120-player study)
+- Step 34 optional CFG deployment: added manual `debug_hud` / `debug_hud_off` diagnostics and `audio_stable` / `audio_lowlatency_025` / `audio_lowlatency_001` audio latency experiments. These are copied beside the network CFGs but are not auto-executed.
 - Network stack: TCP-only settings removed from scope; `netsh int tcp` commands documented as no-op for CS2's UDP traffic
 
 ### Fixed

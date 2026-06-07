@@ -241,7 +241,7 @@ function Invoke-CheckSystemLatency {
     # Boot config (bcdedit) — read-only query
     # Use /v to get hex element IDs instead of localized key names.
     # Match on hex IDs (locale-independent) + any truthy value — same approach as Verify-Settings.ps1.
-    # 0x26000060 = disabledynamictick, 0x26000092 = useplatformtick
+    # 0x26000060 = disabledynamictick.
     try {
         $bcdOutput = bcdedit /enum "{current}" /v 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) {
@@ -249,9 +249,6 @@ function Invoke-CheckSystemLatency {
         } else {
             $dynTick = if ($bcdOutput -match "0x26000060\s+\S+") { "OK" } else { "WARN" }
             $r.Add((New-CheckItem "Windows" "Boot" "Dynamic Tick" $(if ($dynTick -eq "OK") {"Disabled"} else {"Active"}) "Disabled" $dynTick "P1-10" "Adaptive timer causes irregular CPU wakeups — frametime jitter"))
-
-            $platTick = if ($bcdOutput -match "0x26000092\s+\S+") { "OK" } else { "WARN" }
-            $r.Add((New-CheckItem "Windows" "Boot" "Platform Tick" $(if ($platTick -eq "OK") {"Active"} else {"Inactive"}) "Active" $platTick "P1-10" "Hardware timer instead of software timer"))
         }
     } catch { Write-DebugLog "bcdedit check failed: $_" }
 
@@ -393,16 +390,16 @@ function Invoke-CheckCS2 {
 
     # optimization.cfg
     $optExists = Test-Path $optPath
-        $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "73 optimized CVars — network, audio, mouse, video"))
+    $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "73 optimized CVars — network, audio, mouse, video"))
 
     if ($optExists) {
         # Check key CVars in optimization.cfg
         $optContent = Get-Content $optPath -Raw -ErrorAction SilentlyContinue
         $keyChecks = @(
+            @{ CVar="snd_spatialize_lerp"; Expected="0"; Impact="Headphone-focused spatial baseline; no snd_use_hrtf toggle in current public convar surface" }
             @{ CVar="cl_autowepswitch"; Expected="0"; Impact="Prevents auto weapon switch on pickup" }
             @{ CVar="rate";         Expected="1000000"; Impact="CS2 max bandwidth rate" }
-            @{ CVar="speaker_config"; Expected="1"; Impact="Headphone-mode suite baseline" }
-            @{ CVar="snd_spatialize_lerp"; Expected="0"; Impact="Headphone/spatial suite default; listening-dependent" }
+            @{ CVar="speaker_config"; Expected="1"; Impact="Headphones mode" }
         )
         foreach ($ck in $keyChecks) {
             if ($optContent -match "(?m)^\s*$([regex]::Escape($ck.CVar))\s+(\S+)") {

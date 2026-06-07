@@ -169,7 +169,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-ChipsetVendor { return "AMD" }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -188,7 +188,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-ChipsetVendor { return "Intel" }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -211,7 +211,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -231,7 +231,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -251,7 +251,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {

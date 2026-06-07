@@ -1,0 +1,123 @@
+{
+  "summary": {
+    "enabledPatterns": {
+      "before": 1523,
+      "after": 2973
+    },
+    "enabledTools": {
+      "before": 5,
+      "after": 7
+    },
+    "issues": {
+      "before": 15,
+      "after": 15
+    },
+    "analysisRuntime": {
+      "before": 11236,
+      "after": 12359
+    }
+  },
+  "cloudBaseline": {
+    "repository": "gh/sebastianspicker/cs2-opt",
+    "lastAnalysedCommit": "e82b8784aa6a2553650f7a8765d419c6a5810b56",
+    "cloudIssues": 215,
+    "cloudOnlyTools": [
+      "PSScriptAnalyzer"
+    ],
+    "note": "Cloud has 215 Warning-level issues including PSScriptAnalyzer results. Local codacy-analysis has no PSScriptAnalyzer adapter, so local before/after issue metrics are for client-side tools only."
+  },
+  "latestLocalRemediation": {
+    "date": "2026-06-07",
+    "artifact": "/private/tmp/cs2-opt-codacy-after-C005-workflow-scripts-20260607.json",
+    "issues": 0,
+    "errors": 0,
+    "note": "Local Codacy Analysis CLI evidence is clean after remediation. Codacy Cloud issue counts remain separate until remote reanalysis confirms closure."
+  },
+  "broadDiagnostic": {
+    "enabledPatterns": 1874,
+    "enabledTools": 6,
+    "issues": 109,
+    "analysisRuntime": 10760,
+    "noiseRemoved": 94,
+    "note": "Broad auto-init produced 109 local findings; tuned config removes broad-only markdownlint and Agentlinter Minor style/comprehensibility noise while preserving the imported Cloud baseline."
+  },
+  "toolChanges": [
+    {
+      "toolId": "Checkov",
+      "action": "enabled",
+      "reason": "YAML/JSON IaC and workflow security coverage is relevant to the repository stack and produced zero current issues across 6 analyzed files.",
+      "patternsAffected": 1358
+    },
+    {
+      "toolId": "spectral",
+      "action": "enabled",
+      "reason": "YAML/JSON schema and contract linting is relevant to the repository stack and produced zero current issues across 6 analyzed files.",
+      "patternsAffected": 92
+    }
+  ],
+  "patternChanges": [],
+  "fileExclusions": {
+    "global": [
+      "docs/archive/**",
+      "docs/agent/**",
+      "vendor/**",
+      "third_party/**",
+      "third-party/**",
+      "3rdparty/**",
+      "external/**"
+    ],
+    "perTool": {}
+  },
+  "securityCoverage": {
+    "deduplication": [],
+    "newCoverage": [
+      "Checkov enabled with 1358 security/IaC patterns; 0 current local findings across 6 files.",
+      "Spectral enabled with 92 YAML/JSON contract patterns; 0 current local findings across 6 files."
+    ],
+    "noisyButKept": [
+      "Agentlinter_security_has-injection-defense remains enabled; the configure-time finding was remediated locally on 2026-06-07.",
+      "Semgrep/Opengrep baseline remains enabled with 1439 patterns; configure-time workflow parsing warnings were remediated locally by moving embedded PowerShell into .github/scripts/*.ps1.",
+      "Trivy remains enabled from the Cloud baseline; 0 current findings across 144 files."
+    ]
+  },
+  "keyImprovements": [
+    "Preserved the imported Cloud baseline instead of replacing it with the narrower auto-init Semgrep surface.",
+    "Added Checkov and Spectral for repo-relevant YAML/JSON coverage; both ran cleanly locally.",
+    "Reduced the broad diagnostic result from 109 to 15 local findings by removing broad-only Markdown and agent-instruction style noise.",
+    "Kept Cloud-only PSScriptAnalyzer findings separate from local Analysis CLI results so local validation is not presented as Cloud closure.",
+    "Excluded archive, local-agent, and vendor/third-party lanes from local and imported Cloud Codacy analysis.",
+    "Captured the later 2026-06-07 local remediation result separately from the configure-time before/after metrics."
+  ],
+  "warnings": [
+    "PSScriptAnalyzer is enabled in Codacy Cloud by the default coding standard but has no local codacy-analysis adapter, so its 213 current Cloud PowerShell findings are not reproduced locally.",
+    "Configure-time local analysis reported 15 local findings and 7 Semgrep partial parsing warnings; later local remediation closed these in /private/tmp/cs2-opt-codacy-after-C005-workflow-scripts-20260607.json.",
+    "Cloud import did not use --force; repository remains attached to the Default coding standard and Cloud-only PSScriptAnalyzer stayed enabled."
+  ],
+  "importResults": {
+    "status": "success",
+    "toolsConfigured": 7,
+    "toolsEnabled": [
+      "Checkov",
+      "Spectral"
+    ],
+    "toolsDisabled": [],
+    "errors": [],
+    "warnings": [
+      "1 cloud-only tool unchanged: PSScriptAnalyzer",
+      "Repository still follows Default coding standard; --force was not used."
+    ],
+    "codingStandards": [
+      "Default coding standard"
+    ],
+    "forceUsed": false,
+    "excludedPaths": [
+      "docs/archive/**",
+      "docs/agent/**",
+      "vendor/**",
+      "third_party/**",
+      "third-party/**",
+      "3rdparty/**",
+      "external/**"
+    ]
+  }
+}

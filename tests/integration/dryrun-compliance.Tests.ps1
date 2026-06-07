@@ -27,8 +27,8 @@ Describe "Set-RegistryValue DRY-RUN compliance" {
         $SCRIPT:Profile = "RECOMMENDED"
         $SCRIPT:CurrentStepTitle = "DRY-RUN Test Step"
 
-        # Mock Write-Host to capture DRY-RUN messages
-        Mock Write-Host {}
+        # Mock console output to capture DRY-RUN messages
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
 
         # Track any actual write attempts — these should NEVER be called
@@ -62,9 +62,19 @@ Describe "Set-RegistryValue DRY-RUN compliance" {
         Set-RegistryValue -path "HKLM:\SOFTWARE\TestKey" -name "TestValue" `
             -value 1 -type "DWord" -why "Test"
 
-        Should -Invoke Write-Host -ParameterFilter {
-            $Object -like "*DRY-RUN*" -or $Object -like "*Would set*"
+        Should -Invoke Write-ConsoleLine -ParameterFilter {
+            $Message -like "*DRY-RUN*" -or $Message -like "*Would set*"
         } -Times 1 -Scope It
+    }
+
+    It "Set-RegistryValue reports DRY-RUN status without claiming the write was applied" {
+        $result = Set-RegistryValue -path "HKLM:\SOFTWARE\TestKey" -name "TestValue" `
+            -value 1 -type "DWord" -why "Test" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        $SCRIPT:MockTracker.SetItemProperty.Count | Should -Be 0
+        $SCRIPT:MockTracker.NewItem.Count | Should -Be 0
     }
 
     It "Set-RegistryValue does NOT call Backup-RegistryValue in DRY-RUN" {
@@ -101,7 +111,7 @@ Describe "Set-BootConfig DRY-RUN compliance" {
         $SCRIPT:Profile = "RECOMMENDED"
         $SCRIPT:CurrentStepTitle = "DRY-RUN BootConfig Test"
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
 
         Mock bcdedit {
@@ -119,9 +129,17 @@ Describe "Set-BootConfig DRY-RUN compliance" {
     It "Set-BootConfig prints DRY-RUN message" {
         Set-BootConfig -key "disabledynamictick" -val "yes" -why "Test"
 
-        Should -Invoke Write-Host -ParameterFilter {
-            $Object -like "*DRY-RUN*"
+        Should -Invoke Write-ConsoleLine -ParameterFilter {
+            $Message -like "*DRY-RUN*"
         } -Times 1 -Scope It
+    }
+
+    It "Set-BootConfig reports DRY-RUN status without claiming the boot write was applied" {
+        $result = Set-BootConfig -key "disabledynamictick" -val "yes" -why "Test" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        $SCRIPT:MockTracker.Bcdedit.Count | Should -Be 0
     }
 
     It "Set-BootConfig does NOT backup in DRY-RUN" {
@@ -149,7 +167,7 @@ Describe "Invoke-TieredStep DRY-RUN integration with write functions" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Write-OK {}
@@ -243,7 +261,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
         Reset-IntegrationState
         $SCRIPT:DryRun = $true
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Set-ItemProperty {
             $SCRIPT:MockTracker.SetItemProperty.Add(@{ Path = $Path; Name = $Name; Value = $Value })
         }
@@ -263,9 +281,19 @@ Describe "Set-RunOnce DRY-RUN compliance" {
         # Path validation is now host-independent; DRY-RUN should always stop
         # before any registry write and emit the preview message.
         $SCRIPT:MockTracker.SetItemProperty.Count | Should -Be 0
-        Should -Invoke Write-Host -ParameterFilter {
-            $Object -like "*DRY-RUN*"
+        Should -Invoke Write-ConsoleLine -ParameterFilter {
+            $Message -like "*DRY-RUN*"
         } -Times 1 -Scope It
+    }
+
+    It "Set-RunOnce reports DRY-RUN status without claiming registration was applied" {
+        Mock Write-Warn {}
+
+        $result = Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        $SCRIPT:MockTracker.SetItemProperty.Count | Should -Be 0
     }
 }
 
@@ -278,7 +306,7 @@ Describe "DRY-RUN respects profile filtering" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -339,7 +367,7 @@ Describe "Backup buffer stays empty in DRY-RUN" {
         $SCRIPT:CurrentStepTitle = "DRY-RUN Backup Test"
         $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
     }
 

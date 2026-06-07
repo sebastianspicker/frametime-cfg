@@ -112,6 +112,134 @@ Describe "Apply-NvidiaCS2Profile" {
         { Apply-NvidiaCS2Profile } | Should -Not -Throw
         Should -Invoke Write-Warn -Times 1
     }
+
+    It "returns a failed result when NVIDIA GPU key is missing" {
+        Mock Test-Path { $false }
+        Mock Get-ChildItem { @() }
+        Mock Write-Step {}
+        Mock Write-Warn {}
+
+        $result = Apply-NvidiaCS2Profile
+
+        $result.Status | Should -Be "Failed"
+        $result.CanCompleteStep | Should -BeFalse
+    }
+
+    It "preserves registry fallback as a completing compatibility path when DRS is unavailable" {
+        Mock Test-Path { $true }
+        Mock Get-ChildItem {
+            [PSCustomObject]@{
+                PSPath = "HKLM:\SYSTEM\Test\0000"
+                PSChildName = "0000"
+            }
+        }
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{
+                ProviderName = "NVIDIA"
+                DriverDesc = "NVIDIA Test GPU"
+            }
+        }
+        Mock Initialize-NvApiDrs { $false }
+        Mock Apply-NvidiaCS2ProfileRegistry {
+            New-NvidiaProfileResult `
+                -Status "Fallback" `
+                -CanCompleteStep $true `
+                -Method "RegistryFallback" `
+                -Message "Registry fallback applied." `
+                -RegistryApplied 25
+        }
+        Mock Write-Step {}
+        Mock Write-DebugLog {}
+        Mock Write-Warn {}
+
+        $result = Apply-NvidiaCS2Profile
+
+        $result.Status | Should -Be "Fallback"
+        $result.CanCompleteStep | Should -BeTrue
+        Should -Invoke Apply-NvidiaCS2ProfileRegistry -Exactly 1
+    }
+
+    It "does not fall back or complete when DRS writes are partial" {
+        Mock Test-Path { $true }
+        Mock Get-ChildItem {
+            [PSCustomObject]@{
+                PSPath = "HKLM:\SYSTEM\Test\0000"
+                PSChildName = "0000"
+            }
+        }
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{
+                ProviderName = "NVIDIA"
+                DriverDesc = "NVIDIA Test GPU"
+            }
+        }
+        Mock Initialize-NvApiDrs { $true }
+        Mock Apply-NvidiaCS2ProfileDrs {
+            New-NvidiaProfileResult `
+                -Status "Partial" `
+                -CanCompleteStep $false `
+                -Method "DRS" `
+                -Message "Only 51 of 52 DRS settings applied." `
+                -DrsApplied 51 `
+                -DrsFailed 1 `
+                -DrsTotal 52
+        }
+        Mock Apply-NvidiaCS2ProfileRegistry {}
+        Mock Write-Step {}
+        Mock Write-DebugLog {}
+        Mock Write-Blank {}
+        Mock Write-ConsoleLine {}
+
+        $result = Apply-NvidiaCS2Profile
+
+        $result.Status | Should -Be "Partial"
+        $result.CanCompleteStep | Should -BeFalse
+        Should -Invoke Apply-NvidiaCS2ProfileRegistry -Exactly 0
+    }
+
+    It "returns partial when required registry locks fail after DRS succeeds" {
+        Mock Test-Path { $true }
+        Mock Get-ChildItem {
+            [PSCustomObject]@{
+                PSPath = "HKLM:\SYSTEM\Test\0000"
+                PSChildName = "0000"
+            }
+        }
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{
+                ProviderName = "NVIDIA"
+                DriverDesc = "NVIDIA Test GPU"
+            }
+        }
+        Mock Initialize-NvApiDrs { $true }
+        Mock Apply-NvidiaCS2ProfileDrs {
+            New-NvidiaProfileResult `
+                -Status "Success" `
+                -CanCompleteStep $true `
+                -Method "DRS" `
+                -Message "All settings applied." `
+                -DrsApplied $NV_DRS_SETTINGS.Count `
+                -DrsFailed 0 `
+                -DrsTotal $NV_DRS_SETTINGS.Count
+        }
+        Mock Set-RegistryValue {
+            if ($name -eq "DisableDynamicPstate") {
+                return [PSCustomObject]@{ Status = "Failed"; Applied = $false; Message = "write failed" }
+            }
+            [PSCustomObject]@{ Status = "Success"; Applied = $true; Message = "ok" }
+        }
+        Mock Write-Step {}
+        Mock Write-DebugLog {}
+        Mock Write-Blank {}
+        Mock Write-ConsoleLine {}
+        Mock Write-Info {}
+
+        $result = Apply-NvidiaCS2Profile
+
+        $result.Status | Should -Be "Partial"
+        $result.CanCompleteStep | Should -BeFalse
+        $result.RegistryFailed | Should -Be 1
+    }
 }
 
 # ── Apply-NvidiaCS2ProfileDrs ──────────────────────────────────────────────
@@ -123,13 +251,73 @@ Describe "Apply-NvidiaCS2ProfileDrs" {
 
         It "prints all settings in DRY-RUN mode without DRS write" {
             $SCRIPT:DryRun = $true
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Write-DebugLog {}
 
             # The function tries Invoke-DrsSession which is mocked
             Mock Invoke-DrsSession {}
 
             { Apply-NvidiaCS2ProfileDrs } | Should -Not -Throw
+        }
+    }
+
+    Context "result classification" {
+
+        It "returns success when all required DRS settings and backup complete" {
+            Mock Invoke-DrsSession {
+                $SCRIPT:_drsApplied = $NV_DRS_SETTINGS.Count
+                $SCRIPT:_drsErrors = 0
+                $SCRIPT:_drsBackupFailed = $false
+            }
+
+            $result = Apply-NvidiaCS2ProfileDrs
+
+            $result.Status | Should -Be "Success"
+            $result.CanCompleteStep | Should -BeTrue
+            $result.DrsApplied | Should -Be $NV_DRS_SETTINGS.Count
+            $result.DrsFailed | Should -Be 0
+        }
+
+        It "returns partial when one required DRS setting fails" {
+            Mock Invoke-DrsSession {
+                $SCRIPT:_drsApplied = $NV_DRS_SETTINGS.Count - 1
+                $SCRIPT:_drsErrors = 1
+                $SCRIPT:_drsBackupFailed = $false
+            }
+
+            $result = Apply-NvidiaCS2ProfileDrs
+
+            $result.Status | Should -Be "Partial"
+            $result.CanCompleteStep | Should -BeFalse
+            $result.DrsFailed | Should -Be 1
+        }
+
+        It "returns failed when all DRS settings fail" {
+            Mock Invoke-DrsSession {
+                $SCRIPT:_drsApplied = 0
+                $SCRIPT:_drsErrors = $NV_DRS_SETTINGS.Count
+                $SCRIPT:_drsBackupFailed = $false
+            }
+
+            $result = Apply-NvidiaCS2ProfileDrs
+
+            $result.Status | Should -Be "Failed"
+            $result.CanCompleteStep | Should -BeFalse
+            $result.DrsApplied | Should -Be 0
+        }
+
+        It "returns partial when DRS backup fails even if writes succeed" {
+            Mock Invoke-DrsSession {
+                $SCRIPT:_drsApplied = $NV_DRS_SETTINGS.Count
+                $SCRIPT:_drsErrors = 0
+                $SCRIPT:_drsBackupFailed = $true
+            }
+
+            $result = Apply-NvidiaCS2ProfileDrs
+
+            $result.Status | Should -Be "Partial"
+            $result.CanCompleteStep | Should -BeFalse
+            $result.BackupFailed | Should -BeTrue
         }
     }
 }
@@ -144,9 +332,10 @@ Describe "Apply-NvidiaCS2ProfileRegistry" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Path = $path; Name = $name; Value = $value })
+            [PSCustomObject]@{ Status = "Success"; Applied = $true; Message = "ok" }
         }
         Mock Write-Blank {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Info {}
 
         Apply-NvidiaCS2ProfileRegistry -NvKeyPath "HKLM:\SYSTEM\Test\0000"
@@ -160,9 +349,10 @@ Describe "Apply-NvidiaCS2ProfileRegistry" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Name = $name })
+            [PSCustomObject]@{ Status = "Success"; Applied = $true; Message = "ok" }
         }
         Mock Write-Blank {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Info {}
 
         Apply-NvidiaCS2ProfileRegistry -NvKeyPath "HKLM:\SYSTEM\Test\0000"
@@ -174,9 +364,10 @@ Describe "Apply-NvidiaCS2ProfileRegistry" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Name = $name; Value = $value })
+            [PSCustomObject]@{ Status = "Success"; Applied = $true; Message = "ok" }
         }
         Mock Write-Blank {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Info {}
 
         Apply-NvidiaCS2ProfileRegistry -NvKeyPath "HKLM:\SYSTEM\Test\0000" -FrlValue 300
@@ -190,9 +381,10 @@ Describe "Apply-NvidiaCS2ProfileRegistry" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Name = $name; Value = $value })
+            [PSCustomObject]@{ Status = "Success"; Applied = $true; Message = "ok" }
         }
         Mock Write-Blank {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Info {}
 
         Apply-NvidiaCS2ProfileRegistry -NvKeyPath "HKLM:\SYSTEM\Test\0000"

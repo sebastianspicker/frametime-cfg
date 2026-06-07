@@ -95,6 +95,7 @@ function Set-PowerPlanValue {
         DC/battery settings are intentionally not touched — preserves laptop battery behavior.
         When $SCRIPT:DryRun is set, prints what would be applied without calling powercfg.
     #>
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$PlanGuid,
         [string]$SubgroupGuid,
@@ -119,9 +120,10 @@ function Set-PowerPlanValue {
     }
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would set power plan: $Label = $Value" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would set power plan: $Label = $Value" -ForegroundColor Magenta
         return
     }
+    if (-not $PSCmdlet.ShouldProcess($PlanGuid, "Set power plan value '$Label' to $Value")) { return }
     $ppOut = powercfg /setacvalueindex $PlanGuid $SubgroupGuid $SettingGuid $Value 2>&1
     if ($LASTEXITCODE -ne 0) {
         $msg = "$ppOut"
@@ -149,9 +151,15 @@ function New-CS2PowerPlan {
         is always safe — any existing "CS2 Optimized" plan is deleted first.
         In DRY-RUN mode, skips deletion and creation (nothing is persisted).
     #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would remove existing CS2 Optimized plans and create fresh duplicate" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN] Would name plan: CS2 Optimized" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would remove existing CS2 Optimized plans and create fresh duplicate" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would name plan: CS2 Optimized" -ForegroundColor Magenta
+        return "DRY-RUN-GUID"
+    }
+    if (-not $PSCmdlet.ShouldProcess("CS2 Optimized", "Create fresh optimized power plan")) {
         return "DRY-RUN-GUID"
     }
 
@@ -312,8 +320,8 @@ function Apply-PowerPlan {
     # ── T3: COMPETITIVE+ — community consensus, thermal trade-offs ─────────────
     if ($applyT3) {
         Write-Step "T3: C-states off + fast governor settings (COMPETITIVE)..."
-        Write-Host "  NOTE: T3 disables deep C-states. Expect +5–15°C CPU temp at idle." -ForegroundColor DarkYellow
-        Write-Host "  Safe with adequate cooling. Revert via Restore/Rollback if temps spike." -ForegroundColor DarkYellow
+        Write-ConsoleLine "  NOTE: T3 disables deep C-states. Expect +5–15°C CPU temp at idle." -ForegroundColor DarkYellow
+        Write-ConsoleLine "  Safe with adequate cooling. Revert via Restore/Rollback if temps spike." -ForegroundColor DarkYellow
 
         # C-states: X3D guide (B21) says keep enabled on single-CCD X3D (irrelevant for
         # single-CCD, saves power, no latency impact). Only disable on non-X3D or dual-CCD.

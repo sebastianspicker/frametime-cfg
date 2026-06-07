@@ -56,7 +56,7 @@ function Invoke-Async {
     $timer.Add_Tick({
         if ($Script:Closing) {
             $timer.Stop()
-            try { $capturedRs.Stop(); $capturedRs.Dispose() } catch {}
+            try { $capturedRs.Stop(); $capturedRs.Dispose() } catch { $null = $_ }
             return
         }
         if ($capturedHandle.IsCompleted) {
@@ -1195,7 +1195,9 @@ function Update-SidebarStatus {
         try {
             $prog = Get-Content $CFG_ProgressFile -Raw | ConvertFrom-Json
             if ($prog.phase) { $phaseText = "$($prog.phase)" }
-        } catch {}
+        } catch {
+            Write-DebugLog "Status bar progress load failed: $($_.Exception.Message)"
+        }
     }
     $Window.Dispatcher.Invoke({
         (El "SbProfile").Text = "Profile: $prof"
@@ -1222,8 +1224,8 @@ $Window.Add_Closed({
     # Snapshot the list before iterating — Tick handlers call Remove($timer) on this
     # same list, which would throw InvalidOperationException during enumeration.
     $timersSnapshot = @($Script:AsyncTimers)
-    foreach ($t in $timersSnapshot) { try { $t.Stop() } catch {} }
-    try { $Script:Pool.Close(); $Script:Pool.Dispose() } catch {}
+    foreach ($t in $timersSnapshot) { try { $t.Stop() } catch { $null = $_ } }
+    try { $Script:Pool.Close(); $Script:Pool.Dispose() } catch { $null = $_ }
 })
 
 $Window.ShowDialog() | Out-Null

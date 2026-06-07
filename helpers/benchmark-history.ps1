@@ -77,11 +77,11 @@ function Show-BenchmarkComparison {
     }
 
     Write-Blank
-    Write-Host "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  BENCHMARK HISTORY                                              ║" -ForegroundColor Cyan
-    Write-Host "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-    Write-Host "  ║  #   Date        Time      Avg FPS   1% Low   Δ Avg   Δ 1%     ║" -ForegroundColor Cyan
-    Write-Host "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-ConsoleLine "  ║  BENCHMARK HISTORY                                              ║" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-ConsoleLine "  ║  #   Date        Time      Avg FPS   1% Low   Δ Avg   Δ 1%     ║" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
 
     for ($i = 0; $i -lt $history.Count; $i++) {
         $entry = $history[$i]
@@ -113,10 +113,10 @@ function Show-BenchmarkComparison {
         }
 
         $label = if ($entry.label) { "  $($entry.label)" } else { "" }
-        Write-Host "  ║  $num  $date  $time   $avg   $p1  $avgDiffStr  $p1DiffStr  ║$label" -ForegroundColor $color
+        Write-ConsoleLine "  ║  $num  $date  $time   $avg   $p1  $avgDiffStr  $p1DiffStr  ║$label" -ForegroundColor $color
     }
 
-    Write-Host "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
     # Overall comparison (first vs last)
     if ($history.Count -ge 2) {
@@ -131,9 +131,9 @@ function Show-BenchmarkComparison {
         $totalColor = if ($totalP1Diff -gt 0) { "Green" } elseif ($totalP1Diff -lt 0) { "Red" } else { "Yellow" }
 
         Write-Blank
-        Write-Host "  TOTAL CHANGE (first -> last):" -ForegroundColor $totalColor
-        Write-Host "  Avg FPS: $($first.avgFps) -> $($last.avgFps)  ($(if($totalAvgDiff -ge 0){'+'})$totalAvgDiff)" -ForegroundColor $totalColor
-        Write-Host "  1% Lows: $($first.p1Fps) -> $($last.p1Fps)  ($(if($totalP1Diff -ge 0){'+'})$totalP1Diff)" -ForegroundColor $totalColor
+        Write-ConsoleLine "  TOTAL CHANGE (first -> last):" -ForegroundColor $totalColor
+        Write-ConsoleLine "  Avg FPS: $($first.avgFps) -> $($last.avgFps)  ($(if($totalAvgDiff -ge 0){'+'})$totalAvgDiff)" -ForegroundColor $totalColor
+        Write-ConsoleLine "  1% Lows: $($first.p1Fps) -> $($last.p1Fps)  ($(if($totalP1Diff -ge 0){'+'})$totalP1Diff)" -ForegroundColor $totalColor
 
         if ($totalP1Diff -gt 5) {
             Write-OK "Significant improvement in 1% lows!"
@@ -166,8 +166,8 @@ function Invoke-BenchmarkCapture {
         Write-Blank
     }
 
-    Write-Host "  Run a FPSHeaven benchmark map in CS2, then paste the [VProf] output here." -ForegroundColor White
-    Write-Host "  Format: [VProf] FPS: Avg=XXX.X, P1=XXX.X" -ForegroundColor DarkGray
+    Write-ConsoleLine "  Run a FPSHeaven benchmark map in CS2, then paste the [VProf] output here." -ForegroundColor White
+    Write-ConsoleLine "  Format: [VProf] FPS: Avg=XXX.X, P1=XXX.X" -ForegroundColor DarkGray
     Write-Blank
 
     $userInput = Read-Host "  Paste [VProf] output (or [Enter] to skip)"
@@ -207,13 +207,13 @@ function Invoke-BenchmarkCapture {
         $pColor = if ($p1Diff -gt 0) { "Green" } elseif ($p1Diff -lt 0) { "Red" } else { "Yellow" }
 
         Write-Blank
-        Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $pColor
-        Write-Host "  │  COMPARISON WITH PREVIOUS:                                   │" -ForegroundColor $pColor
+        Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $pColor
+        Write-ConsoleLine "  │  COMPARISON WITH PREVIOUS:                                   │" -ForegroundColor $pColor
         $avgLine = "Avg FPS: $($prev.avgFps.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)) -> $($result.Avg.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture))  ($(if($avgDiff -ge 0){'+'})$($avgDiff.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)))"
         $p1Line  = "1% Lows: $($prev.p1Fps.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)) -> $($result.P1.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture))  ($(if($p1Diff -ge 0){'+'})$($p1Diff.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)))"
-        Write-Host "  │  $avgLine$((' ' * [math]::Max(0, 60 - $avgLine.Length)))│" -ForegroundColor White
-        Write-Host "  │  $p1Line$((' ' * [math]::Max(0, 60 - $p1Line.Length)))│" -ForegroundColor White
-        Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $pColor
+        Write-ConsoleLine "  │  $avgLine$((' ' * [math]::Max(0, 60 - $avgLine.Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  │  $p1Line$((' ' * [math]::Max(0, 60 - $p1Line.Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $pColor
 
         if ($p1Diff -gt 5) {
             Write-OK "Notable improvement in 1% lows! The last change had measurable effect."

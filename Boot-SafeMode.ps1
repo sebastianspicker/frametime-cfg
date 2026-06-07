@@ -110,7 +110,16 @@ Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
 
 # -- 2. Register Phase 2 RunOnce ----------------------------------------------
 Write-Step "Registering Phase 2 for Safe Mode boot..."
-Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode
+$runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
+if (-not $runOnceResult.Applied) {
+    Write-Err "Phase 2 RunOnce registration failed. Safe Mode boot flag was NOT set."
+    Write-Host ""
+    Write-Host "  Fix the RunOnce error above, then re-run this shortcut." -ForegroundColor White
+    Write-Host "  Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
+    Write-Host ""
+    Read-Host "  Press Enter to return"
+    exit 1
+}
 Write-OK "Phase 2 registered via RunOnce."
 
 # -- 3. Set Safe Mode boot flag -----------------------------------------------

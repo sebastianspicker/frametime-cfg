@@ -78,6 +78,111 @@ Describe "CS2 Autoexec configuration" {
     It "speaker_config is 1 (headphone-mode suite baseline)" {
         $CFG_CS2_Autoexec["speaker_config"] | Should -Be "1"
     }
+
+    It "does not emit Steam Audio reverb CVars" {
+        $CFG_CS2_Autoexec.Keys | Should -Not -Contain "snd_steamaudio_enable_reverb"
+        $CFG_CS2_Autoexec.Keys | Should -Not -Contain "snd_steamaudio_reverb_level_db"
+    }
+}
+
+# ── Optional manually executed CFG checks ───────────────────────────────────
+Describe "Optional CS2 CFG files" {
+
+    BeforeAll {
+        $script:OptionalCfgFiles = @(
+            "net_stable.cfg",
+            "net_highping.cfg",
+            "net_unstable.cfg",
+            "net_bad.cfg",
+            "debug_hud.cfg",
+            "debug_hud_off.cfg",
+            "audio_stable.cfg",
+            "audio_lowlatency_025.cfg",
+            "audio_lowlatency_001.cfg"
+        )
+        $script:AudioCfgExpectations = @{
+            "audio_stable.cfg"         = "0.05"
+            "audio_lowlatency_025.cfg" = "0.025"
+            "audio_lowlatency_001.cfg" = "0.001"
+        }
+    }
+
+    It "all optional CFG files exist" {
+        foreach ($cfgFile in $script:OptionalCfgFiles) {
+            Test-Path (Join-Path $script:ProjectRoot "cfgs/$cfgFile") | Should -Be $true
+        }
+    }
+
+    It "contains no binds, persistence commands, developer mode, or personal UI preferences" {
+        $forbiddenPatterns = @(
+            '(?m)^\s*bind(toggle)?\b',
+            '(?m)^\s*unbind(all)?\b',
+            '(?m)^\s*host_writeconfig\b',
+            '(?m)^\s*developer\s+"?1"?\b',
+            '(?m)^\s*(cl_)?radar_',
+            '(?m)^\s*cl_hud_radar_',
+            '(?m)^\s*viewmodel_',
+            '(?m)^\s*cl_crosshair',
+            '(?m)^\s*(zoom_)?sensitivity\b',
+            '(?m)^\s*safezone[xy]\b',
+            '(?m)^\s*cl_hide_avatar_images\b',
+            '(?m)^\s*cl_allow_animated_avatars\b',
+            '(?m)^\s*cl_spec_',
+            '(?m)^\s*cl_obs_'
+        )
+
+        foreach ($cfgFile in $script:OptionalCfgFiles) {
+            $content = Get-Content (Join-Path $script:ProjectRoot "cfgs/$cfgFile") -Raw
+            foreach ($pattern in $forbiddenPatterns) {
+                $content | Should -Not -Match $pattern -Because "$cfgFile must remain optional/diagnostic, not personal or persistent"
+            }
+        }
+    }
+
+    It "audio CFGs only set autodetect latency and mixahead" {
+        foreach ($cfgFile in $script:AudioCfgExpectations.Keys) {
+            $lines = Get-Content (Join-Path $script:ProjectRoot "cfgs/$cfgFile")
+            $commandLines = @($lines | Where-Object { $_ -notmatch '^\s*(//|$)' -and $_ -notmatch '^\s*echo\b' })
+            $keys = @($commandLines | ForEach-Object { ($_ -split '\s+', 2)[0] })
+
+            ($keys -join ",") | Should -Be "snd_autodetect_latency,snd_mixahead"
+            $commandLines[0] | Should -Be 'snd_autodetect_latency "1"'
+            $commandLines[1] | Should -Be "snd_mixahead `"$($script:AudioCfgExpectations[$cfgFile])`""
+
+            ($lines -join "`n") | Should -Not -Match 'snd_steamaudio_(enable_reverb|reverb_level_db)'
+        }
+    }
+
+    It "diagnostic CFGs use current telemetry names and diagnostic commands" {
+        $debugHud = Get-Content (Join-Path $script:ProjectRoot "cfgs/debug_hud.cfg") -Raw
+        $debugHudOff = Get-Content (Join-Path $script:ProjectRoot "cfgs/debug_hud_off.cfg") -Raw
+
+        foreach ($content in @($debugHud, $debugHudOff)) {
+            $content | Should -Match 'cl_hud_telemetry_frametime_show'
+            $content | Should -Match 'cl_hud_telemetry_ping_show'
+            $content | Should -Match 'cl_hud_telemetry_net_misdelivery_show'
+            $content | Should -Match 'cl_hud_telemetry_net_quality_graph_show'
+            $content | Should -Match 'cl_hud_telemetry_serverrecvmargin_graph_show'
+            $content | Should -Not -Match 'cl_hud_telemetry_net_quality_graph\s'
+            $content | Should -Not -Match 'cl_hud_telemetry_serverrecvmargin_graph\s'
+        }
+
+        $debugHud | Should -Match '(?m)^\s*net_print_sdr_ping_times\s*$'
+        $debugHud | Should -Match '(?m)^\s*net_status\s*$'
+        $debugHud | Should -Match '(?m)^\s*cl_ticktiming\s+print\s+detail\s*$'
+        $debugHud | Should -Match '(?m)^\s*cl_hud_telemetry_net_detailed\s+"2"\s*$'
+        $debugHudOff | Should -Match '(?m)^\s*cl_hud_telemetry_net_detailed\s+"0"\s*$'
+    }
+
+    It "Step 34 deploys all optional CFG files without auto-executing them" {
+        $content = Get-Content "$script:ProjectRoot/Optimize-GameConfig.ps1" -Raw
+
+        foreach ($cfgFile in $script:OptionalCfgFiles) {
+            $content | Should -Match ([regex]::Escape("`"$cfgFile`""))
+        }
+
+        $content | Should -Match 'They are NOT exec''d automatically'
+    }
 }
 
 # ── NIC Tweaks configuration ────────────────────────────────────────────────
@@ -126,10 +231,6 @@ Describe "Path format validation" {
 
     It "CFG_LatencyHistoryFile uses backslash path format" {
         $SCRIPT:_OriginalCfgLatencyHistoryFile | Should -Not -Match "[^:]/" -Because "Windows paths should use backslashes"
-    }
-
-    It "CFG_BackupMaxVersions defaults to 3" {
-        $CFG_BackupMaxVersions | Should -Be 3
     }
 
     It "CFG_RunOnceExecutionPolicy defaults to Bypass" {

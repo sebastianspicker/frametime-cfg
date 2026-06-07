@@ -57,6 +57,26 @@ After Step 28, the registry setting only allows applications to request a lower 
 
 The 50ms buffer does not affect the timing of sound events relative to gameplay. The audio thread keeps the buffer filled and the sound engine submits events to the buffer in real-time. What you hear is current; the buffer is a safety margin, not a delay.
 
+### Experimental low audio latency CFGs
+
+Step 34 also deploys three optional audio CFGs to `game\csgo\cfg\`. They are not executed automatically and do not change the generated `optimization.cfg`.
+
+| CFG | Settings | Use |
+|-----|----------|-----|
+| `exec audio_stable` | `snd_autodetect_latency "1"`, `snd_mixahead "0.05"` | Suite default and reset path |
+| `exec audio_lowlatency_025` | `snd_autodetect_latency "1"`, `snd_mixahead "0.025"` | Moderate latency experiment |
+| `exec audio_lowlatency_001` | `snd_autodetect_latency "1"`, `snd_mixahead "0.001"` | Aggressive latency experiment |
+
+`snd_autodetect_latency "1"` stays enabled in all three files so CS2 can continue tracking device/output latency while the experiment changes only the mixer buffer. This keeps the test focused: if behavior changes, the likely variable is `snd_mixahead`, not a disabled engine detection path.
+
+Use the lower-buffer CFGs only as listen-and-benchmark experiments. Run a full map or deathmatch session and watch for crackle, dropouts, delayed cues, missing sounds, or audio/game desync. If any appear, revert immediately:
+
+```text
+exec audio_stable
+```
+
+The current public CVar surface exposes `snd_steamaudio_enable_reverb` and shows it off by default. The suite does not enable Steam Audio reverb for competitive play because room reverb can mask footstep transients and directional cues. Reverb level CVars such as `snd_steamaudio_reverb_level_db` are not included in the optional low-latency CFGs because they are only meaningful when reverb is enabled.
+
 ---
 
 ## Music Muting

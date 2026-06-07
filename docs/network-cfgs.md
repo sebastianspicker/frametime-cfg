@@ -119,13 +119,41 @@ At this connection quality, no CVar configuration produces competitive gameplay.
 
 ## Diagnosing Your Condition
 
+### Debug HUD / Network Diagnostics CFGs
+
+Step 34 deploys two optional diagnostic CFGs beside the network condition CFGs:
+
+```text
+exec debug_hud
+exec debug_hud_off
+```
+
+`exec debug_hud` temporarily makes CS2 telemetry visible and prints a console snapshot:
+
+```text
+net_print_sdr_ping_times
+net_status
+cl_ticktiming print detail
+```
+
+The CFG uses the current CS2 telemetry CVar names with `_show` suffixes. It sets the overlay to always show during diagnosis (`2`) and lowers the poor-condition thresholds so borderline issues are visible:
+
+| CVar | Diagnostic value | Meaning |
+|------|------------------|---------|
+| `cl_hud_telemetry_frametime_poor` | `8.0` | Frame times above 8ms are flagged, useful when checking 120Hz+ consistency |
+| `cl_hud_telemetry_ping_poor` | `60.0` | Ping above 60ms is treated as poor for CFG selection |
+| `cl_hud_telemetry_net_misdelivery_poor` | `1.0` | More than 1% command/snapshot anomaly rate is worth investigating |
+| `cl_hud_telemetry_net_detailed` | `2` | Always show loss, late delivery, and peak jitter detail |
+
+`exec debug_hud_off` resets visibility/detail controls and thresholds to quiet defaults. These files are diagnostic only: no binds, no `host_writeconfig`, no `developer 1`, and no personal HUD, radar, sensitivity, safe-zone, avatar, or observer preferences.
+
 ### Check jitter
 
 Enable the HUD telemetry overlay set up by Step 34:
 
 ```
-cl_hud_telemetry_net_quality_graph 1
-cl_hud_telemetry_serverrecvmargin_graph 1
+cl_hud_telemetry_net_quality_graph_show 1
+cl_hud_telemetry_serverrecvmargin_graph_show 1
 ```
 
 Watch the graphs during a full map. Irregular spikes in the quality graph indicate jitter. Gaps (missing bars) indicate packet loss.

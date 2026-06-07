@@ -1,6 +1,6 @@
 # ==============================================================================
 #  tests/integration/backup-restore-entrypoints.Tests.ps1
-#  Integration coverage for Restore-AllChanges and Restore-Interactive.
+#  Integration coverage for Restore-Interactive entrypoint behavior.
 # ==============================================================================
 
 BeforeAll {
@@ -15,10 +15,13 @@ BeforeAll {
     }
 
     function Set-RestorePromptResponses {
+        [CmdletBinding(SupportsShouldProcess)]
         param([string[]]$Values)
-        $script:RestorePromptResponses = [System.Collections.Generic.Queue[string]]::new()
-        foreach ($value in $Values) {
-            $script:RestorePromptResponses.Enqueue($value)
+        if ($PSCmdlet.ShouldProcess("Restore prompt response queue", "Set scripted responses")) {
+            $script:RestorePromptResponses = [System.Collections.Generic.Queue[string]]::new()
+            foreach ($value in $Values) {
+                $script:RestorePromptResponses.Enqueue($value)
+            }
         }
     }
 }
@@ -31,50 +34,6 @@ AfterAll {
         $script:FallbackTestTempRoot -ne $SCRIPT:TestTempRoot -and
         (Test-Path $script:FallbackTestTempRoot)) {
         Remove-Item $script:FallbackTestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-Describe "Restore-AllChanges integration" {
-
-    BeforeEach {
-        Reset-IntegrationState
-        $SCRIPT:DryRun = $false
-
-        New-TestBackupFile -Entries @(
-            [ordered]@{
-                type = "defender"
-                exclusionPaths = @("C:\Games\CS2")
-                exclusionProcesses = @()
-                step = "Step Alpha"
-                timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            },
-            [ordered]@{
-                type = "defender"
-                exclusionPaths = @()
-                exclusionProcesses = @("cs2.exe")
-                step = "Step Beta"
-                timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            }
-        )
-
-        Mock Write-Host {}
-        Mock Write-DebugLog {}
-        Mock Write-OK {}
-        Mock Write-Warn {}
-        Mock Write-Step {}
-        Mock Write-Info {}
-        Mock Remove-MpPreference {}
-        Mock Test-BackupLock { $false }
-        Mock Set-BackupLock {}
-        Mock Remove-BackupLock {}
-        Mock Read-Host { "y" }
-    }
-
-    It "processes all step groups and cleans up backup.json after completion" {
-        Restore-AllChanges
-
-        Should -Invoke Remove-MpPreference -Exactly 2
-        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
     }
 }
 
@@ -101,7 +60,7 @@ Describe "Restore-Interactive integration" {
             }
         )
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}

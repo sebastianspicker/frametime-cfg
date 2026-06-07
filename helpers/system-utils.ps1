@@ -47,8 +47,8 @@ function Invoke-Download {
                     Remove-Item $dest -Force -ErrorAction SilentlyContinue
                     if ($attempt -lt $maxAttempts) { Write-Info "Retrying..."; continue }
                     Write-Err "Download failed after $maxAttempts attempts (file too small)."
-                    Write-Host "  $([char]0x2139) What to do: Your internet connection may be unstable." -ForegroundColor Cyan
-                    Write-Host "    Download manually from the URL below and provide the path when prompted." -ForegroundColor Cyan
+                    Write-ConsoleLine "  $([char]0x2139) What to do: Your internet connection may be unstable." -ForegroundColor Cyan
+                    Write-ConsoleLine "    Download manually from the URL below and provide the path when prompted." -ForegroundColor Cyan
                     Write-Warn "URL: $url"
                     return $false
                 }
@@ -60,8 +60,8 @@ function Invoke-Download {
                     Remove-Item $dest -Force -ErrorAction SilentlyContinue
                 } else {
                     Write-Err "Download failed after $maxAttempts attempts: $_"
-                    Write-Host "  $([char]0x2139) What to do: Download the file manually from the URL below" -ForegroundColor Cyan
-                    Write-Host "    and provide the path when prompted." -ForegroundColor Cyan
+                    Write-ConsoleLine "  $([char]0x2139) What to do: Download the file manually from the URL below" -ForegroundColor Cyan
+                    Write-ConsoleLine "    and provide the path when prompted." -ForegroundColor Cyan
                     Write-Warn "URL: $url"
                     Remove-Item $dest -Force -ErrorAction SilentlyContinue
                     return $false
@@ -112,7 +112,7 @@ function Set-SecureAcl {
     <#  Applies an Administrators/SYSTEM-only ACL to a sensitive file or directory.
         NOTE: C:\CS2_OPTIMIZE should also inherit restrictive ACLs so newly created
         temp files from Save-JsonAtomic stay protected before this file ACL is re-applied.  #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$Required
@@ -161,7 +161,8 @@ function Set-SecureAcl {
         }
         $acl.SetAccessRule($adminRule)
         $acl.SetAccessRule($systemRule)
-        Set-Acl -LiteralPath $TargetPath -AclObject $acl -ErrorAction Stop
+        if (-not $PSCmdlet.ShouldProcess($Path, "Apply restricted Administrators/SYSTEM ACL")) { return }
+        Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
     }
 
     try {
@@ -299,7 +300,7 @@ function Test-Phase1SafeModeReady {
 }
 
 function Set-Phase1SafeModeReadyFlag {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$Path,
         [bool]$Ready = $true
@@ -311,10 +312,92 @@ function Set-Phase1SafeModeReadyFlag {
 
     $state = Get-Content $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     $state | Add-Member -NotePropertyName "phase1SafeModeReady" -NotePropertyValue $Ready -Force
+    if (-not $PSCmdlet.ShouldProcess($Path, "Persist Phase 1 Safe Mode readiness flag")) { return $state }
     Ensure-SecureWorkDir -Path (Split-Path $Path -Parent)
     Save-JsonAtomic -Data $state -Path $Path
     Set-SecureAcl -Path $Path -Required
     return $state
+}
+
+function Get-StateStringValue {
+    [CmdletBinding()]
+    param(
+        $State,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Default,
+        [string[]]$AllowedValues = @()
+    )
+
+    if (-not $State -or -not $State.PSObject.Properties[$Name]) {
+        Write-DebugLog "State field '$Name' missing — defaulting to $Default"
+        return $Default
+    }
+
+    $value = $State.$Name
+    if ($null -eq $value -or $value -is [array] -or $value -is [hashtable] -or $value -is [pscustomobject]) {
+        Write-DebugLog "State field '$Name' has invalid shape — defaulting to $Default"
+        return $Default
+    }
+
+    $stringValue = ([string]$value).Trim().ToUpperInvariant()
+    if ([string]::IsNullOrWhiteSpace($stringValue)) {
+        Write-DebugLog "State field '$Name' is empty — defaulting to $Default"
+        return $Default
+    }
+
+    if ($AllowedValues.Count -gt 0 -and $stringValue -notin $AllowedValues) {
+        Write-DebugLog "State field '$Name' has unsupported value '$stringValue' — defaulting to $Default"
+        return $Default
+    }
+
+    return $stringValue
+}
+
+function Get-ModeForProfile {
+    [CmdletBinding()]
+    param(
+        [Alias("Profile")]
+        [string]$SuiteProfile = "RECOMMENDED",
+        [switch]$DryRun
+    )
+
+    if ($DryRun) { return "DRY-RUN" }
+
+    switch (([string]$SuiteProfile).Trim().ToUpperInvariant()) {
+        "SAFE"        { "AUTO" }
+        "RECOMMENDED" { "AUTO" }
+        "COMPETITIVE" { "CONTROL" }
+        "CUSTOM"      { "INFORMED" }
+        "YOLO"        { "YOLO" }
+        default       { "AUTO" }
+    }
+}
+
+function Set-ScriptStateFromStateObject {
+    [CmdletBinding(SupportsShouldProcess)]
+    param($State)
+
+    $stateProfile = Get-StateStringValue `
+        -State $State `
+        -Name "profile" `
+        -Default "RECOMMENDED" `
+        -AllowedValues @("SAFE", "RECOMMENDED", "COMPETITIVE", "CUSTOM", "YOLO")
+    $defaultMode = Get-ModeForProfile -Profile $stateProfile
+    $stateMode = Get-StateStringValue `
+        -State $State `
+        -Name "mode" `
+        -Default $defaultMode `
+        -AllowedValues @("AUTO", "CONTROL", "INFORMED", "YOLO", "DRY-RUN")
+    $stateLogLevel = Get-StateStringValue `
+        -State $State `
+        -Name "logLevel" `
+        -Default "NORMAL" `
+        -AllowedValues @("MINIMAL", "NORMAL", "VERBOSE")
+    if (-not $PSCmdlet.ShouldProcess("script runtime state", "Apply loaded mode/profile/log-level defaults")) { return }
+    $SCRIPT:Mode = $stateMode
+    $SCRIPT:LogLevel = $stateLogLevel
+    $SCRIPT:Profile = $stateProfile
+    $SCRIPT:DryRun = ($SCRIPT:Mode -eq "DRY-RUN")
 }
 
 function Load-State($path) {
@@ -332,14 +415,7 @@ function Load-State($path) {
         Write-Warn "State file corrupt — preserved as $corruptPath"
         throw "State file corrupt — preserved as $corruptPath"
     }
-    $SCRIPT:Mode     = if ($s.PSObject.Properties['mode']) { $s.mode } else { $null }
-    $SCRIPT:LogLevel = if ($s.PSObject.Properties['logLevel'] -and $s.logLevel) { $s.logLevel } else { "NORMAL" }
-    $SCRIPT:Profile  = if ($s.PSObject.Properties['profile'] -and $s.profile) { $s.profile } else { "RECOMMENDED" }
-    if (-not $SCRIPT:Mode) {
-        Write-DebugLog "Load-State: mode was null/empty — defaulting to CONTROL"
-        $SCRIPT:Mode = "CONTROL"
-    }
-    $SCRIPT:DryRun   = ($SCRIPT:Mode -eq "DRY-RUN")
+    Set-ScriptStateFromStateObject -State $s
     return $s
 }
 
@@ -351,10 +427,7 @@ function Initialize-ScriptDefaults {
         try {
             # -ErrorAction Stop ensures Get-Content failures throw into the catch block.
             $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
-            $SCRIPT:Mode     = $st.mode
-            $SCRIPT:LogLevel = if ($st.logLevel) { $st.logLevel } else { "NORMAL" }
-            $SCRIPT:Profile  = if ($st.profile) { $st.profile } else { "RECOMMENDED" }
-            $SCRIPT:DryRun   = ($SCRIPT:Mode -eq "DRY-RUN")
+            Set-ScriptStateFromStateObject -State $st
         } catch {
             $SCRIPT:Mode = "CONTROL"; $SCRIPT:LogLevel = "NORMAL"; $SCRIPT:Profile = "RECOMMENDED"; $SCRIPT:DryRun = $false
         }
@@ -363,13 +436,31 @@ function Initialize-ScriptDefaults {
     }
 }
 
+function New-WriteOperationResult {
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("Success", "Failed", "Skipped", "DryRun")]
+        [string]$Status,
+
+        [string]$Message = ""
+    )
+
+    return [PSCustomObject]@{
+        Status  = $Status
+        Applied = ($Status -eq "Success")
+        Message = $Message
+    }
+}
+
 function Set-RunOnce {
-    [CmdletBinding()]
-    param([string]$name, [string]$scriptPath, [switch]$SafeMode)
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$name, [string]$scriptPath, [switch]$SafeMode, [switch]$PassThru)
     # SECURITY: Validate RunOnce name — alphanumeric + underscore only.
     # Prevents injection into the HKLM RunOnce key namespace.
     if ($name -notmatch '^[a-zA-Z0-9_]+$') {
-        Write-Warn "Set-RunOnce: invalid name '$name' — rejected (security: registry injection prevention)"
+        $message = "Set-RunOnce: invalid name '$name' — rejected (security: registry injection prevention)"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
     # Windows RunOnce entries prefixed with '*' execute even in Safe Mode.
@@ -380,58 +471,78 @@ function Set-RunOnce {
     # If an attacker could set $scriptPath to an arbitrary location, they get code execution.
     $normalizedPath = $scriptPath -replace '/', '\'
     if (-not (Test-TrustedSuiteScriptPath -Path $normalizedPath)) {
-        Write-Warn "Set-RunOnce: script path must be under C:\CS2_OPTIMIZE\ and end in .ps1 — rejected: $scriptPath"
+        $message = "Set-RunOnce: script path must be under C:\CS2_OPTIMIZE\ and end in .ps1 — rejected: $scriptPath"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set RunOnce: $name -> $scriptPath" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set RunOnce: $name -> $scriptPath" -ForegroundColor Magenta
+        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "RunOnce previewed: $name -> $normalizedPath") }
         return
     }
     # Validate target script exists before registering — a RunOnce pointing to a missing
     # file would silently fail on next boot, leaving Phase 3 unexecuted with no error.
     Ensure-SecureWorkDir -Path $CFG_WorkDir
     if (-not (Test-Path $scriptPath)) {
-        Write-Warn "RunOnce target does not exist: $scriptPath"
-        Write-Host "  $([char]0x2139) What to do: Phase 3 will NOT auto-start on next boot." -ForegroundColor Cyan
-        Write-Host "    After rebooting, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        $message = "RunOnce target does not exist: $scriptPath"
+        Write-Warn $message
+        Write-ConsoleLine "  $([char]0x2139) What to do: Phase 3 will NOT auto-start on next boot." -ForegroundColor Cyan
+        Write-ConsoleLine "    After rebooting, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
         return
     }
     Set-SecureAcl -Path $scriptPath -Required
     $allowedPolicies = @("Bypass", "RemoteSigned", "AllSigned")
     $executionPolicy = [string]$CFG_RunOnceExecutionPolicy
     if ($executionPolicy -eq "Undefined") {
-        Write-Warn "Set-RunOnce: CFG_RunOnceExecutionPolicy 'Undefined' is unsupported on client systems due to policy precedence and GPOs; use one of: $($allowedPolicies -join ', ')"
+        $message = "Set-RunOnce: CFG_RunOnceExecutionPolicy 'Undefined' is unsupported on client systems due to policy precedence and GPOs; use one of: $($allowedPolicies -join ', ')"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
     if ($executionPolicy -notin $allowedPolicies) {
-        Write-Warn "Set-RunOnce: invalid CFG_RunOnceExecutionPolicy '$executionPolicy' — expected one of: $($allowedPolicies -join ', ')"
+        $message = "Set-RunOnce: invalid CFG_RunOnceExecutionPolicy '$executionPolicy' — expected one of: $($allowedPolicies -join ', ')"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
     # Bypass stays the default because the suite runs locally and is already admin-elevated.
     $cmd = "powershell.exe -NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File `"$normalizedPath`""
+    if (-not $PSCmdlet.ShouldProcess($name, "Register RunOnce entry for $normalizedPath")) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "RunOnce skipped: $name -> $normalizedPath") }
+        return
+    }
     try {
         Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name $name -Value $cmd -ErrorAction Stop
         Write-OK "RunOnce: $name -> $normalizedPath"
+        if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "RunOnce set: $name -> $normalizedPath") }
     } catch {
-        Write-Err "Failed to set RunOnce '$name': $_"
-        Write-Host "  $([char]0x2139) What to do: Phase 3 will NOT auto-start after reboot." -ForegroundColor Cyan
-        Write-Host "    After rebooting, run Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        $message = "Failed to set RunOnce '$name': $_"
+        Write-Err $message
+        Write-ConsoleLine "  $([char]0x2139) What to do: Phase 3 will NOT auto-start after reboot." -ForegroundColor Cyan
+        Write-ConsoleLine "    After rebooting, run Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
     }
 }
 
 function Set-BootConfig {
-    [CmdletBinding()]
-    param([string]$key, [string]$val, [string]$why)
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$key, [string]$val, [string]$why, [switch]$PassThru)
     # SECURITY: Validate bcdedit key/value — these are passed as command-line arguments.
     # An attacker who controls state.json or backup.json could inject arbitrary bcdedit args.
     # bcdedit keys are alphanumeric identifiers; values are alphanumeric, hex, or simple tokens.
     if ($key -notmatch '^[a-zA-Z][a-zA-Z0-9_]*$') {
-        Write-Warn "Set-BootConfig: invalid key format '$key' — rejected (security: command injection prevention)"
+        $message = "Set-BootConfig: invalid key format '$key' — rejected (security: command injection prevention)"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return $false
     }
     if ($val -notmatch '^[a-zA-Z0-9_.{}\-]+$') {
-        Write-Warn "Set-BootConfig: invalid value format '$val' — rejected (security: command injection prevention)"
+        $message = "Set-BootConfig: invalid value format '$val' — rejected (security: command injection prevention)"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return $false
     }
 
@@ -440,20 +551,28 @@ function Set-BootConfig {
         Backup-BootConfig -Key $key -StepTitle $SCRIPT:CurrentStepTitle
     }
     if ($SCRIPT:DryRun) {
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: bcdedit /set $key $val  ($why)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: bcdedit /set $key $val  ($why)" -ForegroundColor Magenta
+        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "Boot config previewed: $key = $val") }
         return $true
     }
     Write-Step "bcdedit /set $key $val  ($why)"
+    if (-not $PSCmdlet.ShouldProcess($key, "Set boot configuration value to $val")) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Boot config skipped: $key = $val") }
+        return $false
+    }
     $output = bcdedit /set $key $val 2>&1
     $bcdeditExit = $LASTEXITCODE
     $outputStr = $output | Out-String
     if ($bcdeditExit -ne 0) {
-        Write-Warn "Boot config change failed: bcdedit /set $key $val"
-        Write-Host "  $([char]0x2139) This is usually fine — Windows may not support this setting on your PC." -ForegroundColor Cyan
+        $message = "Boot config change failed: bcdedit /set $key $val"
+        Write-Warn $message
+        Write-ConsoleLine "  $([char]0x2139) This is usually fine — Windows may not support this setting on your PC." -ForegroundColor Cyan
         Write-DebugLog "bcdedit exit $bcdeditExit — $outputStr"
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
         return $false
     }
     Write-OK "Set: $key = $val"
+    if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Boot config set: $key = $val") }
     return $true
 }
 
@@ -495,18 +614,22 @@ function Test-BootConfigSet($key) {
 }
 
 function Set-RegistryValue {
-    [CmdletBinding()]
-    param([string]$path, [string]$name, $value, [string]$type, [string]$why)
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$path, [string]$name, $value, [string]$type, [string]$why, [switch]$PassThru)
     # SECURITY: Validate registry path — must start with a known hive prefix.
     # An attacker who controls backup.json or state.json could inject arbitrary paths
     # to write to sensitive registry locations outside the expected scope.
     if ($path -notmatch '^(HKLM:|HKCU:|HKCR:|HKU:|HKCC:|Microsoft\.PowerShell\.Core\\Registry::HK)') {
-        Write-Warn "Set-RegistryValue: path does not start with a valid registry hive — rejected: $path"
+        $message = "Set-RegistryValue: path does not start with a valid registry hive — rejected: $path"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
     # SECURITY: Registry value name must not contain path separators or null bytes.
     if ($name -match '[\\/\x00]') {
-        Write-Warn "Set-RegistryValue: name contains invalid characters — rejected: $name"
+        $message = "Set-RegistryValue: name contains invalid characters — rejected: $name"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
 
@@ -515,18 +638,26 @@ function Set-RegistryValue {
         Backup-RegistryValue -Path $path -Name $name -StepTitle $SCRIPT:CurrentStepTitle
     }
     if ($SCRIPT:DryRun) {
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: $name = $value [$type]  ($why)" -ForegroundColor Magenta
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)    Path: $path" -ForegroundColor DarkMagenta
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: $name = $value [$type]  ($why)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)    Path: $path" -ForegroundColor DarkMagenta
+        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "Registry previewed: $path | $name") }
         return
     }
     Write-DebugLog "Registry: $path | $name = $value [$type] — $why"
+    if (-not $PSCmdlet.ShouldProcess("$path\$name", "Set registry value to $value [$type]")) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Registry skipped: $path | $name") }
+        return
+    }
     try {
         if (-not (Test-Path $path)) { New-Item -Path $path -Force -ErrorAction Stop | Out-Null }
         Set-ItemProperty -Path $path -Name $name -Value $value -Type $type -ErrorAction Stop
         Write-OK "Registry: $name = $value"
+        if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Registry set: $path | $name") }
     } catch {
-        Write-Warn "Registry write failed ($name): $_"
-        Write-Host "  $([char]0x2139) This is not critical — the optimization will be skipped for this setting." -ForegroundColor Cyan
+        $message = "Registry write failed ($name): $_"
+        Write-Warn $message
+        Write-ConsoleLine "  $([char]0x2139) This is not critical — the optimization will be skipped for this setting." -ForegroundColor Cyan
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
     }
 }
 
@@ -538,8 +669,10 @@ function Set-ClipboardSafe {
     <#  Wraps Set-Clipboard in try/catch. Set-Clipboard can fail on headless/remote
         sessions, minimal Windows Server editions, or when the clipboard service is
         unavailable. Non-critical — failure is logged, not thrown.  #>
+    [CmdletBinding(SupportsShouldProcess)]
     param([Parameter(ValueFromPipeline)][string]$Text)
     process {
+        if (-not $PSCmdlet.ShouldProcess("clipboard", "Set clipboard text")) { return }
         try { $Text | Set-Clipboard -ErrorAction Stop }
         catch { Write-DebugLog "Set-Clipboard failed (headless/remote session?): $_" }
     }
@@ -659,20 +792,20 @@ function Test-RegistryCheck {
 
     switch ($status) {
         "MISSING" {
-            Write-Host "  ?  MISSING   $Label" -ForegroundColor Red
-            Write-Host "               $Path\$Name" -ForegroundColor DarkGray
+            Write-ConsoleLine "  ?  MISSING   $Label" -ForegroundColor Red
+            Write-ConsoleLine "               $Path\$Name" -ForegroundColor DarkGray
             $Script:_verifyMissingCount++
         }
         "OK" {
-            Write-Host "  ✓  OK        $Label  ($result)" -ForegroundColor Green
+            Write-ConsoleLine "  ✓  OK        $Label  ($result)" -ForegroundColor Green
             $Script:_verifyOkCount++
         }
         "CHANGED" {
-            Write-Host "  ✗  CHANGED   $Label  (is: $result, expected: $Expected)" -ForegroundColor Yellow
-            Write-Host "               $Path\$Name" -ForegroundColor DarkGray
+            Write-ConsoleLine "  ✗  CHANGED   $Label  (is: $result, expected: $Expected)" -ForegroundColor Yellow
+            Write-ConsoleLine "               $Path\$Name" -ForegroundColor DarkGray
             # Warn if the key lives under a Policies path — Group Policy may override user writes
             if ($Path -match '\\Policies\\') {
-                Write-Host "               NOTE: This key is under a Policies path — may be managed by Group Policy" -ForegroundColor DarkYellow
+                Write-ConsoleLine "               NOTE: This key is under a Policies path — may be managed by Group Policy" -ForegroundColor DarkYellow
             }
             $Script:_verifyChangedCount++
         }
@@ -699,14 +832,14 @@ function Test-ServiceCheck {
             default        { $rawStartType }
         }
         if ($startType -eq $ExpectedStartType) {
-            Write-Host "  ✓  OK        $Label  (StartType: $startType, Status: $($svc.Status))" -ForegroundColor Green
+            Write-ConsoleLine "  ✓  OK        $Label  (StartType: $startType, Status: $($svc.Status))" -ForegroundColor Green
             $Script:_verifyOkCount++
         } else {
-            Write-Host "  ✗  CHANGED   $Label  (StartType: $startType, expected: $ExpectedStartType)" -ForegroundColor Yellow
+            Write-ConsoleLine "  ✗  CHANGED   $Label  (StartType: $startType, expected: $ExpectedStartType)" -ForegroundColor Yellow
             $Script:_verifyChangedCount++
         }
     } catch {
-        Write-Host "  ?  MISSING   $Label  (Service not found)" -ForegroundColor Red
+        Write-ConsoleLine "  ?  MISSING   $Label  (Service not found)" -ForegroundColor Red
         $Script:_verifyMissingCount++
     }
 }

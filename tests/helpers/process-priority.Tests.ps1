@@ -27,7 +27,10 @@ AfterAll {
 # ── Get-X3DCcdInfo ──────────────────────────────────────────────────────────
 Describe "Get-X3DCcdInfo" {
 
-    BeforeEach { Reset-TestState; Reset-CachedCpuInfo }
+    BeforeEach {
+        Reset-TestState
+        $script:_cachedCpuInfo = $null
+    }
 
     Context "Non-X3D CPUs" {
 
@@ -250,7 +253,7 @@ Describe "Set-CS2ProcessPriority" {
         Mock Get-X3DCcdInfo { $null }
         Mock Write-Blank {}
         Mock Write-OK {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
 
         Set-CS2ProcessPriority
 
@@ -268,7 +271,7 @@ Describe "Set-CS2ProcessPriority" {
         Mock Get-X3DCcdInfo { $null }
         Mock Write-Blank {}
         Mock Write-OK {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
 
         Set-CS2ProcessPriority
 
@@ -287,7 +290,7 @@ Describe "Set-CS2ProcessPriority" {
             Mock Get-X3DCcdInfo { $null }
             Mock Write-Blank {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             Set-CS2ProcessPriority
             # Should not throw; DRY-RUN prints message instead of modifying
@@ -303,7 +306,7 @@ Describe "Install-CS2AffinityTask" {
     It "skips task creation in DRY-RUN mode" {
         $SCRIPT:DryRun = $true
         Mock Register-ScheduledTask {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
 
         Install-CS2AffinityTask -AffinityMask 0xFF -AffinityHex "0xFF"
 

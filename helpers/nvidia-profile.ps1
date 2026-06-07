@@ -130,6 +130,34 @@ $NV_DRS_SETTINGS = @(
 # 269308407  (0x100D51F7) — String setting "Buffers=(Depth)" → DRS string type, marginal
 # ─────────────────────────────────────────────────────────────────────────────
 
+function New-NvidiaProfileResult {
+    param(
+        [string]$Status,
+        [bool]$CanCompleteStep,
+        [string]$Method,
+        [string]$Message,
+        [int]$DrsApplied = 0,
+        [int]$DrsFailed = 0,
+        [int]$DrsTotal = 0,
+        [int]$RegistryApplied = 0,
+        [int]$RegistryFailed = 0,
+        [bool]$BackupFailed = $false
+    )
+
+    [PSCustomObject]@{
+        Status = $Status
+        CanCompleteStep = $CanCompleteStep
+        Method = $Method
+        Message = $Message
+        DrsApplied = $DrsApplied
+        DrsFailed = $DrsFailed
+        DrsTotal = $DrsTotal
+        RegistryApplied = $RegistryApplied
+        RegistryFailed = $RegistryFailed
+        BackupFailed = $BackupFailed
+    }
+}
+
 
 function Apply-NvidiaCS2Profile {
     <#
@@ -164,7 +192,11 @@ function Apply-NvidiaCS2Profile {
 
     if (-not $nvKeyPath) {
         Write-Warn "NVIDIA GPU registry key not found. Install the driver first."
-        return
+        return New-NvidiaProfileResult `
+            -Status "Failed" `
+            -CanCompleteStep $false `
+            -Method "None" `
+            -Message "NVIDIA GPU registry key not found."
     }
 
     # ── FPS cap override for FRL setting ────────────────────────────────────
@@ -176,16 +208,29 @@ function Apply-NvidiaCS2Profile {
     }
 
     # ── Try DRS direct write (preferred path) ──────────────────────────────
-    $drsSuccess = $false
     if (Initialize-NvApiDrs) {
-        $drsSuccess = Apply-NvidiaCS2ProfileDrs -FrlValue $frlValue -FrlLabel $frlLabel
+        $drsResult = Apply-NvidiaCS2ProfileDrs -FrlValue $frlValue -FrlLabel $frlLabel
+    } else {
+        $drsResult = $null
     }
 
     # ── Fallback: registry-only (if DRS unavailable or failed) ──────────────
-    if (-not $drsSuccess) {
+    if (-not $drsResult -or $drsResult.Status -eq "SessionFailed") {
         Write-Warn "DRS direct write unavailable — falling back to registry method."
-        Apply-NvidiaCS2ProfileRegistry -NvKeyPath $nvKeyPath -FrlValue $frlValue -FrlLabel $frlLabel
-        return
+        return Apply-NvidiaCS2ProfileRegistry -NvKeyPath $nvKeyPath -FrlValue $frlValue -FrlLabel $frlLabel
+    }
+
+    if (-not $drsResult.CanCompleteStep) {
+        Write-Blank
+        Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
+        Write-ConsoleLine "  │  NVIDIA CS2 PROFILE — DRS NOT FULLY APPLIED                 │" -ForegroundColor Yellow
+        Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
+        Write-ConsoleLine "  │  Status: $($drsResult.Status)$((' ' * [math]::Max(0, 52 - $drsResult.Status.Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  │  DRS:    $($drsResult.DrsApplied)/$($drsResult.DrsTotal) applied, $($drsResult.DrsFailed) failed$((' ' * [math]::Max(0, 28 - "$($drsResult.DrsApplied)/$($drsResult.DrsTotal)".Length - "$($drsResult.DrsFailed)".Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
+        Write-ConsoleLine "  │  Review warnings and retry before marking this step done.   │" -ForegroundColor White
+        Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+        return $drsResult
     }
 
     # ── GPU class registry keys: P-state locks ──────────────────────────────
@@ -193,40 +238,64 @@ function Apply-NvidiaCS2Profile {
     # DisableDynamicPstate: complementary — djdallmann confirmed via nvidia-smi
     # monitoring that this locks P0 at the driver level independently from NVCP.
     # Both go in the GPU hardware class key, NOT d3d. Effective on all drivers.
-    Set-RegistryValue $nvKeyPath "PerfLevelSrc"       0x2222 "DWord" "P-state: Max Performance (GPU class key)"
-    Set-RegistryValue $nvKeyPath "DisableDynamicPstate" 1    "DWord" "Lock P0 at driver level (complements PerfLevelSrc)"
+    $registryResults = @(
+        Set-RegistryValue $nvKeyPath "PerfLevelSrc"       0x2222 "DWord" "P-state: Max Performance (GPU class key)" -PassThru
+        Set-RegistryValue $nvKeyPath "DisableDynamicPstate" 1    "DWord" "Lock P0 at driver level (complements PerfLevelSrc)" -PassThru
+    )
+    $registryApplied = @($registryResults | Where-Object { $_.Applied }).Count
+    $registryFailed = @($registryResults | Where-Object { -not $_.Applied -and $_.Status -ne "DryRun" }).Count
+    $profileStatus = if ($registryFailed -eq 0) { "Success" } else { "Partial" }
+    $profileCanComplete = ($profileStatus -eq "Success")
+    $profileMessage = if ($profileCanComplete) {
+        "NVIDIA DRS profile and required registry locks applied."
+    } else {
+        "NVIDIA DRS profile applied, but $registryFailed required registry lock(s) failed."
+    }
 
     # ── DRS Success Summary ─────────────────────────────────────────────────
     $settingCount = $NV_DRS_SETTINGS.Count
-    $appliedCount = if ($null -ne $SCRIPT:_drsApplied) { $SCRIPT:_drsApplied } else { $settingCount }
-    $errorCount   = if ($null -ne $SCRIPT:_drsErrors)  { $SCRIPT:_drsErrors }  else { 0 }
+    $appliedCount = $drsResult.DrsApplied
+    $errorCount   = $drsResult.DrsFailed
     Write-Blank
-    $statusColor = if ($errorCount -eq 0) { "Green" } else { "Yellow" }
+    $statusColor = if ($profileCanComplete) { "Green" } else { "Yellow" }
     $drsLabel = if ($errorCount -eq 0) { "$appliedCount DRS" } else { "$appliedCount/$settingCount DRS ($errorCount failed)" }
-    Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $statusColor
-    $contentStr = "  NVIDIA CS2 PROFILE — $drsLabel + 2 registry"
+    $registryLabel = if ($registryFailed -eq 0) { "2 registry" } else { "$registryApplied/2 registry ($registryFailed failed)" }
+    Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $statusColor
+    $contentStr = "  NVIDIA CS2 PROFILE — $drsLabel + $registryLabel"
     $padLen = [math]::Max(1, 64 - $contentStr.Length)
-    Write-Host "  │$contentStr$((' ' * $padLen))│" -ForegroundColor $statusColor
-    Write-Host "  │                                                              │" -ForegroundColor Green
-    Write-Host "  │  Method: DRS direct write (nvapi64.dll)                     │" -ForegroundColor White
-    Write-Host "  │  Profile: Counter-strike 2  (cs2.exe / csgos2.exe)          │" -ForegroundColor White
-    Write-Host "  │                                                              │" -ForegroundColor Green
-    Write-Host "  │  ✔  Power Management:    Prefer Maximum Performance         │" -ForegroundColor White
-    Write-Host "  │  ✔  Threaded Optimization: Force ON                         │" -ForegroundColor White
-    Write-Host "  │  ✔  Texture Filtering:   High Performance                   │" -ForegroundColor White
-    Write-Host "  │  ✔  Triple Buffering:    OFF                                │" -ForegroundColor White
-    Write-Host "  │  ✔  VSync:               Force OFF                          │" -ForegroundColor White
-    Write-Host "  │  ✔  G-SYNC / VRR:        Disabled by suite default          │" -ForegroundColor White
-    Write-Host "  │  ✔  FXAA / Ansel:        OFF                                │" -ForegroundColor White
-    Write-Host "  │  ✔  Max Pre-rendered:    1 frame                            │" -ForegroundColor White
-    Write-Host "  │  ✔  Frame Rate Limiter:  $frlLabel$((' ' * [math]::Max(0, 36 - $frlLabel.Length)))│" -ForegroundColor White
+    Write-ConsoleLine "  │$contentStr$((' ' * $padLen))│" -ForegroundColor $statusColor
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Green
+    Write-ConsoleLine "  │  Method: DRS direct write (nvapi64.dll)                     │" -ForegroundColor White
+    Write-ConsoleLine "  │  Profile: Counter-strike 2  (cs2.exe / csgos2.exe)          │" -ForegroundColor White
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Green
+    Write-ConsoleLine "  │  ✔  Power Management:    Prefer Maximum Performance         │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  Threaded Optimization: Force ON                         │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  Texture Filtering:   High Performance                   │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  Triple Buffering:    OFF                                │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  VSync:               Force OFF                          │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  G-SYNC / VRR:        Disabled by suite default          │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  FXAA / Ansel:        OFF                                │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  Max Pre-rendered:    1 frame                            │" -ForegroundColor White
+    Write-ConsoleLine "  │  ✔  Frame Rate Limiter:  $frlLabel$((' ' * [math]::Max(0, 36 - $frlLabel.Length)))│" -ForegroundColor White
     $summaryDisplayed = 9  # Number of settings explicitly listed in the summary box above
-    Write-Host "  │  ✔  + $($settingCount - $summaryDisplayed) more DRS settings (AA, LOD, Optimus, cache...)     │" -ForegroundColor DarkGray
-    Write-Host "  │                                                              │" -ForegroundColor Green
-    Write-Host "  │  Verify: open NVIDIA Profile Inspector → Counter-strike 2   │" -ForegroundColor DarkGray
-    Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+    Write-ConsoleLine "  │  ✔  + $($settingCount - $summaryDisplayed) more DRS settings (AA, LOD, Optimus, cache...)     │" -ForegroundColor DarkGray
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Green
+    Write-ConsoleLine "  │  Verify: open NVIDIA Profile Inspector → Counter-strike 2   │" -ForegroundColor DarkGray
+    Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $statusColor
 
     Write-Info "All DRS settings backed up automatically for rollback."
+
+    return New-NvidiaProfileResult `
+        -Status $profileStatus `
+        -CanCompleteStep $profileCanComplete `
+        -Method "DRS" `
+        -Message $profileMessage `
+        -DrsApplied $drsResult.DrsApplied `
+        -DrsFailed $drsResult.DrsFailed `
+        -DrsTotal $drsResult.DrsTotal `
+        -RegistryApplied $registryApplied `
+        -RegistryFailed $registryFailed `
+        -BackupFailed $drsResult.BackupFailed
 }
 
 
@@ -248,6 +317,7 @@ function Apply-NvidiaCS2ProfileDrs {
     # Reset counters from any previous invocation in the same session
     $SCRIPT:_drsApplied = 0
     $SCRIPT:_drsErrors  = 0
+    $SCRIPT:_drsBackupFailed = $false
 
     # Validate FRL value — prevent nonsensical caps from corrupting the DRS profile
     if ($FrlValue -le 0 -or $FrlValue -gt 1000) { $FrlValue = 500 }
@@ -264,13 +334,20 @@ function Apply-NvidiaCS2ProfileDrs {
             if ($s.Id -eq 277041162 -and $FrlValue -ne 500) {
                 $writeValue = [uint32]$FrlValue
             }
-            Write-Host "  [DRY-RUN] Would set DRS: $($s.Name) = $writeValue" -ForegroundColor Magenta
+            Write-ConsoleLine "  [DRY-RUN] Would set DRS: $($s.Name) = $writeValue" -ForegroundColor Magenta
             $applied++
         }
-        Write-Host "  [DRY-RUN] Would save DRS database" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would save DRS database" -ForegroundColor Magenta
         $SCRIPT:_drsApplied = $applied
         $SCRIPT:_drsErrors  = 0
-        return $true
+        return New-NvidiaProfileResult `
+            -Status "DryRun" `
+            -CanCompleteStep $false `
+            -Method "DRS" `
+            -Message "DRS profile previewed." `
+            -DrsApplied $applied `
+            -DrsFailed 0 `
+            -DrsTotal $NV_DRS_SETTINGS.Count
     }
 
     try {
@@ -293,7 +370,9 @@ function Apply-NvidiaCS2ProfileDrs {
                 # Detect the Base Profile by handle comparison, not by name search,
                 # so we always write to the profile that actually owns cs2.exe.
                 $baseProfile = [IntPtr]::Zero
-                try { $baseProfile = [NvApiDrs]::FindProfileByName($session, "_GLOBAL_DRIVER_PROFILE") } catch { }
+                try { $baseProfile = [NvApiDrs]::FindProfileByName($session, "_GLOBAL_DRIVER_PROFILE") } catch {
+                    Write-DebugLog "DRS: Base profile lookup failed: $($_.Exception.Message)"
+                }
                 if ($baseProfile -ne [IntPtr]::Zero -and $drsProfile -eq $baseProfile) {
                     # cs2.exe is in the Base Profile — create a dedicated profile and move it
                     Write-DebugLog "DRS: cs2.exe found in Base Profile — creating dedicated CS2 profile"
@@ -358,6 +437,7 @@ function Apply-NvidiaCS2ProfileDrs {
                     -ProfileCreated $profileCreated
             } catch {
                 Write-Warn "DRS backup failed (settings will still be applied): $_"
+                $SCRIPT:_drsBackupFailed = $true
             }
 
             # ── Apply settings ──────────────────────────────────────────────
@@ -392,10 +472,48 @@ function Apply-NvidiaCS2ProfileDrs {
             $SCRIPT:_drsErrors  = $errors
         }
 
-        return $true
+        $settingCount = $NV_DRS_SETTINGS.Count
+        $appliedCount = if ($null -ne $SCRIPT:_drsApplied) { $SCRIPT:_drsApplied } else { 0 }
+        $errorCount = if ($null -ne $SCRIPT:_drsErrors) { $SCRIPT:_drsErrors } else { $settingCount }
+        $backupFailed = if ($null -ne $SCRIPT:_drsBackupFailed) { [bool]$SCRIPT:_drsBackupFailed } else { $false }
+        $drsStatus = if ($errorCount -eq 0 -and $appliedCount -eq $settingCount -and -not $backupFailed) {
+            "Success"
+        } elseif ($appliedCount -gt 0) {
+            "Partial"
+        } else {
+            "Failed"
+        }
+        $drsMessage = switch ($drsStatus) {
+            "Success" { "All $settingCount DRS settings applied." }
+            "Partial" {
+                if ($backupFailed -and $errorCount -eq 0) {
+                    "DRS settings applied, but backup failed."
+                } else {
+                    "Only $appliedCount of $settingCount DRS settings applied."
+                }
+            }
+            default { "No DRS settings were applied." }
+        }
+
+        return New-NvidiaProfileResult `
+            -Status $drsStatus `
+            -CanCompleteStep ($drsStatus -eq "Success") `
+            -Method "DRS" `
+            -Message $drsMessage `
+            -DrsApplied $appliedCount `
+            -DrsFailed $errorCount `
+            -DrsTotal $settingCount `
+            -BackupFailed $backupFailed
     } catch {
         Write-Warn "DRS write failed: $_"
-        return $false
+        return New-NvidiaProfileResult `
+            -Status "SessionFailed" `
+            -CanCompleteStep $false `
+            -Method "DRS" `
+            -Message "DRS write failed: $_" `
+            -DrsApplied 0 `
+            -DrsFailed 0 `
+            -DrsTotal $NV_DRS_SETTINGS.Count
     }
 }
 
@@ -451,25 +569,53 @@ function Apply-NvidiaCS2ProfileRegistry {
     )
 
     $appliedCount = 0
+    $failedCount = 0
+    $dryRunCount = 0
     foreach ($s in $regSettings) {
-        Set-RegistryValue $s.Path $s.Name $s.Value "DWord" $s.Why
-        $appliedCount++
+        $writeResult = Set-RegistryValue $s.Path $s.Name $s.Value "DWord" $s.Why -PassThru
+        if ($writeResult.Applied) {
+            $appliedCount++
+        } elseif ($writeResult.Status -eq "DryRun") {
+            $dryRunCount++
+        } else {
+            $failedCount++
+        }
     }
 
     # ── Fallback Summary ────────────────────────────────────────────────────
     Write-Blank
-    Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "  │  NVIDIA CS2 PROFILE — $appliedCount settings via REGISTRY (fallback)$((' ' * (6 - "$appliedCount".Length)))│" -ForegroundColor Yellow
-    Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │  ⚠  DRS direct write was unavailable.                       │" -ForegroundColor Yellow
-    Write-Host "  │  Only PerfLevelSrc (GPU class key) is confirmed effective   │" -ForegroundColor Yellow
-    Write-Host "  │  on modern drivers. Registry d3d keys may be ignored.       │" -ForegroundColor Yellow
-    Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │  FOR FULL DRS COVERAGE:                                      │" -ForegroundColor White
-    Write-Host "  │  Re-run after installing NVIDIA driver with nvapi64.dll    │" -ForegroundColor White
-    Write-Host "  │  or use NVIDIA Profile Inspector to set manually.          │" -ForegroundColor DarkGray
-    Write-Host "  │  NPI: github.com/Orbmu2k/nvidiaProfileInspector            │" -ForegroundColor DarkGray
-    Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
+    Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  NVIDIA CS2 PROFILE — $appliedCount settings via REGISTRY (fallback)$((' ' * (6 - "$appliedCount".Length)))│" -ForegroundColor Yellow
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  ⚠  DRS direct write was unavailable.                       │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  Only PerfLevelSrc (GPU class key) is confirmed effective   │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  on modern drivers. Registry d3d keys may be ignored.       │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  FOR FULL DRS COVERAGE:                                      │" -ForegroundColor White
+    Write-ConsoleLine "  │  Re-run after installing NVIDIA driver with nvapi64.dll    │" -ForegroundColor White
+    Write-ConsoleLine "  │  or use NVIDIA Profile Inspector to set manually.          │" -ForegroundColor DarkGray
+    Write-ConsoleLine "  │  NPI: github.com/Orbmu2k/nvidiaProfileInspector            │" -ForegroundColor DarkGray
+    Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
 
-    Write-Info "All $appliedCount registry settings backed up automatically for rollback."
+    if ($failedCount -eq 0 -and $dryRunCount -eq 0) {
+        Write-Info "All $appliedCount registry settings backed up automatically for rollback."
+    } elseif ($dryRunCount -gt 0 -and $failedCount -eq 0) {
+        Write-Info "Registry fallback previewed in dry-run mode."
+    } else {
+        Write-Warn "$failedCount registry fallback setting(s) failed. Review warnings before continuing."
+    }
+
+    $status = if ($dryRunCount -gt 0 -and $failedCount -eq 0) { "DryRun" } elseif ($failedCount -eq 0) { "Fallback" } else { "Failed" }
+    $message = switch ($status) {
+        "DryRun" { "Registry fallback previewed." }
+        "Fallback" { "Registry fallback applied." }
+        default { "Registry fallback had failed writes." }
+    }
+    return New-NvidiaProfileResult `
+        -Status $status `
+        -CanCompleteStep ($status -eq "Fallback") `
+        -Method "RegistryFallback" `
+        -Message $message `
+        -RegistryApplied $appliedCount `
+        -RegistryFailed $failedCount
 }

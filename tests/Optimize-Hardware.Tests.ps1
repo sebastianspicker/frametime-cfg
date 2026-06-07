@@ -18,6 +18,7 @@ Describe "Optimize-Hardware Step 10" {
         Reset-TestState
         $SCRIPT:DryRun = $false
         $script:BootWrites = @()
+        $script:ActionError = $null
 
         Mock Write-Section {}
         Mock Write-Info {}
@@ -31,11 +32,17 @@ Describe "Optimize-Hardware Step 10" {
         Mock Skip-Step {}
 
         Mock Set-BootConfig {
-            param($Key, $Val, $Why)
+            param($Key, $Val, $Why, [switch]$PassThru)
             $script:BootWrites += [PSCustomObject]@{
                 Key   = $Key
                 Value = $Val
                 Why   = $Why
+                PassThru = [bool]$PassThru
+            }
+            [PSCustomObject]@{
+                Status = "Success"
+                Applied = $true
+                Message = "ok"
             }
         }
 
@@ -56,7 +63,11 @@ Describe "Optimize-Hardware Step 10" {
             )
 
             if ($Title -match "Dynamic Tick") {
-                & $Action
+                try {
+                    & $Action
+                } catch {
+                    $script:ActionError = $_
+                }
             }
         }
 
@@ -72,6 +83,36 @@ Describe "Optimize-Hardware Step 10" {
         $script:BootWrites | Should -HaveCount 1
         $script:BootWrites[0].Key | Should -Be "disabledynamictick"
         $script:BootWrites[0].Value | Should -Be "yes"
+        $script:BootWrites[0].PassThru | Should -Be $true
         ($script:BootWrites | Where-Object Key -eq "useplatformtick") | Should -BeNullOrEmpty
+        Should -Invoke Complete-Step -Exactly 1 -ParameterFilter {
+            $phase -eq 1 -and $stepNum -eq 10 -and $stepName -eq "Timer"
+        }
+    }
+
+    It "does not complete Step 10 when the required boot write fails" {
+        Mock Set-BootConfig {
+            param($Key, $Val, $Why, [switch]$PassThru)
+            $script:BootWrites += [PSCustomObject]@{
+                Key   = $Key
+                Value = $Val
+                Why   = $Why
+                PassThru = [bool]$PassThru
+            }
+            [PSCustomObject]@{
+                Status = "Failed"
+                Applied = $false
+                Message = "bcdedit failed"
+            }
+        }
+
+        . "$PSScriptRoot/../Optimize-Hardware.ps1"
+
+        $script:BootWrites | Should -HaveCount 1
+        $script:ActionError | Should -Not -BeNullOrEmpty
+        $script:ActionError.Exception.Message | Should -Match "Required boot config write failed"
+        Should -Invoke Complete-Step -Exactly 0 -ParameterFilter {
+            $phase -eq 1 -and $stepNum -eq 10 -and $stepName -eq "Timer"
+        }
     }
 }

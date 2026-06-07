@@ -28,53 +28,6 @@ Describe "Initialize-Backup hardening" {
     }
 }
 
-Describe "Prune-BackupVersions" {
-
-    BeforeEach { Reset-TestState }
-
-    It "removes the oldest versioned backups beyond CFG_BackupMaxVersions" {
-        $CFG_BackupMaxVersions = 2
-        @(
-            "backup.20260101-000001.json",
-            "backup.20260101-000002.json",
-            "backup.20260101-000003.json"
-        ) | ForEach-Object {
-            Set-Content (Join-Path $SCRIPT:TestTempRoot $_) -Value "{}" -Encoding UTF8
-        }
-
-        Prune-BackupVersions
-
-        $remaining = @(
-            Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" |
-                Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}\.json$' } |
-                Sort-Object Name
-        )
-        @($remaining.Name) | Should -Be @(
-            "backup.20260101-000002.json",
-            "backup.20260101-000003.json"
-        )
-    }
-
-    It "preserves at least one version when CFG_BackupMaxVersions is zero" {
-        $CFG_BackupMaxVersions = 0
-        @(
-            "backup.20260101-000001.json",
-            "backup.20260101-000002.json"
-        ) | ForEach-Object {
-            Set-Content (Join-Path $SCRIPT:TestTempRoot $_) -Value "{}" -Encoding UTF8
-        }
-
-        Prune-BackupVersions
-
-        $remaining = @(
-            Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" |
-                Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}\.json$' } |
-                Sort-Object Name
-        )
-        @($remaining.Name) | Should -Be @("backup.20260101-000002.json")
-    }
-}
-
 Describe "Get-BackupDataRaw corruption handling" {
 
     BeforeEach {

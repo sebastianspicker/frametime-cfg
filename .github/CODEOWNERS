@@ -9,7 +9,13 @@
 
 # CI/CD workflows — highest risk (can exfiltrate secrets, run arbitrary code)
 .github/workflows/          @sebastianspicker
+.github/scripts/            @sebastianspicker
+.github/dependabot.yml      @sebastianspicker
 .github/CODEOWNERS          @sebastianspicker
+
+# Static-analysis configuration
+.codacy/                    @sebastianspicker
+PSScriptAnalyzerSettings.psd1 @sebastianspicker
 
 # Core configuration and helpers (system-modifying code)
 config.env.ps1              @sebastianspicker

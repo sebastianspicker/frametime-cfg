@@ -468,7 +468,7 @@ function Invoke-DrsSession {
 
     # Guard against writes during dry-run — NVAPI bypasses Set-RegistryValue's dry-run interceptor
     if (-not $NoSave -and (Get-Variable -Name DryRun -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would execute NVAPI DRS session (write mode)" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would execute NVAPI DRS session (write mode)" -ForegroundColor Magenta
         return
     }
 

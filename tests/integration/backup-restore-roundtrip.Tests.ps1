@@ -29,7 +29,7 @@ Describe "Registry backup and restore roundtrip" {
         # Initialize backup file
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -142,7 +142,7 @@ Describe "Service backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -218,7 +218,7 @@ Describe "BootConfig backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -316,7 +316,7 @@ Describe "PowerPlan backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -358,7 +358,7 @@ Describe "ScheduledTask backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -480,7 +480,7 @@ Describe "Corrupted backup.json recovery" {
 
         Mock Write-DebugLog {}
         Mock Write-Warn {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
     }
 
     It "Get-BackupDataRaw recovers from corrupted JSON" {
@@ -528,7 +528,7 @@ Describe "Restore security validation" {
         Reset-IntegrationState
         $SCRIPT:DryRun = $false
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -641,7 +641,7 @@ Describe "NIC adapter backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -701,7 +701,7 @@ Describe "QoS/URO backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -755,7 +755,7 @@ Describe "Defender backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -799,7 +799,7 @@ Describe "Pagefile backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -859,7 +859,7 @@ Describe "DNS backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -898,6 +898,41 @@ Describe "DNS backup and restore roundtrip" {
         $result | Should -Be $false
         @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
     }
+
+    It "fails closed when the backed-up adapter name no longer resolves" {
+        Backup-DnsConfig -AdapterName "Ethernet" -InterfaceIndex 12 -OriginalDnsServers @("1.1.1.1") -StepTitle "DNS Test Step"
+        Flush-BackupBuffer
+
+        Mock Get-NetAdapter { $null }
+        Mock Set-DnsClientServerAddress {}
+
+        $result = Restore-StepChanges -StepTitle "DNS Test Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "fails closed when the backup lacks an adapter name" {
+        $entries = @(
+            [ordered]@{
+                type = "dns"; adapterName = ""; interfaceIndex = 12;
+                originalDnsServers = @("1.1.1.1"); step = "DNS Test Step";
+                timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+
+        Mock Get-NetAdapter {}
+        Mock Set-DnsClientServerAddress {}
+
+        $result = Restore-StepChanges -StepTitle "DNS Test Step"
+
+        $result | Should -Be $false
+        Should -Invoke Get-NetAdapter -Exactly 0
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
 }
 
 # ── DRS backup/restore roundtrip ────────────────────────────────────────────
@@ -907,7 +942,7 @@ Describe "DRS backup and restore roundtrip" {
         Reset-IntegrationState
         $SCRIPT:DryRun = $false
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}

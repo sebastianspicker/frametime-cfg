@@ -207,4 +207,11 @@
 //  snd_mixahead 0.05              Stability-oriented suite default
 //  snd_musicvolume / snd_*_volume Music fully muted (8 CVars)
 //
+//  OPTIONAL CFGs copied by Step 34 (manual exec only, not auto-executed):
+//  exec debug_hud                 Temporary telemetry + network diagnostics
+//  exec debug_hud_off             Reset diagnostic telemetry to quiet defaults
+//  exec audio_lowlatency_025      Moderate audio latency experiment
+//  exec audio_lowlatency_001      Aggressive audio latency experiment
+//  exec audio_stable              Reset to suite audio default
+//
 // ===========================================================================

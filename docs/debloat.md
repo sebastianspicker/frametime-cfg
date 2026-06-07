@@ -4,9 +4,20 @@
 
 "Debloat" is an imprecise term that covers a range of actions from aggressive (removing core Windows components) to conservative (removing third-party apps pre-installed by OEMs). The suite is conservative: it removes known Microsoft bloatware AppX packages, disables two telemetry services, disables telemetry scheduled tasks, and disables consumer features — nothing that is load-bearing for Windows functionality. Autostart cleanup is handled separately by Step 14.
 
+For a fresh machine, start from an official Microsoft Windows 11 25H2 image and
+apply this suite after Windows Update, Microsoft Store updates, and chipset/GPU/NIC
+drivers are current. Do not use prebuilt debloated ISOs as the default baseline.
+See [Fresh Windows Baseline](fresh-windows-baseline.md).
+
 ---
 
 ## What Gets Removed
+
+Step 13 prints a preflight inventory before it changes anything. The inventory
+lists matched installed AppX packages, provisioned AppX packages, telemetry
+services that need disabling, and telemetry scheduled tasks that need disabling.
+DRY-RUN prints the same inventory and then previews the actions without removing
+packages, changing services, disabling tasks, or writing registry values.
 
 ### AppX Packages
 
@@ -31,8 +42,16 @@
 | `Microsoft.MixedReality.Portal` | Mixed Reality Portal | VR setup app; irrelevant for gaming-only system |
 | `Microsoft.SkypeApp` | Skype | Background communication daemon |
 | `Microsoft.WindowsCommunicationsApps` | Mail & Calendar | Background email sync |
+| `Microsoft.OutlookForWindows` | New Outlook for Windows | Mail/Calendar replacement; user-visible but not needed on a dedicated CS2 machine |
+| `Microsoft.Windows.DevHome` | Dev Home | Developer dashboard; deprecated/no longer supported and not useful for gaming |
+| `MSTeams` | Microsoft Teams (new) | Communication app; background login/update surface and no CS2 dependency |
+| `Microsoft.BingSearch` | Bing Search integration | Web search package behind Windows search suggestions |
+| `Microsoft.PowerAutomateDesktop` | Power Automate Desktop | Desktop automation tool; no gaming use and not required by Windows servicing |
 
-All packages are removed via `Remove-AppxPackage -AllUsers`, affecting all user accounts on the system, not just the current user.
+Installed packages are removed via `Remove-AppxPackage -AllUsers`, affecting all
+user accounts on the system, not just the current user. Matching provisioned
+packages are also removed via `Remove-AppxProvisionedPackage -Online` so they do
+not reappear for new user profiles after feature updates.
 
 **What does not get removed:** Core Windows components, Windows Store itself, Xbox app (addressed by Step 37 services separately), DirectX runtime packages, .NET packages, or any Microsoft package not on this explicit list.
 
@@ -80,9 +99,38 @@ Disables the Windows advertising identifier. Apps use this ID to correlate user 
 - Does not remove the Windows Store or any framework packages
 - Does not modify Group Policy or Windows Update settings (that's Step 15)
 - Does not remove drivers or hardware-related packages
+- Does not remove Windows Defender, Windows Update, WinSxS, Edge, WebView2, App Installer, DirectX, or .NET runtimes
 - Does not touch any Microsoft package not explicitly in the list
 - Does not remove applications installed by the user (Steam, browsers, etc.)
 - Does not modify registry settings outside the specific keys listed above
+
+---
+
+## External Debloat Tool Position
+
+This suite does not require WinUtil, AtlasOS, tiny11builder, MicroWin, or any
+other third-party debloat tool. Do not stack external debloat tools with this
+suite unless you have reviewed the exact overlapping AppX, service, task, policy,
+and image-component changes.
+
+| Option | Recommendation | Reason |
+|--------|----------------|--------|
+| Official Windows 11 25H2 + this suite | Default | Official servicing path, predictable drivers, explicit repo-owned changes |
+| WinUtil / Win11 Creator | Reference only | Useful comparison source, but its image creator removes 40+ apps and changes OOBE/security defaults |
+| Raphire Win11Debloat | Reference only | Good AppX/package comparison source; this repo owns its smaller allowlist |
+| AtlasOS | Not default | Full OS modification; current docs require supported Windows builds/editions and reinstall-based install |
+| tiny11builder | Lab or VM only | Regular script keeps serviceability but removes broad components; core script is explicitly not for regular use |
+| MicroWin .NET | Do not recommend | Upstream calls it beta/buggy and for users who understand Windows systems management |
+
+References used for this policy:
+
+- Microsoft Windows 11 download: https://www.microsoft.com/en-us/software-download/windows11
+- Microsoft Dev Home support note: https://learn.microsoft.com/en-us/previous-versions/windows/dev-home/
+- Raphire Win11Debloat app removal: https://github.com/Raphire/Win11Debloat/wiki/App-Removal
+- AtlasOS Windows version support: https://docs.atlasos.net/faq/install-faq/windows-version-support/
+- tiny11builder README: https://github.com/ntdevlabs/tiny11builder
+- WinUtil Win11 Creator: https://winutil.christitus.com/userguide/win11creator/
+- MicroWin .NET README: https://github.com/CodingWonders/MicroWin
 
 ---
 

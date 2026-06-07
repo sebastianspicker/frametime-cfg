@@ -107,7 +107,7 @@ Describe "Set-RegistryValue DRY-RUN" {
         $SCRIPT:DryRun = $true
         $SCRIPT:CurrentStepTitle = "Test Step"
         # Mock all functions that Set-RegistryValue might call
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Backup-RegistryValue {}
     }
@@ -126,8 +126,8 @@ Describe "Set-RegistryValue DRY-RUN" {
     It "outputs DRY-RUN message with value details" {
         Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 42 "DWord" "Test reason"
 
-        Should -Invoke Write-Host -ParameterFilter {
-            $Object -match "DRY-RUN" -and $Object -match "TestValue" -and $Object -match "42"
+        Should -Invoke Write-ConsoleLine -ParameterFilter {
+            $Message -match "DRY-RUN" -and $Message -match "TestValue" -and $Message -match "42"
         }
     }
 
@@ -149,7 +149,7 @@ Describe "Set-BootConfig DRY-RUN" {
         Reset-TestState
         $SCRIPT:DryRun = $true
         $SCRIPT:CurrentStepTitle = "Test Step"
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Backup-BootConfig {}
     }
 
@@ -167,8 +167,8 @@ Describe "Set-BootConfig DRY-RUN" {
     It "outputs DRY-RUN message with key and value" {
         Set-BootConfig "disabledynamictick" "yes" "Disable dynamic tick"
 
-        Should -Invoke Write-Host -ParameterFilter {
-            $Object -match "DRY-RUN" -and $Object -match "disabledynamictick" -and $Object -match "yes"
+        Should -Invoke Write-ConsoleLine -ParameterFilter {
+            $Message -match "DRY-RUN" -and $Message -match "disabledynamictick" -and $Message -match "yes"
         }
     }
 
@@ -179,6 +179,187 @@ Describe "Set-BootConfig DRY-RUN" {
             $Key -eq "disabledynamictick" -and
             $StepTitle -eq "Test Step"
         }
+    }
+}
+
+# ── Write helper result contracts ────────────────────────────────────────────
+Describe "Write helper result contracts" {
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $false
+        $SCRIPT:CurrentStepTitle = "Result Contract Test"
+        Mock Write-ConsoleLine {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-Err {}
+        Mock Write-Step {}
+        Mock Write-DebugLog {}
+        Mock Backup-RegistryValue {}
+        Mock Backup-BootConfig {}
+        Mock Ensure-SecureWorkDir {}
+        Mock Set-SecureAcl {}
+    }
+
+    It "Set-RegistryValue returns success status with -PassThru after a write" {
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+        Should -Invoke Set-ItemProperty -Exactly 1
+    }
+
+    It "Set-RegistryValue returns failed status with -PassThru when the write throws" {
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty { throw "denied" }
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "Registry write failed"
+    }
+
+    It "Set-RegistryValue returns dry-run status without applying writes" {
+        $SCRIPT:DryRun = $true
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-ItemProperty -Exactly 0
+    }
+
+    It "Set-RegistryValue returns skipped status under WhatIf without applying writes" {
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+        Mock New-Item {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru -WhatIf
+
+        $result.Status | Should -Be "Skipped"
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke New-Item -Exactly 0
+    }
+
+    It "Set-RegistryValue keeps default no-output behavior for existing callers" {
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason"
+
+        $result | Should -BeNullOrEmpty
+    }
+
+    It "Set-RunOnce returns success status with -PassThru after registration" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+        Should -Invoke Set-ItemProperty -Exactly 1
+    }
+
+    It "Set-RunOnce returns failed status with -PassThru when registration throws" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-ItemProperty { throw "registry denied" }
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "Failed to set RunOnce"
+    }
+
+    It "Set-RunOnce returns dry-run status without applying writes" {
+        $SCRIPT:DryRun = $true
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-ItemProperty -Exactly 0
+    }
+
+    It "Set-RunOnce returns skipped status under WhatIf without registration" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru -WhatIf
+
+        $result.Status | Should -Be "Skipped"
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-ItemProperty -Exactly 0
+    }
+
+    It "Set-RunOnce keeps default no-output behavior for existing callers" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+
+        $result | Should -BeNullOrEmpty
+    }
+
+    It "Set-BootConfig returns dry-run status with -PassThru without applying a boot write" {
+        $SCRIPT:DryRun = $true
+        Mock bcdedit { throw "should not be called" }
+
+        $result = Set-BootConfig "disabledynamictick" "yes" "Test boot config" -PassThru
+
+        $result.Status | Should -Be "DryRun"
+        $result.Applied | Should -Be $false
+        Should -Invoke bcdedit -Exactly 0
+    }
+
+    It "Set-BootConfig returns skipped status under WhatIf without applying a boot write" {
+        Mock bcdedit { throw "should not be called" }
+
+        $result = Set-BootConfig "disabledynamictick" "yes" "Test boot config" -PassThru -WhatIf
+
+        $result.Status | Should -Be "Skipped"
+        $result.Applied | Should -Be $false
+        Should -Invoke bcdedit -Exactly 0
+    }
+
+    It "Set-BootConfig returns failed status with -PassThru when bcdedit fails" {
+        Mock bcdedit {
+            $global:LASTEXITCODE = 1
+            "failed"
+        }
+
+        $result = Set-BootConfig "disabledynamictick" "yes" "Test boot config" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "Boot config change failed"
+    }
+
+    It "Set-BootConfig returns success status with -PassThru when bcdedit succeeds" {
+        Mock bcdedit {
+            $global:LASTEXITCODE = 0
+            "ok"
+        }
+
+        $result = Set-BootConfig "disabledynamictick" "yes" "Test boot config" -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+    }
+
+    It "Set-BootConfig keeps the existing boolean contract without -PassThru" {
+        $SCRIPT:DryRun = $true
+
+        Set-BootConfig "disabledynamictick" "yes" "Test boot config" | Should -Be $true
     }
 }
 
@@ -223,7 +404,7 @@ Describe "Test-RegistryCheck" {
     BeforeEach {
         Reset-TestState
         Initialize-VerifyCounters
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
     }
 
     Context "with -Quiet switch (returns structured result)" {
@@ -309,6 +490,21 @@ Describe "Test-RegistryCheck" {
 }
 
 # ── Load-State ────────────────────────────────────────────────────────────────
+Describe "Get-ModeForProfile" {
+
+    It "maps each profile to the runtime mode used by setup and GUI settings" {
+        Get-ModeForProfile -Profile "SAFE"        | Should -Be "AUTO"
+        Get-ModeForProfile -Profile "RECOMMENDED" | Should -Be "AUTO"
+        Get-ModeForProfile -Profile "COMPETITIVE" | Should -Be "CONTROL"
+        Get-ModeForProfile -Profile "CUSTOM"      | Should -Be "INFORMED"
+        Get-ModeForProfile -Profile "YOLO"        | Should -Be "YOLO"
+    }
+
+    It "uses DRY-RUN mode as an explicit modifier independent of profile" {
+        Get-ModeForProfile -Profile "SAFE" -DryRun | Should -Be "DRY-RUN"
+    }
+}
+
 Describe "Load-State" {
 
     BeforeEach { Reset-TestState }
@@ -340,12 +536,57 @@ Describe "Load-State" {
         $SCRIPT:DryRun | Should -Be $false
     }
 
+    It "does not mutate script runtime state under WhatIf" {
+        $SCRIPT:Mode = "CONTROL"
+        $SCRIPT:Profile = "RECOMMENDED"
+        $SCRIPT:LogLevel = "NORMAL"
+        $SCRIPT:DryRun = $false
+
+        Set-ScriptStateFromStateObject -State ([PSCustomObject]@{
+            mode = "DRY-RUN"
+            profile = "COMPETITIVE"
+            logLevel = "VERBOSE"
+        }) -WhatIf
+
+        $SCRIPT:Mode | Should -Be "CONTROL"
+        $SCRIPT:Profile | Should -Be "RECOMMENDED"
+        $SCRIPT:LogLevel | Should -Be "NORMAL"
+        $SCRIPT:DryRun | Should -Be $false
+    }
+
     It "defaults logLevel to NORMAL when absent" {
         $state = [PSCustomObject]@{ mode = "CONTROL"; profile = "SAFE" }
         Save-JsonAtomic -Data $state -Path $CFG_StateFile
 
         Load-State $CFG_StateFile | Out-Null
         $SCRIPT:LogLevel | Should -Be "NORMAL"
+    }
+
+    It "derives missing mode from the saved profile without discarding log level" {
+        $state = [PSCustomObject]@{ profile = "SAFE"; logLevel = "VERBOSE" }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Load-State $CFG_StateFile | Out-Null
+
+        $SCRIPT:Mode | Should -Be "AUTO"
+        $SCRIPT:Profile | Should -Be "SAFE"
+        $SCRIPT:LogLevel | Should -Be "VERBOSE"
+        $SCRIPT:DryRun | Should -Be $false
+    }
+
+    It "defaults malformed fields independently" {
+        $state = [PSCustomObject]@{
+            mode = @{ bad = "value" }
+            profile = "COMPETITIVE"
+            logLevel = "VERBOSE"
+        }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Load-State $CFG_StateFile | Out-Null
+
+        $SCRIPT:Mode | Should -Be "CONTROL"
+        $SCRIPT:Profile | Should -Be "COMPETITIVE"
+        $SCRIPT:LogLevel | Should -Be "VERBOSE"
     }
 }
 
@@ -384,6 +625,36 @@ Describe "Initialize-ScriptDefaults" {
 
         $SCRIPT:Mode     | Should -Be "CONTROL"
         $SCRIPT:Profile  | Should -Be "RECOMMENDED"
+    }
+
+    It "derives a missing mode without downgrading the saved profile" {
+        $state = [PSCustomObject]@{
+            profile = "SAFE"
+            logLevel = "VERBOSE"
+        }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Initialize-ScriptDefaults
+
+        $SCRIPT:Mode | Should -Be "AUTO"
+        $SCRIPT:Profile | Should -Be "SAFE"
+        $SCRIPT:LogLevel | Should -Be "VERBOSE"
+        $SCRIPT:DryRun | Should -Be $false
+    }
+
+    It "preserves DRY-RUN mode when other fields are malformed or missing" {
+        $state = [PSCustomObject]@{
+            mode = "DRY-RUN"
+            profile = @{ bad = "value" }
+        }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Initialize-ScriptDefaults
+
+        $SCRIPT:Mode | Should -Be "DRY-RUN"
+        $SCRIPT:Profile | Should -Be "RECOMMENDED"
+        $SCRIPT:LogLevel | Should -Be "NORMAL"
+        $SCRIPT:DryRun | Should -Be $true
     }
 }
 
@@ -440,6 +711,19 @@ Describe "Phase 1 Safe Mode readiness marker" {
 
         $saved = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
         $saved.phase1SafeModeReady | Should -Be $true
+    }
+
+    It "does not persist the Safe Mode readiness flag under WhatIf" {
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            mode = "AUTO"
+        }) -Path $CFG_StateFile
+
+        $result = Set-Phase1SafeModeReadyFlag -Path $CFG_StateFile -WhatIf
+        $saved = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
+
+        $result.phase1SafeModeReady | Should -Be $true
+        $saved.PSObject.Properties.Name | Should -Not -Contain "phase1SafeModeReady"
     }
 
     It "detects the readiness marker only when explicitly set" {

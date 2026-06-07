@@ -35,7 +35,7 @@ Describe "Remove-GpuDriverClean" {
             $SCRIPT:DryRun = $true
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Get-Service { $null }
             Mock Get-CimInstance { $null }
 
@@ -47,7 +47,7 @@ Describe "Remove-GpuDriverClean" {
             Mock pnputil {}
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             Remove-GpuDriverClean -GpuVendor "NVIDIA"
 
@@ -59,11 +59,161 @@ Describe "Remove-GpuDriverClean" {
             Mock Remove-Item {}
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             Remove-GpuDriverClean -GpuVendor "NVIDIA"
 
             Should -Invoke Remove-Item -Times 0
+        }
+
+        It "returns a non-completing dry-run result when requested" {
+            $SCRIPT:DryRun = $true
+            Mock Write-Step {}
+            Mock Write-Info {}
+            Mock Write-ConsoleLine {}
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "DryRun"
+            $result.Applied | Should -BeFalse
+            $result.CanCompleteStep | Should -BeFalse
+        }
+    }
+
+    Context "Structured result contract" {
+
+        BeforeEach {
+            $SCRIPT:DryRun = $false
+            Mock Write-Step {}
+            Mock Write-Info {}
+            Mock Write-ConsoleLine {}
+            Mock Write-OK {}
+            Mock Write-Warn {}
+            Mock Write-DebugLog {}
+            Mock Write-Blank {}
+            Mock Backup-ServiceState {}
+            Mock Get-Service { @() }
+            Mock Get-ScheduledTask { @() }
+            Mock Test-Path { $false }
+            Mock Remove-Item {}
+            Mock Get-Command { $null } -ParameterFilter { $Name -contains "Get-AppxPackage" }
+        }
+
+        It "returns success only when driver package removal succeeds" {
+            Mock Get-CimInstance {
+                [PSCustomObject]@{
+                    ClassGuid = $CFG_GUID_Display
+                    DriverProviderName = "NVIDIA"
+                    InfName = "oem12.inf"
+                }
+            }
+            function global:pnputil {
+                param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
+                $global:LASTEXITCODE = 0
+                "deleted"
+            }
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "Success"
+            $result.Applied | Should -BeTrue
+            $result.CanCompleteStep | Should -BeTrue
+            $result.FoundDriverPackages | Should -Be 1
+            $result.RemovedDriverPackages | Should -Be 1
+            $result.FailedDriverPackages | Should -Be 0
+        }
+
+        It "returns already absent only when locale-independent CIM enumeration proves no matching package" {
+            Mock Get-CimInstance { @() }
+            function global:pnputil {
+                param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
+                $global:LASTEXITCODE = 0
+                @()
+            }
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "AlreadyAbsent"
+            $result.Applied | Should -BeFalse
+            $result.CanCompleteStep | Should -BeTrue
+            $result.AlreadyAbsent | Should -BeTrue
+            $result.FoundDriverPackages | Should -Be 0
+        }
+
+        It "does not complete when no package is found after untrusted enumeration" {
+            Mock Get-CimInstance { throw "CIM unavailable" }
+            function global:pnputil {
+                param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
+                $global:LASTEXITCODE = 0
+                @()
+            }
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "Failed"
+            $result.Applied | Should -BeFalse
+            $result.CanCompleteStep | Should -BeFalse
+            $result.AlreadyAbsent | Should -BeFalse
+            $result.FoundDriverPackages | Should -Be 0
+        }
+
+        It "does not complete when all driver package removals fail" {
+            Mock Get-CimInstance {
+                [PSCustomObject]@{
+                    ClassGuid = $CFG_GUID_Display
+                    DriverProviderName = "NVIDIA"
+                    InfName = "oem12.inf"
+                }
+            }
+            function global:pnputil {
+                param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
+                $global:LASTEXITCODE = 5
+                "access denied"
+            }
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "Failed"
+            $result.Applied | Should -BeFalse
+            $result.CanCompleteStep | Should -BeFalse
+            $result.FoundDriverPackages | Should -Be 1
+            $result.RemovedDriverPackages | Should -Be 0
+            $result.FailedDriverPackages | Should -Be 1
+        }
+
+        It "does not complete when only part of driver package removal succeeds" {
+            Mock Get-CimInstance {
+                @(
+                    [PSCustomObject]@{
+                        ClassGuid = $CFG_GUID_Display
+                        DriverProviderName = "NVIDIA"
+                        InfName = "oem12.inf"
+                    }
+                    [PSCustomObject]@{
+                        ClassGuid = $CFG_GUID_Display
+                        DriverProviderName = "NVIDIA"
+                        InfName = "oem13.inf"
+                    }
+                )
+            }
+            function global:pnputil {
+                param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
+                if ($CmdArgs -contains "oem12.inf") {
+                    $global:LASTEXITCODE = 0
+                    return "deleted"
+                }
+                $global:LASTEXITCODE = 5
+                "access denied"
+            }
+
+            $result = Remove-GpuDriverClean -GpuVendor "NVIDIA" -PassThru
+
+            $result.Status | Should -Be "Partial"
+            $result.Applied | Should -BeFalse
+            $result.CanCompleteStep | Should -BeFalse
+            $result.FoundDriverPackages | Should -Be 2
+            $result.RemovedDriverPackages | Should -Be 1
+            $result.FailedDriverPackages | Should -Be 1
         }
     }
 
@@ -73,7 +223,7 @@ Describe "Remove-GpuDriverClean" {
             $SCRIPT:DryRun = $true
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             { Remove-GpuDriverClean -GpuVendor "NVIDIA" } | Should -Not -Throw
         }
@@ -82,7 +232,7 @@ Describe "Remove-GpuDriverClean" {
             $SCRIPT:DryRun = $true
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             { Remove-GpuDriverClean -GpuVendor "AMD" } | Should -Not -Throw
         }
@@ -91,7 +241,7 @@ Describe "Remove-GpuDriverClean" {
             $SCRIPT:DryRun = $true
             Mock Write-Step {}
             Mock Write-Info {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             { Remove-GpuDriverClean -GpuVendor "Intel" } | Should -Not -Throw
         }

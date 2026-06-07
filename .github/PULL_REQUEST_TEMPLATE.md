@@ -6,6 +6,12 @@
 
 <!-- Link benchmarks, testing results, or sources that support this change -->
 
+## Scope
+
+- [ ] Runtime behavior changed
+- [ ] Documentation/configuration only
+- [ ] Historical archive or local-agent status files updated
+
 ## Checklist
 
 - [ ] Tested on a real system (not just theory)
@@ -14,6 +20,8 @@
 - [ ] Backup/restore handles the new changes
 - [ ] README and relevant docs updated (if applicable)
 - [ ] No external tool dependencies added
+- [ ] Local-only artifacts remain ignored or archived intentionally
+- [ ] Codacy local evidence and Codacy Cloud status are not conflated
 
 ## Security
 

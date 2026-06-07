@@ -239,6 +239,65 @@ function Get-NetworkDiagnosticSummary {
     }
 }
 
+function Set-VerifiedDnsProfileForAdapter {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$AdapterName,
+        [Parameter(Mandatory)][int]$InterfaceIndex,
+        [ValidateSet("Cloudflare", "Google", "DHCP")][string]$Provider,
+        [string[]]$CurrentServers = @(),
+        [string]$BackupStep = $null,
+        [switch]$SkipBackup
+    )
+
+    $targetServers = switch ($Provider) {
+        "Cloudflare" { [string[]]$CFG_DNS_Cloudflare }
+        "Google"     { [string[]]$CFG_DNS_Google }
+        "DHCP"       { @() }
+    }
+
+    if (-not $PSCmdlet.ShouldProcess($AdapterName, "Set DNS profile to $Provider on interface $InterfaceIndex")) {
+        return [PSCustomObject]@{
+            Changed = $false
+            AdapterName = $AdapterName
+            InterfaceIndex = $InterfaceIndex
+            Provider = $Provider
+            DnsServers = [string[]]$CurrentServers
+            VerifiedServers = [string[]]$CurrentServers
+            BackupStep = $null
+        }
+    }
+
+    if (-not $SkipBackup) {
+        if ([string]::IsNullOrWhiteSpace($BackupStep)) {
+            throw "DNS backup step title is required before changing DNS on '$AdapterName'."
+        }
+        Backup-DnsConfig -AdapterName $AdapterName -InterfaceIndex $InterfaceIndex -OriginalDnsServers $CurrentServers -StepTitle $BackupStep
+    }
+
+    if ($Provider -eq "DHCP") {
+        Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ResetServerAddresses -ErrorAction Stop
+    } else {
+        Set-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -ServerAddresses $targetServers -ErrorAction Stop
+    }
+
+    $postDns = Get-DnsClientServerAddress -InterfaceIndex $InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop
+    $postServers = if ($postDns -and $postDns.ServerAddresses) { [string[]]@($postDns.ServerAddresses) } else { @() }
+    if ($Provider -ne "DHCP" -and (($postServers -join ',') -ne ($targetServers -join ','))) {
+        throw "DNS post-check failed for '$AdapterName': expected [$($targetServers -join ', ')], got [$($postServers -join ', ')]."
+    }
+
+    return [PSCustomObject]@{
+        Changed = $true
+        AdapterName = $AdapterName
+        InterfaceIndex = $InterfaceIndex
+        Provider = $Provider
+        DnsServers = $targetServers
+        VerifiedServers = $postServers
+        BackupStep = if ($SkipBackup) { $null } else { $BackupStep }
+    }
+}
+
 function ConvertTo-LatencySamples {
     [CmdletBinding()]
     param(
@@ -333,7 +392,9 @@ function Invoke-TcpLatencyCandidateProbe {
             $sw.Stop()
             $timeouts++
         } finally {
-            try { $client.Close() } catch {}
+            try { $client.Close() } catch {
+                Write-DebugLog "Latency probe socket close failed: $($_.Exception.Message)"
+            }
         }
     }
 
@@ -674,7 +735,7 @@ function Get-LatencyHistoryRows {
 }
 
 function Set-NetworkDiagnosticDnsProfile {
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [ValidateSet("Cloudflare", "Google", "DHCP")][string]$Provider,
         [switch]$SkipBackup
@@ -707,6 +768,16 @@ function Set-NetworkDiagnosticDnsProfile {
         }
     }
 
+    if (-not $PSCmdlet.ShouldProcess($summary.AdapterName, "Set network diagnostic DNS profile to $Provider")) {
+        return [PSCustomObject]@{
+            Changed      = $false
+            AdapterName  = $summary.AdapterName
+            Provider     = $Provider
+            DnsServers   = $currentServers
+            BackupStep   = $null
+        }
+    }
+
     $backupStep = "$Script:GuiDnsBackupStepPrefix :: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     $lockSet = $false
     try {
@@ -716,13 +787,19 @@ function Set-NetworkDiagnosticDnsProfile {
         }
 
         if (-not $SkipBackup) {
-            Backup-DnsConfig -AdapterName $summary.AdapterName -InterfaceIndex $summary.InterfaceIndex -OriginalDnsServers $currentServers -StepTitle $backupStep
-        }
-
-        if ($Provider -eq "DHCP") {
-            Set-DnsClientServerAddress -InterfaceIndex $summary.InterfaceIndex -ResetServerAddresses -ErrorAction Stop
+            $dnsResult = Set-VerifiedDnsProfileForAdapter `
+                -AdapterName $summary.AdapterName `
+                -InterfaceIndex $summary.InterfaceIndex `
+                -Provider $Provider `
+                -CurrentServers $currentServers `
+                -BackupStep $backupStep
         } else {
-            Set-DnsClientServerAddress -InterfaceIndex $summary.InterfaceIndex -ServerAddresses $targetServers -ErrorAction Stop
+            $dnsResult = Set-VerifiedDnsProfileForAdapter `
+                -AdapterName $summary.AdapterName `
+                -InterfaceIndex $summary.InterfaceIndex `
+                -Provider $Provider `
+                -CurrentServers $currentServers `
+                -SkipBackup
         }
 
         if (-not $SkipBackup) {
@@ -736,7 +813,7 @@ function Set-NetworkDiagnosticDnsProfile {
         Changed      = $true
         AdapterName  = $summary.AdapterName
         Provider     = $Provider
-        DnsServers   = $targetServers
+        DnsServers   = [string[]]$dnsResult.DnsServers
         BackupStep   = if ($SkipBackup) { $null } else { $backupStep }
     }
 }

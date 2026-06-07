@@ -10,6 +10,8 @@ on:
       - 'cfgs/**'
       - 'README.md'
       - 'docs/**'
+      - '!docs/archive/**'
+      - '!docs/agent/**'
       - '.github/workflows/**'
   pull_request:
     branches: [main]
@@ -20,6 +22,8 @@ on:
       - 'cfgs/**'
       - 'README.md'
       - 'docs/**'
+      - '!docs/archive/**'
+      - '!docs/agent/**'
       - '.github/workflows/**'
   workflow_dispatch:
 
@@ -53,28 +57,7 @@ jobs:
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          }
-          $pssaPaths = Get-ChildItem -Recurse -Filter "*.ps1" |
-            Where-Object { $_.Name -ne "_TestInit.ps1" }
-          if (-not $pssaPaths) {
-            throw "No PowerShell files found for PSScriptAnalyzer"
-          }
-          $results = @()
-          foreach ($file in $pssaPaths) {
-            try {
-              $results += Invoke-ScriptAnalyzer -Path $file.FullName -Settings .\PSScriptAnalyzerSettings.psd1 -ErrorAction Stop
-            } catch {
-              throw "PSScriptAnalyzer failed on $($file.FullName): $($_.Exception.Message)"
-            }
-          }
-          if ($results) {
-            $results | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message
-            throw "$($results.Count) PSScriptAnalyzer issue(s) found"
-          }
-          Write-Host "PSScriptAnalyzer: all clean" -ForegroundColor Green
+        run: .\.github\scripts\run-psscriptanalyzer.ps1
 
   syntax-check:
     name: Verify syntax (parse check)
@@ -87,18 +70,7 @@ jobs:
 
       - name: Verify syntax (parse check)
         shell: pwsh
-        run: |
-          $errors = 0
-          Get-ChildItem -Recurse -Filter "*.ps1" | ForEach-Object {
-            $parseErrors = $null
-            $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors)
-            foreach ($e in $parseErrors) {
-              Write-Error "$($_.Name):$($e.Extent.StartLineNumber) - $($e.Message)"
-              $errors++
-            }
-          }
-          if ($errors -gt 0) { throw "$errors parse error(s) found" }
-          Write-Host "Syntax check: all files parse cleanly" -ForegroundColor Green
+        run: .\.github\scripts\verify-syntax.ps1
 
   windows-powershell-compat:
     name: Windows PowerShell 5.1 compatibility
@@ -111,34 +83,7 @@ jobs:
 
       - name: Smoke-test shipped entry scripts in Windows PowerShell
         shell: powershell
-        run: |
-          $scripts = @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'Boot-SafeMode.ps1',
-            'SafeMode-DriverClean.ps1',
-            'PostReboot-Setup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'CS2-Optimize-GUI.ps1'
-          )
-
-          foreach ($script in $scripts) {
-            Write-Host "=== Windows PowerShell smoke test: $script ==="
-            $records = & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -SmokeTest 2>&1
-            $output = $records | Out-String
-            $errorRecords = @($records | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-            if ($LASTEXITCODE -ne 0) {
-              throw "Smoke test failed for $script`n$output"
-            }
-            if ($errorRecords.Count -gt 0) {
-              throw "Smoke test emitted error records for $script`n$output"
-            }
-            if ($output -notmatch 'SMOKE TEST OK') {
-              throw "Smoke test marker missing for $script`n$output"
-            }
-            Write-Host $output
-          }
+        run: .\.github\scripts\smoke-entrypoints.ps1 -Engine powershell
 
   pester:
     name: Pester tests
@@ -157,10 +102,7 @@ jobs:
 
       - name: Install Pester 5.x
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable Pester -ErrorAction SilentlyContinue | Where-Object Version -ge '5.0')) {
-            Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0 -MaximumVersion 5.99.99
-          }
+        run: .\.github\scripts\install-pester.ps1
 
       - name: Run Pester tests
         shell: pwsh
@@ -198,7 +140,7 @@ jobs:
             'EstimateKey|CFG_ImprovementEstimates' . |
             grep -v 'CHANGELOG.md' |
             grep -v '.github/workflows/lint.yml' |
-            grep -v 'docs/agent/'; then
+            grep -Ev '(^|/)(docs/archive|docs/agent|vendor|third_party|third-party|3rdparty|external)/'; then
             echo "::error::Retired EstimateKey references remain"
             exit 1
           fi
@@ -221,10 +163,7 @@ jobs:
 
       - name: Install Pester 5.x
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable Pester -ErrorAction SilentlyContinue | Where-Object Version -ge '5.0')) {
-            Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0 -MaximumVersion 5.99.99
-          }
+        run: .\.github\scripts\install-pester.ps1
 
       - name: Run E2E process tests
         shell: pwsh
@@ -241,53 +180,8 @@ jobs:
 
       - name: Smoke-test shipped entry scripts
         shell: pwsh
-        run: |
-          $scripts = @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'Boot-SafeMode.ps1',
-            'SafeMode-DriverClean.ps1',
-            'PostReboot-Setup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'CS2-Optimize-GUI.ps1'
-          )
-
-          foreach ($script in $scripts) {
-            Write-Host "=== Smoke test: $script ==="
-            $records = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -SmokeTest 2>&1
-            $output = $records | Out-String
-            $errorRecords = @($records | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-            if ($LASTEXITCODE -ne 0) {
-              throw "Smoke test failed for $script`n$output"
-            }
-            if ($errorRecords.Count -gt 0) {
-              throw "Smoke test emitted error records for $script`n$output"
-            }
-            if ($output -notmatch 'SMOKE TEST OK') {
-              throw "Smoke test marker missing for $script`n$output"
-            }
-            Write-Host $output
-          }
+        run: .\.github\scripts\smoke-entrypoints.ps1 -Engine pwsh
 
       - name: Verify launcher contracts
         shell: pwsh
-        run: |
-          $startBat = Get-Content .\START.bat -Raw
-          foreach ($target in @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'Boot-SafeMode.ps1',
-            'PostReboot-Setup.ps1'
-          )) {
-            if ($startBat -notmatch [regex]::Escape($target)) {
-              throw "START.bat is missing launcher target: $target"
-            }
-          }
-
-          $startGuiBat = Get-Content .\START-GUI.bat -Raw
-          if ($startGuiBat -notmatch [regex]::Escape('CS2-Optimize-GUI.ps1')) {
-            throw "START-GUI.bat is missing CS2-Optimize-GUI.ps1"
-          }
+        run: .\.github\scripts\verify-launcher-contracts.ps1

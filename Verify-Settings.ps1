@@ -95,7 +95,9 @@ function Write-VerifyCheckResult {
 function Test-VerifyNicAdvancedProperties {
     $results = [System.Collections.Generic.List[object]]::new()
     $nic = $null
-    try { $nic = Get-ActiveNicAdapter } catch {}
+    try { $nic = Get-ActiveNicAdapter } catch {
+        Write-DebugLog "Verify NIC adapter detection failed: $($_.Exception.Message)"
+    }
     if (-not $nic) {
         $results.Add((New-VerifyCheckResult -Status "MISSING" -Label "Active LAN adapter for NIC tweaks" -Detail "not found")) | Out-Null
         return @($results)
@@ -286,7 +288,9 @@ function Test-VerifyTrimConfiguration {
 
 function Test-VerifyScheduledTasks {
     $x3d = $null
-    try { $x3d = Get-X3DCcdInfo } catch {}
+    try { $x3d = Get-X3DCcdInfo } catch {
+        Write-DebugLog "Verify X3D CPU detection failed: $($_.Exception.Message)"
+    }
     if (-not $x3d -or -not $x3d.IsX3D -or -not $x3d.DualCCD) {
         return New-VerifyCheckResult -Status "INFO" -Label "Scheduled task: CS2 CCD affinity" -Detail "N/A (not a dual-CCD X3D system)"
     }
@@ -373,23 +377,6 @@ function Test-VerifyNvidiaDrsProfile {
         return New-VerifyCheckResult -Status "CHANGED" -Label "NVIDIA DRS profile" -Detail "($($drsState.MismatchCount) setting(s) differ)"
     } catch {
         return New-VerifyCheckResult -Status "MISSING" -Label "NVIDIA DRS profile" -Detail "verification failed"
-    }
-}
-
-function Update-LastVerifiedTimestamp {
-    try {
-        $state = if (Test-Path $CFG_StateFile) {
-            Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        } else {
-            [PSCustomObject]@{
-                mode    = $SCRIPT:Mode
-                profile = $SCRIPT:Profile
-            }
-        }
-        $state | Add-Member -NotePropertyName "last_verified" -NotePropertyValue ((Get-Date).ToString("o")) -Force
-        Save-SuiteState -State $state
-    } catch {
-        Write-DebugLog "Could not persist last_verified timestamp: $_"
     }
 }
 
@@ -617,7 +604,7 @@ try {
     $bcdOutput = bcdedit /enum "{current}" /v 2>&1 | Out-String
     # Match on hex element IDs (locale-independent) + any truthy value.
     # Boolean values are localized (Yes/Ja/Oui/Sí/Да/是/Tak/etc.) — hex IDs are not.
-    # 0x26000060 = disabledynamictick, 0x26000092 = useplatformtick
+    # 0x26000060 = disabledynamictick.
     if ($bcdOutput -match "0x26000060\s+\S+") {
         Write-Host "  ✓  OK        Dynamic Tick disabled" -ForegroundColor Green
         $Script:_verifyOkCount++
@@ -625,16 +612,9 @@ try {
         Write-Host "  ✗  CHANGED   Dynamic Tick is ACTIVE (expected: disabled)" -ForegroundColor Yellow
         $Script:_verifyChangedCount++
     }
-    if ($bcdOutput -match "0x26000092\s+\S+") {
-        Write-Host "  ✓  OK        Platform Tick active" -ForegroundColor Green
-        $Script:_verifyOkCount++
-    } else {
-        Write-Host "  ✗  CHANGED   Platform Tick is INACTIVE (expected: active)" -ForegroundColor Yellow
-        $Script:_verifyChangedCount++
-    }
 } catch {
     Write-Host "  ?  MISSING   bcdedit not readable" -ForegroundColor Red
-    $Script:_verifyMissingCount += 2
+    $Script:_verifyMissingCount++
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -730,7 +710,6 @@ if ($counts.changedCount -gt 0 -or $counts.missingCount -gt 0) {
     Write-Host "  $([char]0x2714) All settings intact — your optimizations are still active!" -ForegroundColor Green
 }
 
-    Update-LastVerifiedTimestamp
     Write-Blank
 }
 

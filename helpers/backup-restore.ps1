@@ -8,7 +8,7 @@
 #  Integration:
 #    Set-RegistryValue / Set-BootConfig auto-backup via $SCRIPT:CurrentStepTitle
 #    Backup-DrsSettings / Restore-DrsSettings for NVIDIA DRS profile settings
-#    Manual: Backup-ServiceState, Restore-StepChanges, Restore-AllChanges
+#    Manual: Backup-ServiceState, Restore-StepChanges, Restore-Interactive
 
 $CFG_BackupFile = "$CFG_WorkDir\backup.json"
 $CFG_BackupLockFile = "$CFG_WorkDir\backup.lock"
@@ -32,45 +32,30 @@ $SCRIPT:DRS_FOUND_VIA_APP = "(found via cs2.exe)"
 $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
 
 function New-BackupDataObject {
+    param()
+
     return [PSCustomObject]@{
         entries = @()
         created = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     }
 }
 
-function Get-BackupVersionFiles {
-    $backupDir = Split-Path $CFG_BackupFile -Parent
-    $backupName = Split-Path $CFG_BackupFile -Leaf
-    $backupStem = if ($backupName -match '^(.*)\.json$') { $Matches[1] } else { $backupName }
-    if (-not $backupDir -or -not (Test-Path $backupDir)) { return @() }
-    return @(
-        Get-ChildItem $backupDir -Filter "$backupStem.*.json" -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match "^$([regex]::Escape($backupStem))\.\d{8}-\d{6}\d{0,3}\.json$" } |
-            Sort-Object Name
-    )
-}
-
-function Prune-BackupVersions {
-    $maxVersions = [Math]::Max(1, [int]$CFG_BackupMaxVersions)
-    $versionFiles = @(Get-BackupVersionFiles)
-    if ($versionFiles.Count -le $maxVersions) { return }
-
-    $versionFiles |
-        Select-Object -First ($versionFiles.Count - $maxVersions) |
-        Remove-Item -Force -ErrorAction SilentlyContinue
-}
-
 function New-BackupFile {
-    Save-JsonAtomic -Data (New-BackupDataObject) -Path $CFG_BackupFile
-    Set-SecureAcl -Path $CFG_BackupFile -Required
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($PSCmdlet.ShouldProcess($CFG_BackupFile, "Create backup file")) {
+        Save-JsonAtomic -Data (New-BackupDataObject) -Path $CFG_BackupFile
+        Set-SecureAcl -Path $CFG_BackupFile -Required
+    }
 }
 
 function Initialize-Backup {
     # Acquire lock before creating/repairing the active backup file.
     if (Test-BackupLock) {
         Write-Warn "Another CS2 Optimization window appears to be open already."
-        Write-Host "  $([char]0x2139) What to do: Close the other window first, then try again." -ForegroundColor Cyan
-        Write-Host "    If no other window is open, this will clear itself automatically." -ForegroundColor DarkGray
+        Write-ConsoleLine "  $([char]0x2139) What to do: Close the other window first, then try again." -ForegroundColor Cyan
+        Write-ConsoleLine "    If no other window is open, this will clear itself automatically." -ForegroundColor DarkGray
         throw "Backup lock is already held by another active CS2 Optimization process."
     }
     Set-BackupLock
@@ -130,13 +115,23 @@ function Test-BackupLock {
 
 function Set-BackupLock {
     <#  Called at the start of optimization and restore operations.  #>
-    $lockData = @{ pid = $PID; started = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
-    Save-JsonAtomic -Data $lockData -Path $CFG_BackupLockFile
-    Set-SecureAcl -Path $CFG_BackupLockFile -Required
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Create backup lock")) {
+        $lockData = @{ pid = $PID; started = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
+        Save-JsonAtomic -Data $lockData -Path $CFG_BackupLockFile
+        Set-SecureAcl -Path $CFG_BackupLockFile -Required
+    }
 }
 
 function Remove-BackupLock {
-    Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Remove backup lock")) {
+        Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Flush-BackupBuffer {
@@ -917,13 +912,13 @@ function Show-BackupSummary {
     }
 
     Write-Blank
-    Write-Host "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  BACKUP SUMMARY — Recorded Settings Before Changes              ║" -ForegroundColor Cyan
-    Write-Host "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-ConsoleLine "  ║  BACKUP SUMMARY — Recorded Settings Before Changes              ║" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
 
     $grouped = $backup.entries | Group-Object -Property step
     foreach ($group in $grouped) {
-        Write-Host "  ║  $($group.Name)  ($($group.Count) change(s))" -ForegroundColor White
+        Write-ConsoleLine "  ║  $($group.Name)  ($($group.Count) change(s))" -ForegroundColor White
         foreach ($e in $group.Group) {
             $detail = switch ($e.type) {
                 "registry"   { "REG  $($e.name) = $(if($e.existed){"$($e.originalValue)"}else{'(not set)'})" }
@@ -939,13 +934,13 @@ function Show-BackupSummary {
                 "dns"           { "DNS  $($e.adapterName): [$($e.originalDnsServers -join ', ')]" }
                 default         { "???  Unknown type '$($e.type)'" }
             }
-            Write-Host "  ║    $detail" -ForegroundColor DarkGray
+            Write-ConsoleLine "  ║    $detail" -ForegroundColor DarkGray
         }
     }
 
-    Write-Host "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
-    Write-Host "  Total: $($backup.entries.Count) setting(s) backed up" -ForegroundColor DarkGray
-    Write-Host "  File:  $CFG_BackupFile" -ForegroundColor DarkGray
+    Write-ConsoleLine "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-ConsoleLine "  Total: $($backup.entries.Count) setting(s) backed up" -ForegroundColor DarkGray
+    Write-ConsoleLine "  File:  $CFG_BackupFile" -ForegroundColor DarkGray
 }
 
 function Restore-StepChanges {
@@ -1070,10 +1065,10 @@ function Restore-StepChanges {
                         # Restore DelayedAutoStart flag if it was set (Auto + Delayed = "Automatic (Delayed Start)")
                         if ($e.delayedAutoStart) {
                             $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$($e.name)"
-                            Set-ItemProperty -Path $regPath -Name "DelayedAutostart" -Value 1 -Type DWord -ErrorAction SilentlyContinue
+                            Set-ItemProperty -Path $regPath -Name "DelayedAutostart" -Value 1 -Type DWord -ErrorAction Stop
                         }
                         if ($e.originalStatus -eq "Running") {
-                            Start-Service -Name $e.name -ErrorAction SilentlyContinue
+                            Start-Service -Name $e.name -ErrorAction Stop
                         }
                         $delayTag = if ($e.delayedAutoStart) { " (Delayed)" } else { "" }
                         Write-OK "Restored: $($e.name) -> $($e.originalStartType)$delayTag"
@@ -1314,20 +1309,21 @@ function Restore-StepChanges {
                 "dns" {
                     try {
                         # Resolve the current InterfaceIndex — the stored index may be stale
-                        # if the adapter was re-plugged or the system was rebooted.
+                        # if the adapter was re-plugged or the system was rebooted. Do not
+                        # fall back to a stored index unless the adapter name still resolves:
+                        # Windows can reuse interface indexes for different adapters.
                         $ifIndex = $e.interfaceIndex
-                        # Validate InterfaceIndex non-destructively by checking adapter name
-                        try {
-                            $currentAdapter = Get-NetAdapter -Name $e.adapterName -ErrorAction SilentlyContinue |
-                                Select-Object -First 1
-                            if ($currentAdapter -and $currentAdapter.InterfaceIndex -ne $ifIndex) {
-                                Write-DebugLog "DNS restore: InterfaceIndex changed from $ifIndex to $($currentAdapter.InterfaceIndex)"
-                                $ifIndex = $currentAdapter.InterfaceIndex
-                            } elseif (-not $currentAdapter) {
-                                Write-DebugLog "DNS restore: adapter '$($e.adapterName)' not found, using stored InterfaceIndex $ifIndex"
-                            }
-                        } catch {
-                            Write-DebugLog "DNS restore: adapter lookup failed, using stored InterfaceIndex $ifIndex"
+                        if ([string]::IsNullOrWhiteSpace([string]$e.adapterName)) {
+                            throw "adapter name missing from backup; refusing to restore DNS by stored InterfaceIndex $ifIndex"
+                        }
+                        $currentAdapter = Get-NetAdapter -Name $e.adapterName -ErrorAction Stop |
+                            Select-Object -First 1
+                        if (-not $currentAdapter) {
+                            throw "adapter '$($e.adapterName)' not found; refusing to restore DNS by stored InterfaceIndex $ifIndex"
+                        }
+                        if ($currentAdapter.InterfaceIndex -ne $ifIndex) {
+                            Write-DebugLog "DNS restore: InterfaceIndex changed from $ifIndex to $($currentAdapter.InterfaceIndex)"
+                            $ifIndex = $currentAdapter.InterfaceIndex
                         }
                         if ($e.originalDnsServers -and $e.originalDnsServers.Count -gt 0) {
                             Set-DnsClientServerAddress -InterfaceIndex $ifIndex `
@@ -1388,47 +1384,6 @@ function Restore-StepChanges {
     return ($restoreFail -eq 0 -and $restorePartial -eq 0)
 }
 
-function Restore-AllChanges {
-    # Drain any pending in-memory entries before restore to prevent re-pollution
-    Flush-BackupBuffer
-
-    # Acquire backup lock to prevent races with concurrent Flush-BackupBuffer
-    if (Test-BackupLock) {
-        Write-Warn "Another CS2 Optimization process is currently running (backup.json is locked)."
-        Write-Warn "Wait for it to finish, or close it manually before restoring."
-        return
-    }
-    Set-BackupLock
-
-    try {
-        $backup = Get-BackupData
-        if (-not $backup.entries -or $backup.entries.Count -eq 0) {
-            Write-Info "No backups to restore."
-            return
-        }
-
-        Show-BackupSummary
-        Write-Blank
-        Write-Warn "This will restore ALL $($backup.entries.Count) backed up setting(s)."
-        $r = Read-Host "  Proceed with full restore? [y/N]"
-        if ($r -notmatch "^[jJyY]$") { Write-Info "Cancelled."; return }
-
-        $stepNames = @(($backup.entries | Group-Object -Property step).Name)
-        $failures = 0
-        foreach ($stepName in $stepNames) {
-            $result = Restore-StepChanges -StepTitle $stepName
-            if (-not $result) { $failures++ }
-        }
-        if ($failures -eq 0) {
-            Write-OK "All settings restored to pre-optimization state."
-        } else {
-            Write-Warn "$failures step group(s) had restore failures — check output above."
-        }
-    } finally {
-        Remove-BackupLock
-    }
-}
-
 function Restore-Interactive {
     if (Test-BackupLock) {
         Write-Warn "Another CS2 Optimization process is currently running (backup.json is locked)."
@@ -1446,12 +1401,12 @@ function Restore-Interactive {
         Show-BackupSummary
         Write-Blank
         $grouped = $backup.entries | Group-Object -Property step
-        Write-Host "  Select step to restore:" -ForegroundColor White
+        Write-ConsoleLine "  Select step to restore:" -ForegroundColor White
         for ($i = 0; $i -lt $grouped.Count; $i++) {
-            Write-Host "  [$($i+1)]  $($grouped[$i].Name)  ($($grouped[$i].Count) change(s))" -ForegroundColor White
+            Write-ConsoleLine "  [$($i+1)]  $($grouped[$i].Name)  ($($grouped[$i].Count) change(s))" -ForegroundColor White
         }
-        Write-Host "  [A]  Restore ALL" -ForegroundColor Yellow
-        Write-Host "  [0]  Cancel" -ForegroundColor DarkGray
+        Write-ConsoleLine "  [A]  Restore ALL" -ForegroundColor Yellow
+        Write-ConsoleLine "  [0]  Cancel" -ForegroundColor DarkGray
 
         $choice = Read-Host "  Choice"
         if ($choice -eq "0" -or [string]::IsNullOrWhiteSpace($choice)) { return }
@@ -1460,11 +1415,11 @@ function Restore-Interactive {
             $failures = 0
             $skippedSteps = [System.Collections.Generic.List[string]]::new()
             foreach ($stepName in $stepNames) {
-                Write-Host "" 
-                Write-Host "  [$stepName]" -ForegroundColor Cyan
-                Write-Host "  [R]  Restore and continue" -ForegroundColor White
-                Write-Host "  [S]  Skip this step" -ForegroundColor Yellow
-                Write-Host "  [A]  Abort interactive restore" -ForegroundColor DarkGray
+                Write-Blank
+                Write-ConsoleLine "  [$stepName]" -ForegroundColor Cyan
+                Write-ConsoleLine "  [R]  Restore and continue" -ForegroundColor White
+                Write-ConsoleLine "  [S]  Skip this step" -ForegroundColor Yellow
+                Write-ConsoleLine "  [A]  Abort interactive restore" -ForegroundColor DarkGray
                 do { $stepAction = Read-Host "  [R/S/A]" } while ($stepAction -notmatch "^[rRsSaA]$")
                 if ($stepAction -match "^[aA]$") {
                     Write-Warn "Interactive restore aborted — remaining entries left in backup.json."

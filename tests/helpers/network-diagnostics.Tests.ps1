@@ -364,6 +364,9 @@ Describe "Set-NetworkDiagnosticDnsProfile" {
         Mock Backup-DnsConfig {}
         Mock Flush-BackupBuffer {}
         Mock Set-DnsClientServerAddress {}
+        Mock Get-DnsClientServerAddress {
+            [PSCustomObject]@{ ServerAddresses = $CFG_DNS_Cloudflare }
+        }
 
         $result = Set-NetworkDiagnosticDnsProfile -Provider Cloudflare
 
@@ -374,6 +377,40 @@ Describe "Set-NetworkDiagnosticDnsProfile" {
             $InterfaceIndex -eq 7 -and ($ServerAddresses -join ',') -eq ($CFG_DNS_Cloudflare -join ',')
         }
         Should -Invoke Flush-BackupBuffer -Exactly 1
+    }
+
+    It "skips DNS writes and backups under WhatIf" {
+        Mock Get-NetworkDiagnosticSummary {
+            [PSCustomObject]@{
+                AdapterFound   = $true
+                AdapterName    = "Ethernet"
+                InterfaceIndex = 7
+                AdapterType    = "Physical / wired"
+                DnsProvider    = "DHCP"
+                DnsServers     = @()
+            }
+        }
+        Mock Test-BackupLock { $false }
+        Mock Set-BackupLock {}
+        Mock Remove-BackupLock {}
+        Mock Backup-DnsConfig {}
+        Mock Flush-BackupBuffer {}
+        Mock Set-DnsClientServerAddress {}
+        Mock Get-DnsClientServerAddress {
+            [PSCustomObject]@{ ServerAddresses = $CFG_DNS_Cloudflare }
+        }
+
+        $result = Set-NetworkDiagnosticDnsProfile -Provider Cloudflare -WhatIf
+
+        $result.Changed | Should -Be $false
+        $result.Provider | Should -Be "Cloudflare"
+        $result.DnsServers.Count | Should -Be 0
+        Should -Invoke Test-BackupLock -Exactly 0
+        Should -Invoke Set-BackupLock -Exactly 0
+        Should -Invoke Backup-DnsConfig -Exactly 0
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+        Should -Invoke Flush-BackupBuffer -Exactly 0
+        Should -Invoke Remove-BackupLock -Exactly 0
     }
 
     It "resets DNS to DHCP when requested" {
@@ -393,6 +430,9 @@ Describe "Set-NetworkDiagnosticDnsProfile" {
         Mock Backup-DnsConfig {}
         Mock Flush-BackupBuffer {}
         Mock Set-DnsClientServerAddress {}
+        Mock Get-DnsClientServerAddress {
+            [PSCustomObject]@{ ServerAddresses = @() }
+        }
 
         $result = Set-NetworkDiagnosticDnsProfile -Provider DHCP
 
@@ -400,6 +440,47 @@ Describe "Set-NetworkDiagnosticDnsProfile" {
         Should -Invoke Set-DnsClientServerAddress -Exactly 1 -ParameterFilter {
             $InterfaceIndex -eq 7 -and $ResetServerAddresses
         }
+    }
+
+    It "throws when no active adapter is available" {
+        Mock Get-NetworkDiagnosticSummary {
+            [PSCustomObject]@{
+                AdapterFound = $false
+                AdapterName = ""
+                DnsProvider = "Unknown"
+                DnsServers = @()
+            }
+        }
+        Mock Set-DnsClientServerAddress {}
+
+        { Set-NetworkDiagnosticDnsProfile -Provider Cloudflare } | Should -Throw -ExpectedMessage "*No active adapter*"
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+    }
+
+    It "throws when the post-write DNS state does not match the requested provider" {
+        Mock Get-NetworkDiagnosticSummary {
+            [PSCustomObject]@{
+                AdapterFound   = $true
+                AdapterName    = "Ethernet"
+                InterfaceIndex = 7
+                AdapterType    = "Physical / wired"
+                DnsProvider    = "DHCP"
+                DnsServers     = @()
+            }
+        }
+        Mock Test-BackupLock { $false }
+        Mock Set-BackupLock {}
+        Mock Remove-BackupLock {}
+        Mock Backup-DnsConfig {}
+        Mock Flush-BackupBuffer {}
+        Mock Set-DnsClientServerAddress {}
+        Mock Get-DnsClientServerAddress {
+            [PSCustomObject]@{ ServerAddresses = @("9.9.9.9") }
+        }
+
+        { Set-NetworkDiagnosticDnsProfile -Provider Cloudflare } | Should -Throw -ExpectedMessage "*post-check failed*"
+        Should -Invoke Set-DnsClientServerAddress -Exactly 1
+        Should -Invoke Flush-BackupBuffer -Exactly 0
     }
 }
 

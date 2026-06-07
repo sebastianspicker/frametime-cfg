@@ -14,7 +14,7 @@ AfterAll {
 
 # ── Get-IntelHybridCpuName ────────────────────────────────────────────────────
 Describe "Get-IntelHybridCpuName" {
-    BeforeEach { Reset-CachedCpuInfo }
+    BeforeEach { $script:_cachedCpuInfo = $null }
 
     Context "Intel 12th gen (Alder Lake)" {
         It "detects i9-12900K as hybrid" {
@@ -284,6 +284,43 @@ Some other output
         $result | Should -BeNullOrEmpty
     }
 
+    It "returns null instead of throwing for malformed numeric tokens" {
+        $huge = "9" * 400
+        foreach ($text in @(
+            "[VProf] FPS: Avg=300..0, P1=200",
+            "[VProf] FPS: Avg=., P1=200",
+            "[VProf] FPS: Avg=300., P1=200",
+            "[VProf] FPS: Avg=300,5, P1=200",
+            "[VProf] FPS: Avg=$huge, P1=200"
+        )) {
+            $result = $null
+            { $script:result = Parse-BenchmarkOutput $text } | Should -Not -Throw
+            $script:result | Should -BeNullOrEmpty
+        }
+    }
+
+    It "skips malformed VProf lines while preserving valid runs" {
+        $text = @"
+[VProf] FPS: Avg=300..0, P1=200
+[VProf] FPS: Avg=280.0, P1=180.0
+"@
+        $result = Parse-BenchmarkOutput $text
+
+        $result | Should -Not -BeNullOrEmpty
+        $result.Runs | Should -Be 1
+        $result.Avg | Should -Be 280.0
+        $result.P1 | Should -Be 180.0
+    }
+
+    It "allows zero P1 values but rejects zero Avg values" {
+        $zeroP1 = Parse-BenchmarkOutput "[VProf] FPS: Avg=120.0, P1=0"
+        $zeroAvg = Parse-BenchmarkOutput "[VProf] FPS: Avg=0, P1=20"
+
+        $zeroP1 | Should -Not -BeNullOrEmpty
+        $zeroP1.P1 | Should -Be 0
+        $zeroAvg | Should -BeNullOrEmpty
+    }
+
     It "preserves raw values in RawAvg and RawP1 arrays" {
         $text = @"
 [VProf] FPS: Avg = 300.0, P1 = 200.0
@@ -298,10 +335,10 @@ Some other output
     }
 }
 
-# ── Test-XmpActive ────────────────────────────────────────────────────────────
-Describe "Test-XmpActive" {
+# ── Get-RamInfo rated-speed detection ────────────────────────────────────────
+Describe "Get-RamInfo rated-speed detection" {
 
-    It "detects XMP active for DDR4 (Speed=3200, Config=3200)" {
+    It "detects rated speed for DDR4 (Speed=3200, Config=3200)" {
         Mock Get-CimInstance {
             @([PSCustomObject]@{
                 Capacity             = 17179869184  # 16 GB
@@ -312,10 +349,12 @@ Describe "Test-XmpActive" {
             })
         } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
-        Test-XmpActive | Should -Be $true
+        $ram = Get-RamInfo
+        $ram.XmpActive    | Should -Be $true
+        $ram.AtRatedSpeed | Should -Be $true
     }
 
-    It "detects XMP inactive for DDR4 (Speed=3200, Config=2133)" {
+    It "detects below rated speed for DDR4 (Speed=3200, Config=2133)" {
         Mock Get-CimInstance {
             @([PSCustomObject]@{
                 Capacity             = 17179869184
@@ -326,10 +365,12 @@ Describe "Test-XmpActive" {
             })
         } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
-        Test-XmpActive | Should -Be $false
+        $ram = Get-RamInfo
+        $ram.XmpActive    | Should -Be $false
+        $ram.AtRatedSpeed | Should -Be $false
     }
 
-    It "detects XMP active for DDR5 (Speed=5600 MT/s, ConfigClock=2800 MHz)" {
+    It "detects rated speed for DDR5 (Speed=5600 MT/s, ConfigClock=2800 MHz)" {
         # DDR5: ConfiguredClockSpeed is half of Speed (double-data-rate)
         Mock Get-CimInstance {
             @([PSCustomObject]@{
@@ -341,10 +382,12 @@ Describe "Test-XmpActive" {
             })
         } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
-        Test-XmpActive | Should -Be $true
+        $ram = Get-RamInfo
+        $ram.XmpActive    | Should -Be $true
+        $ram.AtRatedSpeed | Should -Be $true
     }
 
-    It "detects XMP inactive for DDR5 at half speed (Speed=5600, Config=2400)" {
+    It "detects below rated speed for DDR5 at half speed (Speed=5600, Config=2400)" {
         Mock Get-CimInstance {
             @([PSCustomObject]@{
                 Capacity             = 17179869184
@@ -356,10 +399,12 @@ Describe "Test-XmpActive" {
         } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
         # Floor(5600/2) * 0.95 = 2660; 2400 < 2660 -> XMP inactive
-        Test-XmpActive | Should -Be $false
+        $ram = Get-RamInfo
+        $ram.XmpActive    | Should -Be $false
+        $ram.AtRatedSpeed | Should -Be $false
     }
 
-    It "detects XMP inactive for DDR5 JEDEC baseline (Speed=4800, Config=2400)" {
+    It "detects rated speed for DDR5 JEDEC baseline (Speed=4800, Config=2400)" {
         Mock Get-CimInstance {
             @([PSCustomObject]@{
                 Capacity             = 17179869184
@@ -371,14 +416,16 @@ Describe "Test-XmpActive" {
         } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
         # DDR5-4800 JEDEC baseline: config 2400 × 2 = 4800 MT/s = rated speed.
-        # Function returns $true ("at rated speed") — it cannot distinguish JEDEC from XMP.
-        Test-XmpActive | Should -Be $true
+        # This cannot distinguish JEDEC from XMP; it only proves rated speed.
+        $ram = Get-RamInfo
+        $ram.XmpActive    | Should -Be $true
+        $ram.AtRatedSpeed | Should -Be $true
     }
 
     It "returns null when CIM query fails" {
         Mock Get-CimInstance { throw "WMI error" } -ParameterFilter { $ClassName -eq "Win32_PhysicalMemory" }
 
-        Test-XmpActive | Should -BeNullOrEmpty
+        Get-RamInfo | Should -BeNullOrEmpty
     }
 }
 

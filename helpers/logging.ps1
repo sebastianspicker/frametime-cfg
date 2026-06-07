@@ -3,13 +3,16 @@
 # ==============================================================================
 
 function Set-TextFileUtf8 {
+    [CmdletBinding(SupportsShouldProcess)]
     param([string]$Path, [string]$Value)
     $nativePath = if (Test-HostIsWindows) { $Path -replace '/', '\' } else { $Path -replace '\\', '/' }
     $parentDir = Split-Path -Path $nativePath -Parent
     if ($parentDir) {
         [System.IO.Directory]::CreateDirectory($parentDir) | Out-Null
     }
-    [System.IO.File]::WriteAllText($nativePath, $Value, [System.Text.UTF8Encoding]::new($false))
+    if ($PSCmdlet.ShouldProcess($nativePath, "Write UTF-8 text file")) {
+        [System.IO.File]::WriteAllText($nativePath, $Value, [System.Text.UTF8Encoding]::new($false))
+    }
 }
 
 function Add-TextFileUtf8Line {
@@ -69,7 +72,10 @@ function Write-Log($Level, $Message) {
     $ts      = Get-Date -Format "HH:mm:ss"
     $logLine = "[$ts][$Level] $Message"
     if ($CFG_LogFile -and (Test-Path $CFG_LogDir -ErrorAction SilentlyContinue)) {
-        try { Add-TextFileUtf8Line -Path $CFG_LogFile -Value $logLine } catch {}
+        try { Add-TextFileUtf8Line -Path $CFG_LogFile -Value $logLine } catch {
+            # Avoid recursive logging if the log sink itself fails.
+            $null = $_
+        }
     }
     $show = switch ($SCRIPT:LogLevel) {
         "MINIMAL" { $Level -in @("ERROR","WARN","OK","INFO","SECTION","STEP","T1","T2","T3") }
@@ -92,7 +98,7 @@ function Write-Log($Level, $Message) {
         "T1"      { "  $([char]0x25BA)" }; "T2"      { "  $([char]0x25B2)" };  "T3"      { "  $([char]0x25C6)" }
         default   { "   " }
     }
-    Write-Host "$prefix $Message" -ForegroundColor $color
+    Write-ConsoleLine "$prefix $Message" -ForegroundColor $color
 }
 
 function Write-OK($t)       { Write-Log "OK"      $t }
@@ -104,8 +110,29 @@ function Write-Info($t)     { Write-Log "INFO"    $t }
 # (file + console with level filtering). Named Write-DebugLog to avoid
 # shadowing the built-in Write-Debug cmdlet.
 function Write-DebugLog($t)    { Write-Log "DEBUG"   $t }
-function Write-Blank()      { Write-Host "" }
-function Write-Sub($t)      { Write-Host "  · $t" -ForegroundColor White }
+function Write-ConsoleLine {
+    param(
+        [AllowNull()][object]$Message = "",
+        [ConsoleColor]$ForegroundColor = [ConsoleColor]::Gray
+    )
+
+    $previousColor = $null
+    $colorChanged = $false
+    try {
+        if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+            $previousColor = $Host.UI.RawUI.ForegroundColor
+            $Host.UI.RawUI.ForegroundColor = $ForegroundColor
+            $colorChanged = $true
+        }
+        Write-Information -MessageData ([string]$Message) -InformationAction Continue
+    } finally {
+        if ($colorChanged) {
+            $Host.UI.RawUI.ForegroundColor = $previousColor
+        }
+    }
+}
+function Write-Blank()      { Write-ConsoleLine "" }
+function Write-Sub($t)      { Write-ConsoleLine "  · $t" -ForegroundColor White }
 # Summary message after an action — suppressed in DRY-RUN because
 # Set-RegistryValue/Set-BootConfig already print "[DRY-RUN] Would set:".
 function Write-ActionOK($t) { if (-not $SCRIPT:DryRun) { Write-OK $t } }
@@ -124,15 +151,15 @@ function Write-TierBadge($tier, $label) {
         3 { "$icon [T3 Community] Community Consensus" }
         default { "? [T?] Unknown Tier" }
     }
-    Write-Host "  $badge  $([char]0x2014)  $label" -ForegroundColor $color
+    Write-ConsoleLine "  $badge  $([char]0x2014)  $label" -ForegroundColor $color
     Write-Log "T$tier" "$label"
 }
 
 function Write-Section($title) {
     $pad = "=" * ($title.Length + 4)
-    Write-Host "`n  $([char]0x2554)$pad$([char]0x2557)" -ForegroundColor DarkCyan
-    Write-Host "  $([char]0x2551)  $title  $([char]0x2551)" -ForegroundColor Cyan
-    Write-Host "  $([char]0x255A)$pad$([char]0x255D)" -ForegroundColor DarkCyan
+    Write-ConsoleLine "`n  $([char]0x2554)$pad$([char]0x2557)" -ForegroundColor DarkCyan
+    Write-ConsoleLine "  $([char]0x2551)  $title  $([char]0x2551)" -ForegroundColor Cyan
+    Write-ConsoleLine "  $([char]0x255A)$pad$([char]0x255D)" -ForegroundColor DarkCyan
     # Show step progress when $SCRIPT:PhaseTotal is set and title contains "Step N"
     if ((Get-Variable -Name PhaseTotal -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:PhaseTotal -and $title -match '^Step\s+(\d+)') {
         $stepNum = [int]$Matches[1]
@@ -142,7 +169,7 @@ function Write-Section($title) {
         $empty  = $barLen - $filled
         $bar = "$([char]0x2588)" * $filled + "$([char]0x2591)" * $empty
         $phaseLabel = if ((Get-Variable -Name CurrentPhase -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentPhase) { "Phase $($SCRIPT:CurrentPhase)" } else { "" }
-        Write-Host "  $bar  $phaseLabel  $([char]0x2502)  $stepNum / $($SCRIPT:PhaseTotal)  ($($pct)%)" -ForegroundColor DarkGray
+        Write-ConsoleLine "  $bar  $phaseLabel  $([char]0x2502)  $stepNum / $($SCRIPT:PhaseTotal)  ($($pct)%)" -ForegroundColor DarkGray
     }
     Write-Log "SECTION" "=== $title ==="
 }
@@ -151,7 +178,7 @@ function Write-LogoBanner($subtitle) {
     <#  Lightweight banner: ASCII logo + subtitle. For entry-point scripts that
         don't need the full phase banner (Cleanup, FpsCap, Verify, etc.).  #>
     Clear-Host
-    Write-Host @"
+    Write-ConsoleLine @"
 
   ██████╗███████╗██████╗      ██████╗ ██████╗ ████████╗
  ██╔════╝██╔════╝╚════██╗    ██╔═══██╗██╔══██╗╚══██╔══╝
@@ -202,32 +229,32 @@ function Write-PhaseSummary {
 
     Write-Blank
     if ($DryRun) {
-        Write-Host "  $([char]0x2554)$("$([char]0x2550)" * 58)$([char]0x2557)" -ForegroundColor Magenta
-        Write-Host "  $([char]0x2551)  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  $PhaseLabel PREVIEW COMPLETE$(' ' * [math]::Max(0, 32 - $PhaseLabel.Length))$([char]0x2551)" -ForegroundColor Magenta
-        Write-Host "  $([char]0x2551)  No changes were applied. To run for real:$(' ' * 14)$([char]0x2551)" -ForegroundColor Magenta
-        Write-Host "  $([char]0x2551)  START.bat -> [1] -> choose a live profile$(' ' * 13)$([char]0x2551)" -ForegroundColor Magenta
-        Write-Host "  $([char]0x255A)$("$([char]0x2550)" * 58)$([char]0x255D)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2554)$("$([char]0x2550)" * 58)$([char]0x2557)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2551)  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  $PhaseLabel PREVIEW COMPLETE$(' ' * [math]::Max(0, 32 - $PhaseLabel.Length))$([char]0x2551)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2551)  No changes were applied. To run for real:$(' ' * 14)$([char]0x2551)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x2551)  START.bat -> [1] -> choose a live profile$(' ' * 13)$([char]0x2551)" -ForegroundColor Magenta
+        Write-ConsoleLine "  $([char]0x255A)$("$([char]0x2550)" * 58)$([char]0x255D)" -ForegroundColor Magenta
     } else {
         $borderColor = if ($failed -gt 0) { "Yellow" } else { "Green" }
-        Write-Host "  $([char]0x2554)$("$([char]0x2550)" * 58)$([char]0x2557)" -ForegroundColor $borderColor
-        Write-Host "  $([char]0x2551)  $PhaseLabel COMPLETE$(' ' * [math]::Max(0, 44 - $PhaseLabel.Length))$([char]0x2551)" -ForegroundColor $borderColor
-        Write-Host "  $([char]0x2551)$(' ' * 58)$([char]0x2551)" -ForegroundColor $borderColor
-        Write-Host "  $([char]0x2551)  $([char]0x2714) Applied:  $applied$(' ' * [math]::Max(0, 46 - "$applied".Length))$([char]0x2551)" -ForegroundColor Green
+        Write-ConsoleLine "  $([char]0x2554)$("$([char]0x2550)" * 58)$([char]0x2557)" -ForegroundColor $borderColor
+        Write-ConsoleLine "  $([char]0x2551)  $PhaseLabel COMPLETE$(' ' * [math]::Max(0, 44 - $PhaseLabel.Length))$([char]0x2551)" -ForegroundColor $borderColor
+        Write-ConsoleLine "  $([char]0x2551)$(' ' * 58)$([char]0x2551)" -ForegroundColor $borderColor
+        Write-ConsoleLine "  $([char]0x2551)  $([char]0x2714) Applied:  $applied$(' ' * [math]::Max(0, 46 - "$applied".Length))$([char]0x2551)" -ForegroundColor Green
         if ($skipped -gt 0) {
-            Write-Host "  $([char]0x2551)  $([char]0x25CB) Skipped:  $skipped$(' ' * [math]::Max(0, 46 - "$skipped".Length))$([char]0x2551)" -ForegroundColor DarkGray
+            Write-ConsoleLine "  $([char]0x2551)  $([char]0x25CB) Skipped:  $skipped$(' ' * [math]::Max(0, 46 - "$skipped".Length))$([char]0x2551)" -ForegroundColor DarkGray
         }
         if ($failed -gt 0) {
-            Write-Host "  $([char]0x2551)  $([char]0x2718) Failed:   $failed$(' ' * [math]::Max(0, 46 - "$failed".Length))$([char]0x2551)" -ForegroundColor Red
-            Write-Host "  $([char]0x2551)  Failed steps can be retried via START.bat$(' ' * 15)$([char]0x2551)" -ForegroundColor DarkGray
+            Write-ConsoleLine "  $([char]0x2551)  $([char]0x2718) Failed:   $failed$(' ' * [math]::Max(0, 46 - "$failed".Length))$([char]0x2551)" -ForegroundColor Red
+            Write-ConsoleLine "  $([char]0x2551)  Failed steps can be retried via START.bat$(' ' * 15)$([char]0x2551)" -ForegroundColor DarkGray
         }
         if ($NextAction) {
-            Write-Host "  $([char]0x2551)$(' ' * 58)$([char]0x2551)" -ForegroundColor $borderColor
+            Write-ConsoleLine "  $([char]0x2551)$(' ' * 58)$([char]0x2551)" -ForegroundColor $borderColor
             # Split NextAction into lines of ~54 chars max for box fitting
             foreach ($line in $NextAction -split "`n") {
-                Write-Host "  $([char]0x2551)  $line$(' ' * [math]::Max(0, 56 - $line.Length))$([char]0x2551)" -ForegroundColor $borderColor
+                Write-ConsoleLine "  $([char]0x2551)  $line$(' ' * [math]::Max(0, 56 - $line.Length))$([char]0x2551)" -ForegroundColor $borderColor
             }
         }
-        Write-Host "  $([char]0x255A)$("$([char]0x2550)" * 58)$([char]0x255D)" -ForegroundColor $borderColor
+        Write-ConsoleLine "  $([char]0x255A)$("$([char]0x2550)" * 58)$([char]0x255D)" -ForegroundColor $borderColor
     }
     Write-Info "Log: $CFG_LogFile"
 }
@@ -236,7 +263,7 @@ function Write-Banner($phase, $total, $subtitle) {
     Clear-Host
     $profileTag = if ($SCRIPT:Profile) { "[$($SCRIPT:Profile)]" } else { "[$($SCRIPT:Mode)]" }
     $levelTag   = "[LOG:$($SCRIPT:LogLevel)]"
-    Write-Host @"
+    Write-ConsoleLine @"
 
   ██████╗███████╗██████╗      ██████╗ ██████╗ ████████╗
  ██╔════╝██╔════╝╚════██╗    ██╔═══██╗██╔══██╗╚══██╔══╝
@@ -245,11 +272,11 @@ function Write-Banner($phase, $total, $subtitle) {
  ╚██████╗███████║███████╗    ╚██████╔╝██║        ██║
   ╚═════╝╚══════╝╚══════╝     ╚═════╝ ╚═╝        ╚═╝
 "@ -ForegroundColor Cyan
-    Write-Host "  Phase $phase / $total  ·  $subtitle" -ForegroundColor Cyan
-    Write-Host "  $profileTag $levelTag  ·  Log: $CFG_LogFile" -ForegroundColor DarkGray
+    Write-ConsoleLine "  Phase $phase / $total  ·  $subtitle" -ForegroundColor Cyan
+    Write-ConsoleLine "  $profileTag $levelTag  ·  Log: $CFG_LogFile" -ForegroundColor DarkGray
     if ($SCRIPT:DryRun) {
-        Write-Host ""
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Preview mode — NO changes will be applied" -ForegroundColor Magenta
+        Write-ConsoleLine ""
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Preview mode — NO changes will be applied" -ForegroundColor Magenta
     }
     $profileDesc = switch ($SCRIPT:Profile) {
         "SAFE"        { "T1 auto + T2(safe) auto. Moderate/aggressive skipped." }
@@ -260,16 +287,17 @@ function Write-Banner($phase, $total, $subtitle) {
         default       { "" }
     }
     if ($profileDesc) {
-        Write-Host "  Profile: $profileDesc" -ForegroundColor DarkGray
+        Write-ConsoleLine "  Profile: $profileDesc" -ForegroundColor DarkGray
     }
-    Write-Host "" ; Write-Host "  Tier Legend:" -ForegroundColor White
-    Write-Host "  $([char]0x2714) [T1 Safe]        Proven effect $([char]0x2014) auto-applied" -ForegroundColor Green
-    Write-Host "  $([char]0x25B2) [T2 Moderate]    Setup-dependent $([char]0x2014) prompted" -ForegroundColor Yellow
-    Write-Host "  $([char]0x25C6) [T3 Community]   Community tip $([char]0x2014) COMPETITIVE/CUSTOM only" -ForegroundColor DarkCyan
-    Write-Host "  Risk: $([char]0x2714) SAFE  $([char]0x25B2) MODERATE  $([char]0x25C6) AGGRESSIVE  $([char]0x2718) CRITICAL" -ForegroundColor DarkGray
-    Write-Host "  $("$([char]0x2500)" * 60)" -ForegroundColor DarkGray
-    Write-Host "  DISCLAIMER: Use at your own risk. We take no responsibility" -ForegroundColor DarkRed
-    Write-Host "  for any damage whatsoever. Always create a restore point." -ForegroundColor DarkRed
-    Write-Host "  $("$([char]0x2500)" * 60)" -ForegroundColor DarkGray
+    Write-ConsoleLine ""
+    Write-ConsoleLine "  Tier Legend:" -ForegroundColor White
+    Write-ConsoleLine "  $([char]0x2714) [T1 Safe]        Proven effect $([char]0x2014) auto-applied" -ForegroundColor Green
+    Write-ConsoleLine "  $([char]0x25B2) [T2 Moderate]    Setup-dependent $([char]0x2014) prompted" -ForegroundColor Yellow
+    Write-ConsoleLine "  $([char]0x25C6) [T3 Community]   Community tip $([char]0x2014) COMPETITIVE/CUSTOM only" -ForegroundColor DarkCyan
+    Write-ConsoleLine "  Risk: $([char]0x2714) SAFE  $([char]0x25B2) MODERATE  $([char]0x25C6) AGGRESSIVE  $([char]0x2718) CRITICAL" -ForegroundColor DarkGray
+    Write-ConsoleLine "  $("$([char]0x2500)" * 60)" -ForegroundColor DarkGray
+    Write-ConsoleLine "  DISCLAIMER: Use at your own risk. We take no responsibility" -ForegroundColor DarkRed
+    Write-ConsoleLine "  for any damage whatsoever. Always create a restore point." -ForegroundColor DarkRed
+    Write-ConsoleLine "  $("$([char]0x2500)" * 60)" -ForegroundColor DarkGray
     Write-Blank
 }

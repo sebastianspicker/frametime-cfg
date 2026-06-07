@@ -5,7 +5,25 @@
 BeforeAll {
     . "$PSScriptRoot/_TestInit.ps1"
 
+    $Script:Root = (Resolve-Path "$PSScriptRoot/../..").Path
+
+    if (-not ("System.Windows.MessageBox" -as [type])) {
+        Add-Type -TypeDefinition @'
+namespace System.Windows {
+    public static class MessageBox {
+        public static object Show(string messageBoxText, string caption) { return null; }
+        public static object Show(string messageBoxText, string caption, string button) { return null; }
+        public static object Show(string messageBoxText, string caption, string button, string icon) { return null; }
+    }
+}
+'@
+    }
+
+    . "$Script:Root/helpers/step-catalog.ps1"
+
     function New-FakeGuiElement {
+        param()
+
         $element = [PSCustomObject]@{
             Visibility   = "Collapsed"
             Style        = $null
@@ -40,13 +58,20 @@ BeforeAll {
         return $script:GuiElements[$Name]
     }
 
-    function New-Brush { param([string]$Color) $Color }
+    function New-Brush {
+        param([string]$Color)
+        $Color
+    }
     function Invoke-Async {}
     function Launch-Terminal {}
     function Load-Dashboard {}
-    function Start-Analysis {}
+    function Start-Analysis {
+        param()
+    }
     function Load-Optimize {}
-    function Start-InlineVerify {}
+    function Start-InlineVerify {
+        param()
+    }
     function Load-Backup {}
     function Load-Benchmark {}
     function Load-Video {}
@@ -199,6 +224,38 @@ Describe "Analyze storage helpers" {
     }
 }
 
+Describe "Inline verification provenance" {
+
+    BeforeEach {
+        Reset-TestState
+        $script:GuiElements = @{}
+        $Script:GuiObservedStepKeys = @()
+        $Script:UISync = @{}
+        New-TestProgressFile -Phase 1 -LastStep 0 -CompletedSteps @() -SkippedSteps @() | Out-Null
+    }
+
+    It "shows observed state without completing runtime progress" {
+        Mock Invoke-Async {
+            param($Work, $WorkArgs, $OnDone)
+            $Script:UISync.VerifyResults = @("P1:4")
+            & $OnDone
+        }
+        Mock Save-Progress { throw "Inline verification must not save progress." }
+        Mock Save-StateDataSafe { throw "Inline verification must not save state." }
+
+        Start-InlineVerify
+
+        $prog = Load-Progress
+        @($prog.completedSteps) | Should -Not -Contain "P1:4"
+        Test-StepDone -phase 1 -stepNum 4 | Should -BeFalse
+
+        $row = @((El "OptimizeGrid").ItemsSource) |
+            Where-Object { $_._Step.Phase -eq 1 -and $_._Step.Step -eq 4 } |
+            Select-Object -First 1
+        $row.StatusKey | Should -Be "Observed"
+    }
+}
+
 Describe "Benchmark parsing helpers" {
 
     It "extracts an FPS cap from VProf text" {
@@ -208,12 +265,28 @@ Describe "Benchmark parsing helpers" {
         $result.Cap    | Should -BeGreaterThan 0
     }
 
+    It "extracts an FPS cap from comma-separated VProf text" {
+        $result = Get-BenchmarkCapFromText "[VProf] FPS: Avg=300.5, P1=220.4"
+
+        $result.AvgFps | Should -Be 300.5
+        $result.Cap | Should -BeGreaterThan 0
+    }
+
     It "returns null when no Avg FPS token exists" {
         Get-BenchmarkCapFromText "No FPS data here" | Should -BeNullOrEmpty
     }
 
+    It "returns null instead of throwing for malformed FPS cap values" {
+        $huge = "9" * 400
+        foreach ($value in @("300..0", ".", "300.", "300,5", $huge)) {
+            { $script:capParseResult = Get-BenchmarkCapFromText "[VProf] FPS: Avg=$value P1=200" } |
+                Should -Not -Throw
+            $script:capParseResult | Should -BeNullOrEmpty
+        }
+    }
+
     It "extracts Avg and P1 values for benchmark result imports" {
-        $result = Get-BenchmarkResultFromText "[VProf] Avg=280.0 P1=190.0"
+        $result = Get-BenchmarkResultFromText "[VProf] FPS: Avg=280.0, P1=190.0"
 
         $result.AvgFps | Should -Be 280.0
         $result.P1Fps  | Should -Be 190.0
@@ -221,6 +294,17 @@ Describe "Benchmark parsing helpers" {
 
     It "returns null when the benchmark result text is incomplete" {
         Get-BenchmarkResultFromText "[VProf] Avg=280.0 only" | Should -BeNullOrEmpty
+    }
+
+    It "returns null instead of writing history for malformed benchmark result values" {
+        Remove-Item $CFG_BenchmarkFile -Force -ErrorAction SilentlyContinue
+        foreach ($value in @("300..0", ".", "300.", "300,5")) {
+            { $script:benchmarkParseResult = Get-BenchmarkResultFromText "[VProf] FPS: Avg=$value, P1=190.0" } |
+                Should -Not -Throw
+            $script:benchmarkParseResult | Should -BeNullOrEmpty
+        }
+
+        Test-Path $CFG_BenchmarkFile | Should -Be $false
     }
 }
 
@@ -247,6 +331,23 @@ Describe "Startup drift helpers" {
         Should-SkipStartupDriftCheck -State $state | Should -Be $true
     }
 
+    It "returns unknown instead of clean when the startup drift check is throttled" {
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            mode = "AUTO"
+            startup_last_verified = (Get-Date).AddMinutes(-10).ToString("o")
+        }) -Path $CFG_StateFile
+        Mock Test-RegistryCheck { throw "Throttled startup drift must not read registry state." }
+
+        $result = Test-StartupConfigDrift
+
+        $result.Skipped | Should -Be $true
+        $result.Status | Should -Be "Unknown"
+        $result.HasDrift | Should -BeNullOrEmpty
+        $result.CheckedCount | Should -Be 0
+        Should -Invoke Test-RegistryCheck -Times 0
+    }
+
     It "records startup_last_verified and reports drift counts from the quick startup check" {
         Mock Test-RegistryCheck {
             if ($Name -eq "OverlayTestMode") {
@@ -260,11 +361,35 @@ Describe "Startup drift helpers" {
         $result = Test-StartupConfigDrift
 
         $result.Skipped | Should -Be $false
+        $result.Status | Should -Be "Drift"
         $result.HasDrift | Should -Be $true
         $result.DriftCount | Should -Be 1
         Should -Invoke Save-JsonAtomic -Exactly 1
         $script:SavedState.PSObject.Properties.Name | Should -Contain "startup_last_verified"
         $script:SavedState.PSObject.Properties.Name | Should -Not -Contain "last_verified"
+    }
+
+    It "can force a fresh drift check even when startup_last_verified is recent" {
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            mode = "AUTO"
+            startup_last_verified = (Get-Date).AddMinutes(-10).ToString("o")
+        }) -Path $CFG_StateFile
+        Mock Test-RegistryCheck {
+            if ($Name -eq "OverlayTestMode") {
+                return @{ Status = "CHANGED"; Value = 0 }
+            }
+            return @{ Status = "OK"; Value = $Expected }
+        }
+        Mock Save-StateDataSafe {}
+
+        $result = Test-StartupConfigDrift -Force
+
+        $result.Skipped | Should -Be $false
+        $result.Status | Should -Be "Drift"
+        $result.HasDrift | Should -Be $true
+        $result.DriftCount | Should -Be 1
+        Should -Invoke Test-RegistryCheck -Times 5
     }
 
     It "uses AUTO as the fallback mode for the recommended profile" {
@@ -285,6 +410,7 @@ Describe "Startup drift helpers" {
         { $script:SaveFailureResult = Test-StartupConfigDrift } | Should -Not -Throw
 
         $script:SaveFailureResult.Skipped | Should -Be $false
+        $script:SaveFailureResult.Status | Should -Be "Clean"
         $script:SaveFailureResult.CheckedCount | Should -Be 5
     }
 
@@ -292,6 +418,7 @@ Describe "Startup drift helpers" {
         Mock Test-StartupConfigDrift {
             [PSCustomObject]@{
                 Skipped = $false
+                Status = "Drift"
                 HasDrift = $true
                 DriftCount = 2
                 CheckedCount = 5
@@ -306,15 +433,36 @@ Describe "Startup drift helpers" {
         (El "DashDriftBannerText").Text | Should -Match "2 of 5 quick checks drifted"
     }
 
-    It "hides the drift banner when the startup check is skipped or clean" {
+    It "shows an unknown banner when the startup check is skipped" {
         Mock Test-StartupConfigDrift {
             [PSCustomObject]@{
                 Skipped = $true
-                HasDrift = $false
+                Status = "Unknown"
+                HasDrift = $null
                 DriftCount = 0
                 CheckedCount = 0
                 DriftLabels = @()
                 CheckedAt = ""
+            }
+        }
+
+        Update-StartupDriftBanner
+
+        (El "DashDriftBanner").Visibility | Should -Be "Visible"
+        (El "DashDriftBannerTitle").Text | Should -Match "Not Checked"
+        (El "DashDriftBannerText").Text | Should -Match "unknown"
+    }
+
+    It "hides the drift banner when a fresh startup check is clean" {
+        Mock Test-StartupConfigDrift {
+            [PSCustomObject]@{
+                Skipped = $false
+                Status = "Clean"
+                HasDrift = $false
+                DriftCount = 0
+                CheckedCount = 5
+                DriftLabels = @()
+                CheckedAt = "2026-04-08 14:00"
             }
         }
 
@@ -357,6 +505,18 @@ Describe "Save-SettingsToState" {
 
         $saved = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
         $saved.profile | Should -Be "COMPETITIVE"
+        $saved.mode | Should -Be "CONTROL"
         $saved.phase1SafeModeReady | Should -Be $true
+    }
+
+    It "persists DRY-RUN as a mode modifier for any selected profile" {
+        (El "RadioCustom").IsChecked = $true
+        (El "ChkDryRun").IsChecked = $true
+
+        Save-SettingsToState
+
+        $saved = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
+        $saved.profile | Should -Be "CUSTOM"
+        $saved.mode | Should -Be "DRY-RUN"
     }
 }

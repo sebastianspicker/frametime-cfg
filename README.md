@@ -104,6 +104,10 @@ CS2 has structurally poor frame pacing in Valve's Source 2 engine. Games with si
 
 > **Recommended:** Create a System Restore Point before running Phase 1.
 
+For a fresh install, use official Microsoft Windows 11 media first, update
+Windows/Store apps/drivers, then run this suite. Do not use prebuilt debloated
+ISOs as the default baseline. See [`docs/fresh-windows-baseline.md`](docs/fresh-windows-baseline.md).
+
 ---
 
 ## Quick Start
@@ -201,8 +205,13 @@ CS2-Optimize-Suite/
 │   ├── net_highping.cfg       60ms+ ping, stable route
 │   ├── net_unstable.cfg       Jitter + loss, ping OK
 │   ├── net_bad.cfg            High ping + jitter/loss
+│   ├── debug_hud.cfg          Optional telemetry + network diagnostic snapshot
+│   ├── debug_hud_off.cfg      Reset diagnostic telemetry to quiet defaults
+│   ├── audio_stable.cfg       Optional audio default/reset (mixahead 0.05)
+│   ├── audio_lowlatency_025.cfg Optional lower-buffer audio experiment
+│   ├── audio_lowlatency_001.cfg Optional aggressive audio experiment
 │   └── valve-latency-targets.json Heuristic target definitions for the Valve Region Latency Diagnostic
-└── docs/                      Deep-dive documentation (19+ files — see below)
+└── docs/                      Deep-dive documentation (20 active Markdown files + video.txt — see below)
 ```
 
 All state is stored in `C:\CS2_OPTIMIZE\`. Logs in `C:\CS2_OPTIMIZE\Logs\`. Backups in `C:\CS2_OPTIMIZE\backup.json`. FPS history stays in `benchmark_history.json`; latency runs are stored separately in `latency_history.json`.
@@ -281,7 +290,7 @@ For script changes, also run PSScriptAnalyzer with [`PSScriptAnalyzerSettings.ps
 | 31 | Game Bar / Game DVR off | T2 | SAFE | `AppCaptureEnabled=0`, `GameDVR_Enabled=0`, `AllowGameDVR=0` |
 | 32 | Overlay disable | T2 | SAFE | Steam `GameOverlayDisabled=1` + GeForce Experience guide |
 | 33 | Audio optimization | T2 | SAFE | Exclusive mode guide + `UserDuckingPreference=3` (ducking off) |
-| 34 | Autoexec.cfg + launch options | T2 | SAFE | 73 CVars (10 categories), 4 network CFGs deployed, no automatic thread-pool forcing |
+| 34 | Autoexec.cfg + launch options | T2 | SAFE | 73 CVars (10 categories), optional network/diagnostic/audio CFGs deployed, Intel `thread_pool_option=2` auto-detected |
 | 35 | Chipset driver check | T2 | SAFE | AMD/Intel chipset update links |
 | 36 | Visual effects + Defender + HDR | T3 | SAFE | `VisualFXSetting=2`, cs2.exe Defender exclusion, `AutoHDREnabled=0` |
 | 37 | Services disable | T3 | MODERATE | SysMain, WSearch, qWave (DSCP survives), 4 Xbox services (warns about wireless controllers) |
@@ -377,7 +386,7 @@ Every external tool was replaced with native PowerShell. Only the NVIDIA driver 
 | NVIDIA Profile Inspector | C# P/Invoke to `nvapi64.dll` — 52 DRS DWORD writes to binary database | `nvidia-drs.ps1` + `nvidia-profile.ps1` |
 | MSI Utility v3 (Sathango) | Native `MSISupported=1` registry writes per device class | `msi-interrupts.ps1` |
 | GoInterruptPolicy (spddl) | Native `DevicePolicy=4` + `AssignmentSetOverride` registry writes | `msi-interrupts.ps1` |
-| Win11Debloat (Raphire) | `Get-AppxPackage \| Remove-AppxPackage` + telemetry registry | `debloat.ps1` |
+| Win11Debloat (Raphire) | Repo-owned AppX allowlist + telemetry service/task handling | `debloat.ps1` |
 | FPSHeaven `.pow` binary | Native `powercfg /setacvalueindex` (4 bugs fixed, vendor-aware) | `power-plan.ps1` |
 | Process Lasso (Bitsum) | IFEO `CpuPriorityClass=3` + scheduled task for X3D CCD affinity | `process-priority.ps1` |
 
@@ -420,6 +429,8 @@ Step 34 deploys four condition-specific CFGs to `game\csgo\cfg\`. These are not 
 
 Always `exec net_stable` when back on a good connection. → [`docs/network-cfgs.md`](docs/network-cfgs.md)
 
+Step 34 also deploys optional diagnostics and audio experiments. `exec debug_hud` shows telemetry and prints `net_print_sdr_ping_times`, `net_status`, and `cl_ticktiming print detail`; `exec debug_hud_off` resets the overlay to quiet defaults. `exec audio_lowlatency_025` and `exec audio_lowlatency_001` are manual listen-and-benchmark experiments; revert with `exec audio_stable`. → [`docs/audio.md`](docs/audio.md)
+
 ---
 
 ## Cleanup Modes
@@ -453,6 +464,7 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | Document | Covers |
 |----------|--------|
 | [`docs/architecture.md`](docs/architecture.md) | Maintainer map: entrypoints, helper boundaries, runtime state, phase handoff, backup/restore invariants, verification |
+| [`docs/fresh-windows-baseline.md`](docs/fresh-windows-baseline.md) | Official Windows 11 baseline before running the suite; guidance against prebuilt debloated ISOs |
 | [`docs/evidence.md`](docs/evidence.md) | Per-optimization impact notes, risk trade-off analysis, full step decision matrix |
 | [`docs/debunked.md`](docs/debunked.md) | 40+ debunked settings with evidence, contested optimizations, AMD Anti-Lag history, known limitations |
 | [`docs/gui.md`](docs/gui.md) | GUI dashboard panels, interaction details, layout examples |
@@ -472,6 +484,10 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | [`docs/debloat.md`](docs/debloat.md) | Full AppX removal list with rationale, telemetry service/task disable, what is NOT removed |
 | [`docs/backup-restore.md`](docs/backup-restore.md) | `backup.json` structure, all 6 backup types (registry, service, bootconfig, powerplan, drs, scheduledtask), manual restore |
 | [`docs/video.txt`](docs/video.txt) | Copy-ready annotated CS2 `video.txt` with 2026 meta values for Low / Mid / High GPU tiers |
+
+Historical audit packets, completed remediation ledgers, and superseded local
+status files live in [`docs/archive/`](docs/archive/). Active agent scratch
+evidence remains ignored under `docs/agent/` unless it is intentionally archived.
 
 ---
 

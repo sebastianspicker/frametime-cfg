@@ -18,7 +18,10 @@ if ($startStep -le 10) {
         -SideEffects "Slightly higher power consumption on laptops" `
         -Undo "bcdedit /set disabledynamictick no" `
         -Action {
-            Set-BootConfig "disabledynamictick" "yes" "Constant timer resolution"
+            $bootResult = Set-BootConfig "disabledynamictick" "yes" "Constant timer resolution" -PassThru
+            if (-not $bootResult.Applied -and $bootResult.Status -ne "DryRun") {
+                throw "Required boot config write failed for disabledynamictick: $($bootResult.Message)"
+            }
             Write-Info "Undo: bcdedit /set disabledynamictick no"
             Complete-Step $PHASE 10 "Timer"
         } `

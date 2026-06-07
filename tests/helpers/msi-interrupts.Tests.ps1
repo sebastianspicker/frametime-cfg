@@ -54,7 +54,7 @@ Describe "Enable-DeviceMSI" {
                 })
             }
             Mock Write-Step {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Set-ItemProperty {}
             Mock Test-Path { $false }
             Mock New-Item {}
@@ -74,11 +74,11 @@ Describe "Enable-DeviceMSI" {
                 })
             }
             Mock Write-Step {}
-            Mock Write-Host {} -ParameterFilter { $Object -match "DRY-RUN" }
+            Mock Write-ConsoleLine {} -ParameterFilter { $Message -match "DRY-RUN" }
 
             Enable-DeviceMSI
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match "DRY-RUN" } -Scope It
+            Should -Invoke Write-ConsoleLine -ParameterFilter { $Message -match "DRY-RUN" } -Scope It
         }
     }
 
@@ -104,15 +104,15 @@ Describe "Enable-DeviceMSI" {
             Mock Write-Step {}
             Mock Write-DebugLog {}
 
-            $script:hostOutput = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host {
-                if ($Object) { $script:hostOutput.Add([string]$Object) }
+            $script:consoleOutput = [System.Collections.Generic.List[string]]::new()
+            Mock Write-ConsoleLine {
+                if ($Message) { $script:consoleOutput.Add([string]$Message) }
             }
 
             Enable-DeviceMSI
 
             # Only PCI device should be reported, not USB
-            $msiReports = $script:hostOutput | Where-Object { $_ -match "DRY-RUN.*MSISupported" }
+            $msiReports = $script:consoleOutput | Where-Object { $_ -match "DRY-RUN.*MSISupported" }
             @($msiReports).Count | Should -Be 1
         }
     }
@@ -130,14 +130,14 @@ Describe "Enable-DeviceMSI" {
             }
             Mock Write-Step {}
 
-            $script:hostOutput = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host {
-                if ($Object) { $script:hostOutput.Add([string]$Object) }
+            $script:consoleOutput = [System.Collections.Generic.List[string]]::new()
+            Mock Write-ConsoleLine {
+                if ($Message) { $script:consoleOutput.Add([string]$Message) }
             }
 
             Enable-DeviceMSI
 
-            $msiLimitMsg = $script:hostOutput | Where-Object { $_ -match "MessageNumberLimit.*16" }
+            $msiLimitMsg = $script:consoleOutput | Where-Object { $_ -match "MessageNumberLimit.*16" }
             $msiLimitMsg | Should -Not -BeNullOrEmpty
         }
     }

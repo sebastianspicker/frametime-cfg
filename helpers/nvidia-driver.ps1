@@ -201,12 +201,12 @@ function Install-NvidiaDriverClean {
     )
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would install NVIDIA driver (component-selective): $DriverExe" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   1. Extract driver package to temp folder" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   2. Remove bloat components (NVIDIA App, GFE, telemetry, NodeJS)" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   3. Run setup.exe -s -noreboot -clean (driver-only)" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   4. Disable telemetry services + scheduled tasks" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   5. Apply post-install registry tweaks" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would install NVIDIA driver (component-selective): $DriverExe" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   1. Extract driver package to temp folder" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   2. Remove bloat components (NVIDIA App, GFE, telemetry, NodeJS)" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   3. Run setup.exe -s -noreboot -clean (driver-only)" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   4. Disable telemetry services + scheduled tasks" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   5. Apply post-install registry tweaks" -ForegroundColor Magenta
         return $true
     }
 
@@ -268,7 +268,9 @@ function Install-NvidiaDriverClean {
     $completed = $extractProcess.WaitForExit($extractTimeout)
     if (-not $completed) {
         Write-Err "Extraction timed out after 5 minutes."
-        try { $extractProcess | Stop-Process -Force -ErrorAction SilentlyContinue } catch {}
+        try { $extractProcess | Stop-Process -Force -ErrorAction SilentlyContinue } catch {
+            Write-DebugLog "Driver extraction cleanup failed: $($_.Exception.Message)"
+        }
         return $false
     }
 
@@ -539,7 +541,7 @@ function Apply-NvidiaPostInstallTweaks {
                     Stop-Service $svc -Force -ErrorAction SilentlyContinue
                     Set-Service $svc -StartupType Disabled -ErrorAction SilentlyContinue
                 } else {
-                    Write-Host "  [DRY-RUN] Would stop + disable: ${svc}" -ForegroundColor Magenta
+                    Write-ConsoleLine "  [DRY-RUN] Would stop + disable: ${svc}" -ForegroundColor Magenta
                 }
             } catch { Write-DebugLog "Telemetry service ${svc}: $_" }
         }

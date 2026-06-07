@@ -172,7 +172,7 @@ Describe "Invoke-TieredStep" {
         # Mock all console output functions to keep test output clean
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}

@@ -62,7 +62,9 @@ try {
             elseif ($gpu.Name -match "Intel.*Arc|Intel.*Graphics") { $detectedGpu = "4" }
             elseif ($gpu.Name -match "RTX\s*5\d{3}") { $detectedGpu = "1" }
         }
-    } catch { <# GPU detection failed — use NVIDIA default #> }
+    } catch {
+        Write-DebugLog "GPU detection failed for default Phase 3 state: $($_.Exception.Message)"
+    }
     $state = [PSCustomObject]@{ gpuInput=$detectedGpu; mode="CONTROL"; logLevel="NORMAL"; profile="RECOMMENDED"; fpsCap=0; avgFps=0; rollbackDriver=$null; nvidiaDriverPath=$null; baselineAvg=$null; baselineP1=$null }
     Save-SuiteState -State $state
     $SCRIPT:Mode = "CONTROL"; $SCRIPT:LogLevel = "NORMAL"; $SCRIPT:Profile = "RECOMMENDED"; $SCRIPT:DryRun = $false
@@ -97,7 +99,9 @@ if ($SCRIPT:DryRun) {
         }
         Write-Host "  Switched to $($SCRIPT:Mode) mode ($($SCRIPT:Profile) profile) — changes WILL be applied." -ForegroundColor Yellow
         # Persist the mode switch so re-launches don't revert to DRY-RUN
-        try { $state | Add-Member -NotePropertyName "mode" -NotePropertyValue $SCRIPT:Mode -Force; Save-SuiteState -State $state } catch {}
+        try { $state | Add-Member -NotePropertyName "mode" -NotePropertyValue $SCRIPT:Mode -Force; Save-SuiteState -State $state } catch {
+            Write-DebugLog "Could not persist Phase 3 mode switch: $($_.Exception.Message)"
+        }
     }
 }
 
@@ -122,7 +126,9 @@ if ($env:SAFEBOOT_OPTION) {
             shutdown /r /t 0 /f
             exit 0
         }
-    } catch {}
+    } catch {
+        Write-DebugLog "Safe Mode clear attempt failed: $($_.Exception.Message)"
+    }
     Write-Host "  $([char]0x26A0) Could not clear Safe Mode flag automatically." -ForegroundColor Yellow
     Write-Host "  Run in elevated cmd.exe:" -ForegroundColor White
     Write-Host "    bcdedit /deletevalue safeboot" -ForegroundColor Cyan
@@ -398,7 +404,10 @@ if ($startStep -le 4) {
             -SideEffects "None — all DRS settings backed up automatically. Reversible via rollback or NPI -> Restore Defaults" `
             -Undo "Restore via backup rollback, or NVIDIA CP -> Manage 3D Settings -> Restore Defaults" `
             -Action {
-                Apply-NvidiaCS2Profile
+                $profileResult = Apply-NvidiaCS2Profile
+                if (-not $profileResult.CanCompleteStep) {
+                    throw "NVIDIA CS2 profile did not complete: $($profileResult.Message)"
+                }
                 Complete-Step $PHASE 4 "NVProfile"
             } `
             -SkipAction { Skip-Step $PHASE 4 "NVProfile" }
@@ -496,7 +505,9 @@ if ($startStep -le 7) {
                     "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
                     -Name "Enabled" -ErrorAction SilentlyContinue
                 if ($hvciVal -and $hvciVal.Enabled -eq 0) { $hvciPendingOff = $true }
-            } catch {}
+            } catch {
+                Write-DebugLog "HVCI registry pending-off probe failed: $($_.Exception.Message)"
+            }
 
             if (-not $vbsActive) {
                 Write-OK "VBS/Core Isolation: not active — no overhead to remove."
@@ -671,31 +682,39 @@ if ($startStep -le 9) {
                         }
 
                         foreach ($nic in $selectedNics) {
+                            $nicIndex = if ($nic.PSObject.Properties['ifIndex']) { [int]$nic.ifIndex } else { [int]$nic.InterfaceIndex }
                             if ($SCRIPT:DryRun) {
                                 Write-Host "  [DRY-RUN] Would set DNS to ${dnsName}: $($dnsAddrs -join ', ') (Adapter: $($nic.Name))" -ForegroundColor Magenta
                             } else {
                                 # Backup current DNS servers before modification
                                 $currentDns = @()
                                 try {
-                                    $dnsInfo = Get-DnsClientServerAddress -InterfaceIndex $nic.ifIndex `
-                                        -AddressFamily IPv4 -ErrorAction SilentlyContinue
+                                    $dnsInfo = Get-DnsClientServerAddress -InterfaceIndex $nicIndex `
+                                        -AddressFamily IPv4 -ErrorAction Stop
                                     if ($dnsInfo -and $dnsInfo.ServerAddresses) {
                                         $currentDns = @($dnsInfo.ServerAddresses)
                                     }
-                                } catch { Write-Debug "Could not read current DNS for $($nic.Name)" }
-                                Backup-DnsConfig -AdapterName $nic.Name `
-                                    -InterfaceIndex $nic.ifIndex `
-                                    -OriginalDnsServers $currentDns `
-                                    -StepTitle $SCRIPT:CurrentStepTitle
-                                Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses $dnsAddrs
+                                } catch {
+                                    throw "Could not read current DNS for $($nic.Name): $_"
+                                }
+                                Set-VerifiedDnsProfileForAdapter `
+                                    -AdapterName $nic.Name `
+                                    -InterfaceIndex $nicIndex `
+                                    -Provider $dnsName `
+                                    -CurrentServers $currentDns `
+                                    -BackupStep $SCRIPT:CurrentStepTitle | Out-Null
                                 Write-OK "DNS set to ${dnsName}: $($dnsAddrs -join ', ') (Adapter: $($nic.Name))"
                             }
                         }
                     } else {
                         Write-Warn "No active network adapter found after filtering virtual/VPN adapters."
                         Write-Info "Check your network cable or WiFi. DNS can be set manually in Network Settings."
+                        throw "No active network adapter found for DNS changes."
                     }
-                } catch { Write-Warn "DNS change failed: $_" }
+                } catch {
+                    Write-Warn "DNS change failed: $_"
+                    throw
+                }
             } else {
                 Write-Info "DNS not changed."
             }

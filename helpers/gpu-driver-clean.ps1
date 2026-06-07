@@ -13,24 +13,56 @@ function Remove-GpuDriverClean {
         4. Removes DriverStore orphans
         5. Cleans shader caches and temp folders
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [ValidateSet("NVIDIA","AMD","Intel")]
-        [string]$GpuVendor = "NVIDIA"
+        [string]$GpuVendor = "NVIDIA",
+        [switch]$PassThru
     )
 
     Write-Step "GPU Driver Clean Removal — $GpuVendor"
     Write-Info "This replaces DDU with native PowerShell commands."
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would perform complete GPU driver removal for $GpuVendor" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   1. Stop + disable GPU services" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   1.5 Remove GPU software (AppX, program files, tasks, registry)" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   2. Remove driver packages via pnputil" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   3. Clean GPU class registry keys" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   4. Remove DriverStore orphan folders" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN]   5. Clean shader caches" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN] No files or registry entries will be modified." -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would perform complete GPU driver removal for $GpuVendor" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   1. Stop + disable GPU services" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   1.5 Remove GPU software (AppX, program files, tasks, registry)" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   2. Remove driver packages via pnputil" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   3. Clean GPU class registry keys" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   4. Remove DriverStore orphan folders" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   5. Clean shader caches" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] No files or registry entries will be modified." -ForegroundColor Magenta
+        if ($PassThru) {
+            return [PSCustomObject]@{
+                Status = "DryRun"
+                Applied = $false
+                CanCompleteStep = $false
+                FoundDriverPackages = 0
+                RemovedDriverPackages = 0
+                FailedDriverPackages = 0
+                AlreadyAbsent = $false
+                SoftwareRemoved = 0
+                FoldersCleaned = 0
+                Message = "GPU driver cleanup previewed for $GpuVendor"
+            }
+        }
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($GpuVendor, "Remove GPU driver packages, software, services, registry entries, and caches")) {
+        if ($PassThru) {
+            return [PSCustomObject]@{
+                Status = "DryRun"
+                Applied = $false
+                CanCompleteStep = $false
+                FoundDriverPackages = 0
+                RemovedDriverPackages = 0
+                FailedDriverPackages = 0
+                AlreadyAbsent = $false
+                SoftwareRemoved = 0
+                FoldersCleaned = 0
+                Message = "GPU driver cleanup previewed for $GpuVendor"
+            }
+        }
         return
     }
 
@@ -229,6 +261,7 @@ function Remove-GpuDriverClean {
     }
 
     $driverPackages = @()
+    $cimEnumerationSucceeded = $false
 
     # Primary method: CIM/WMI query — works on all Windows editions.
     # Get-CimInstance requires PS 3.0+ (Windows 10/11 always have it).
@@ -237,8 +270,10 @@ function Remove-GpuDriverClean {
     # it's the device setup class GUID which is always {4d36e968-...} for display adapters.
     try {
         $displayGuid = $CFG_GUID_Display  # {4d36e968-e325-11ce-bfc1-08002be10318}
-        $cimDrivers = Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
+        $cimDrivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
             Where-Object { $_.ClassGuid -eq $displayGuid -and $_.DriverProviderName -match $vendorMatch }
+        )
+        $cimEnumerationSucceeded = $true
 
         foreach ($drv in $cimDrivers) {
             if ($drv.InfName -match "^oem\d+\.inf$") {
@@ -302,9 +337,13 @@ function Remove-GpuDriverClean {
     }
 
     if ($driverPackages.Count -eq 0) {
-        Write-Warn "No $GpuVendor display driver packages found. Driver may already be removed."
-        Write-Warn "If on non-English Windows, pnputil text parsing may have failed due to locale. Run 'pnputil /enum-drivers' manually to verify."
-        Write-Warn "Continuing with registry and cache cleanup."
+        if ($cimEnumerationSucceeded) {
+            Write-Info "No $GpuVendor display driver packages found by CIM. Driver package state is already absent."
+        } else {
+            Write-Warn "No $GpuVendor display driver packages found. Driver removal is not verified."
+            Write-Warn "If on non-English Windows, pnputil text parsing may have failed due to locale. Run 'pnputil /enum-drivers' manually to verify."
+            Write-Warn "Continuing with registry and cache cleanup."
+        }
     }
 
     $removedDrivers = 0
@@ -373,7 +412,9 @@ function Remove-GpuDriverClean {
     # Clean vendor registry paths only if at least one driver was actually removed.
     # If all removals failed, the driver is still loaded and deleting its registry
     # config would leave it in an inconsistent state.
-    if ($failedDrivers -gt 0 -and $removedDrivers -eq 0) {
+    if ($driverPackages.Count -eq 0) {
+        Write-Warn "Skipping vendor registry cleanup — no driver package removal was verified."
+    } elseif ($failedDrivers -gt 0 -and $removedDrivers -eq 0) {
         Write-Warn "Skipping vendor registry cleanup — no drivers were successfully removed."
     } elseif ($failedDrivers -gt 0) {
         Write-Warn "Partial removal ($removedDrivers removed, $failedDrivers failed) — skipping vendor registry cleanup to avoid inconsistent state."
@@ -470,15 +511,63 @@ function Remove-GpuDriverClean {
     }
 
     # ── Summary ──────────────────────────────────────────────────────────────
+    $alreadyAbsent = ($driverPackages.Count -eq 0 -and $cimEnumerationSucceeded)
+    $cleanupStatus = if ($alreadyAbsent) {
+        "AlreadyAbsent"
+    } elseif ($driverPackages.Count -eq 0) {
+        "Failed"
+    } elseif ($removedDrivers -gt 0 -and $failedDrivers -eq 0) {
+        "Success"
+    } elseif ($removedDrivers -gt 0) {
+        "Partial"
+    } else {
+        "Failed"
+    }
+    $cleanupMessage = switch ($cleanupStatus) {
+        "Success" { "Driver cleanup removed $removedDrivers package(s)." }
+        "AlreadyAbsent" { "No $GpuVendor display driver packages are present." }
+        "Partial" { "Driver cleanup removed $removedDrivers package(s), but $failedDrivers package(s) failed." }
+        default {
+            if ($driverPackages.Count -eq 0) {
+                "No display driver packages were found; removal was not verified."
+            } else {
+                "No display driver packages were removed."
+            }
+        }
+    }
+
     Write-Blank
-    Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Green
-    Write-Host "  │  GPU DRIVER CLEAN REMOVAL COMPLETE                          │" -ForegroundColor Green
-    Write-Host "  │                                                              │" -ForegroundColor Green
-    Write-Host "  │  Vendor:          $GpuVendor$((' ' * (39 - $GpuVendor.Length)))│" -ForegroundColor White
-    Write-Host "  │  Software removed:$removedApps$((' ' * (39 - "$removedApps".Length)))│" -ForegroundColor White
-    Write-Host "  │  Drivers removed: $removedDrivers$((' ' * (39 - "$removedDrivers".Length)))│" -ForegroundColor White
-    Write-Host "  │  Folders cleaned: $cleanedFolders$((' ' * (39 - "$cleanedFolders".Length)))│" -ForegroundColor White
-    Write-Host "  │                                                              │" -ForegroundColor Green
-    Write-Host "  │  Ready for clean driver installation.                       │" -ForegroundColor White
-    Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Green
+    $canCompleteStep = ($cleanupStatus -eq "Success" -or $cleanupStatus -eq "AlreadyAbsent")
+    $summaryColor = if ($canCompleteStep) { "Green" } elseif ($cleanupStatus -eq "Partial") { "Yellow" } else { "Red" }
+    $summaryTitle = if ($cleanupStatus -eq "Success") { "GPU DRIVER CLEAN REMOVAL COMPLETE" } elseif ($cleanupStatus -eq "AlreadyAbsent") { "GPU DRIVER CLEAN ALREADY ABSENT" } elseif ($cleanupStatus -eq "Partial") { "GPU DRIVER CLEAN REMOVAL PARTIAL" } else { "GPU DRIVER CLEAN REMOVAL NOT VERIFIED" }
+    Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $summaryColor
+    Write-ConsoleLine "  │  $summaryTitle$((' ' * (58 - $summaryTitle.Length)))│" -ForegroundColor $summaryColor
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor $summaryColor
+    Write-ConsoleLine "  │  Vendor:          $GpuVendor$((' ' * (39 - $GpuVendor.Length)))│" -ForegroundColor White
+    Write-ConsoleLine "  │  Software removed:$removedApps$((' ' * (39 - "$removedApps".Length)))│" -ForegroundColor White
+    Write-ConsoleLine "  │  Drivers removed: $removedDrivers$((' ' * (39 - "$removedDrivers".Length)))│" -ForegroundColor White
+    Write-ConsoleLine "  │  Folders cleaned: $cleanedFolders$((' ' * (39 - "$cleanedFolders".Length)))│" -ForegroundColor White
+    Write-ConsoleLine "  │                                                              │" -ForegroundColor Green
+    if ($canCompleteStep) {
+        Write-ConsoleLine "  │  Ready for clean driver installation.                       │" -ForegroundColor White
+    } else {
+        Write-ConsoleLine "  │  Review warnings before continuing to driver installation.   │" -ForegroundColor White
+    }
+    Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $summaryColor
+
+    if ($PassThru) {
+        return [PSCustomObject]@{
+            Status = $cleanupStatus
+            Applied = ($cleanupStatus -eq "Success")
+            CanCompleteStep = $canCompleteStep
+            FoundDriverPackages = $driverPackages.Count
+            RemovedDriverPackages = $removedDrivers
+            FailedDriverPackages = $failedDrivers
+            AlreadyAbsent = $alreadyAbsent
+            SoftwareRemoved = $removedApps
+            FoldersCleaned = $cleanedFolders
+            LockedFolders = $lockedFolders
+            Message = $cleanupMessage
+        }
+    }
 }

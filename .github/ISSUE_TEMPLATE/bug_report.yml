@@ -38,6 +38,8 @@ body:
         - RECOMMENDED
         - COMPETITIVE
         - CUSTOM
+        - YOLO
+        - Not sure
     validations:
       required: true
 
@@ -76,3 +78,9 @@ body:
         - "Yes"
         - "No"
         - Not applicable
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or evidence
+      description: Paste the relevant error line, smoke marker, or sanitized log excerpt. Do not include personal paths, tokens, or private system data.

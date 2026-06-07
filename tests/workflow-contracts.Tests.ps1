@@ -7,6 +7,7 @@ BeforeAll {
     $script:ProjectRoot = (Resolve-Path "$PSScriptRoot/..").Path
     $script:LintWorkflow = Get-Content (Join-Path $script:ProjectRoot ".github/workflows/lint.yml") -Raw
     $script:SecurityWorkflow = Get-Content (Join-Path $script:ProjectRoot ".github/workflows/security.yml") -Raw
+    $script:SmokeEntrypointsScript = Get-Content (Join-Path $script:ProjectRoot ".github/scripts/smoke-entrypoints.ps1") -Raw
 }
 
 AfterAll {
@@ -39,13 +40,14 @@ Describe "lint workflow contract" {
             'CS2-Optimize-GUI.ps1'
         )) {
             $escaped = [regex]::Escape($scriptName)
-            $script:LintWorkflow | Should -Match $escaped
+            $script:SmokeEntrypointsScript | Should -Match $escaped
         }
     }
 
     It "fails smoke jobs when entrypoints emit PowerShell error records" {
-        $script:LintWorkflow | Should -Match '\$errorRecords = @\(\$records \| Where-Object \{ \$_ -is \[System\.Management\.Automation\.ErrorRecord\] \}\)'
-        $script:LintWorkflow | Should -Match 'Smoke test emitted error records'
+        $script:LintWorkflow | Should -Match 'smoke-entrypoints\.ps1'
+        $script:SmokeEntrypointsScript | Should -Match '\$errorRecords = @\(\$records \| Where-Object \{ \$_ -is \[System\.Management\.Automation\.ErrorRecord\] \}\)'
+        $script:SmokeEntrypointsScript | Should -Match 'Smoke test emitted error records'
     }
 
     It "asserts launcher targets exposed by START.bat and START-GUI.bat" {
@@ -60,7 +62,7 @@ Describe "lint workflow contract" {
             'CS2-Optimize-GUI.ps1'
         )) {
             $escaped = [regex]::Escape($target)
-            $script:LintWorkflow | Should -Match $escaped
+            $script:SmokeEntrypointsScript | Should -Match $escaped
         }
     }
 

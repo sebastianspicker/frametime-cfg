@@ -83,6 +83,19 @@ Write-Info "Safe Mode active. GPU driver files are unlocked."
 
 $PHASE = 2
 
+function Register-Phase3RunOnce {
+    [CmdletBinding()]
+    param()
+
+    $runOnceResult = Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1" -PassThru
+    if (-not $runOnceResult.Applied) {
+        Write-Err "Phase 3 RunOnce registration failed."
+        Write-Host "  $([char]0x2139) What to do: after rebooting into Normal Mode, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        return $false
+    }
+    return $true
+}
+
 try {
     # Initialize backup inside try so finally releases the lock on error
     Initialize-Backup
@@ -201,20 +214,28 @@ try {
         $rPhase3 = if (Test-YoloProfile) { "y" } else { Read-Host "  Still register Phase 3 for next boot? [y/N]" }
         if ($rPhase3 -match "^[jJyY]$") {
             Write-Section "Step 3 — Register Phase 3 for next boot"
-            Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1"
-            Complete-Step $PHASE 3 "RunOnce Phase3"
+            if (Register-Phase3RunOnce) {
+                Complete-Step $PHASE 3 "RunOnce Phase3"
+            }
         } else {
             Write-Info "Phase 3 not registered. Re-run from START.bat when ready."
             Skip-Step $PHASE 3 "RunOnce Phase3"
         }
     } else {
-        Remove-GpuDriverClean -GpuVendor $gpuName
-        Complete-Step $PHASE 2 "DriverClean"
+        $driverCleanResult = Remove-GpuDriverClean -GpuVendor $gpuName -PassThru
+        if ($driverCleanResult.CanCompleteStep) {
+            Complete-Step $PHASE 2 "DriverClean"
 
-        # Register Phase 3 RunOnce AFTER driver removal
-        Write-Section "Step 3 — Register Phase 3 for next boot"
-        Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1"
-        Complete-Step $PHASE 3 "RunOnce Phase3"
+            # Register Phase 3 RunOnce AFTER driver removal
+            Write-Section "Step 3 — Register Phase 3 for next boot"
+            if (Register-Phase3RunOnce) {
+                Complete-Step $PHASE 3 "RunOnce Phase3"
+            }
+        } else {
+            Write-Err "GPU driver clean removal did not complete: $($driverCleanResult.Message)"
+            Write-Host "  $([char]0x2139) What to do: review the warnings above, install or remove the driver manually if needed," -ForegroundColor Cyan
+            Write-Host "    then run PostReboot-Setup.ps1 manually from START.bat -> [P]." -ForegroundColor Cyan
+        }
     }
 
     Write-Blank
@@ -238,9 +259,10 @@ try {
     # Step 1 (bcdedit) already ran, so next boot is Normal Mode — Phase 3 should fire.
     try {
         if (-not (Test-StepDone $PHASE 3)) {
-            Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1"
-            Write-Host "" -ForegroundColor Green
-            Write-Host "  $([char]0x2714) Phase 3 registered — it will start automatically on next boot." -ForegroundColor Green
+            if (Register-Phase3RunOnce) {
+                Write-Host "" -ForegroundColor Green
+                Write-Host "  $([char]0x2714) Phase 3 registered — it will start automatically on next boot." -ForegroundColor Green
+            }
         }
     } catch {
         Write-Host "" -ForegroundColor Yellow

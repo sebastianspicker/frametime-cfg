@@ -33,6 +33,7 @@ Create a rule for the `main` branch:
 Configured in `.github/dependabot.yml`:
 - **GitHub Actions**: Weekly checks for pinned SHA updates (security patches)
 - Grouped into single PRs to reduce noise
+- Maintainers should still review action release notes before merging updates
 
 ## Collaborator Permissions
 

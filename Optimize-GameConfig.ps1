@@ -9,9 +9,9 @@
 if ($startStep -le 34) {
     Write-Section "Step 34 — Autoexec.cfg Generator"
     Invoke-TieredStep -Tier 2 -Title "Create/update CS2 autoexec.cfg + launch options guide" `
-        -Why "73 CVars across 8 categories. Network: rate 1000000, stable cl_net_buffer_ticks 0, mm_dedicated_search_maxping 40, plus advanced queue/buffer CVars documented as suite defaults rather than hard meta. Engine: fps_max 0 and engine_low_latency_sleep_after_client_tick 1 as the suite's low-latency baseline. Gameplay: cl_predict_body/head_shot_fx 0, cl_sniper_delay_unscope 0. HUD: 5x cl_hud_telemetry CVars=0 (replaces removed net_graph). Audio: speaker_config 1, snd_mixahead 0.05 as a stability-oriented suite default, snd_headphone_eq 0 (Natural default; Crisp is also common), snd_spatialize_lerp 0 as a listening-dependent spatial default. 8x music muting CVars, snd_voipvolume 0.5, voice_always_sample_mic 1. Mouse: m_rawinput 1 kept as a harmless documentation/forward-compatibility stub because CS2 already forces raw input; Step 29 remains the real Windows-side acceleration change. m_mouseaccel1/2/customaccel 0. Video: r_player_visibility_mode 1 as a suite default, mat_monitorgamma_tv_enabled 0. Thread-pool forcing omitted unless a user has benchmark proof." `
-        -Evidence "ArminC-AutoExec (2025): rate 1000000 max (786432 = UI bug). Current CS2 convar surface: engine_low_latency_sleep_after_client_tick exists and references r_low_latency; the repo no longer treats fps_max 0 as its activation condition. cl_net_buffer_ticks 0 is the broadly supported stable-route setting; cl_net_buffer_ticks_use_interp and cl_tickpacket_desired_queuelength are current but advanced/low-public-evidence CVars. cl_predict_body/head_shot_fx: CS2-native Valve CVars, default 0. snd_mixahead 0.05: stability-oriented community setting; current public convar data shows a much lower engine default. speaker_config 1 and snd_spatialize_lerp 0 remain part of the suite's headphone-focused spatial baseline, but audio guides disagree and the repo no longer claims a separate snd_use_hrtf toggle exists in the current public convar surface. snd_headphone_eq 0 (Natural): defensible default; Crisp is also common for footstep emphasis. r_player_visibility_mode 1 exists in the current convar surface. cl_hud_telemetry_* CVars: CS2 replacement for removed net_graph. m_rawinput 1 is retained only as a no-op documentation stub in current CS2 builds, while m_mouseaccel1/2/customaccel remain the active CS2-side acceleration guards. cl_autowepswitch 0: common competitive default." `
-        -Caveat "net_client_steamdatagram_enable_override 1 forces Valve SDR — disable if your direct routing is already clean. snd_headphone_eq 0 (Natural) vs 1 (Crisp): Crisp boosts highs but can cause ear fatigue; change to 1 in config.env.ps1 if preferred. snd_spatialize_lerp 0 and perspective correction are suite defaults for the current headphone-focused spatial path, not Valve-documented competitive requirements. r_fullscreen_gamma 2.2 only applies in exclusive fullscreen. snd_tensecondwarning_volume kept at 0.1 (tactical cue). m_rawinput 1 is kept for documentation clarity and future compatibility, not because current CS2 needs it to enable raw input." `
+        -Why "73 CVars across 10 categories. Network: rate 1000000, cl_net_buffer_ticks 0, mm_dedicated_search_maxping 80. Engine: fps_max 0 and engine_low_latency_sleep_after_client_tick 1 as the suite's low-latency baseline. Gameplay: cl_predict_body/head_shot_fx 0, cl_sniper_delay_unscope 0. HUD: 5x cl_hud_telemetry CVars=0 (replaces removed net_graph). Audio: speaker_config 1, snd_mixahead 0.05 as a stability-oriented suite default, snd_headphone_eq 0 (Natural — current pro preference trend), snd_spatialize_lerp 0. 8x music muting CVars, snd_voipvolume 0.5, voice_always_sample_mic 1. Mouse: m_rawinput 1 kept as a harmless documentation/forward-compatibility stub because CS2 already forces raw input; Step 29 remains the real Windows-side acceleration change. m_mouseaccel1/2/customaccel 0. Video: r_player_visibility_mode 1 as a suite default, mat_monitorgamma_tv_enabled 0. Intel hybrid: thread_pool_option 2 (auto-detected)." `
+        -Evidence "ArminC-AutoExec (2025): rate 1000000 max (786432 = UI bug). Current CS2 convar surface: engine_low_latency_sleep_after_client_tick exists and references r_low_latency; the repo no longer treats fps_max 0 as its activation condition. cl_predict_body/head_shot_fx: CS2-native Valve CVars, default 0. snd_mixahead 0.05: community-preferred stability setting; current public convar data shows a much lower engine default. speaker_config 1 and snd_spatialize_lerp 0 remain part of the suite's headphone-focused spatial baseline, but the repo no longer claims a separate snd_use_hrtf toggle exists in the current public convar surface. snd_headphone_eq 0 (Natural): esportfire.com 30+ pro study, 2026 — 62.5% Natural vs 37.5% Crisp. r_player_visibility_mode 1 exists in the current convar surface. cl_hud_telemetry_* CVars: CS2 replacement for removed net_graph. m_rawinput 1 is retained only as a no-op documentation stub in current CS2 builds, while m_mouseaccel1/2/customaccel remain the active CS2-side acceleration guards. cl_autowepswitch 0: common competitive default." `
+        -Caveat "net_client_steamdatagram_enable_override 1 forces Valve SDR — disable if your direct routing is already clean. snd_headphone_eq 0 (Natural) vs 1 (Crisp): Crisp boosts highs but can cause ear fatigue; change to 1 in config.env.ps1 if preferred. snd_spatialize_lerp 0 is a suite default for the current headphone-focused spatial path, not a Valve-documented competitive requirement. r_fullscreen_gamma 2.2 only applies in exclusive fullscreen. snd_tensecondwarning_volume kept at 0.1 (tactical cue). m_rawinput 1 is kept for documentation clarity and future compatibility, not because current CS2 needs it to enable raw input." `
         -Risk "SAFE" -Depth "APP" `
         -Improvement "73 CS2 CVars: network + hit prediction + CS2-side mouse acceleration guards + audio spatial defaults + music muting + video + HUD cleanup + gameplay (autowepswitch)" `
         -SideEffects "autoexec.cfg untouched except one appended line: 'exec optimization.cfg'. optimization.cfg overrides any same-named CVars appearing earlier in autoexec.cfg. snd_headphone_eq 0 changes EQ from Crisp to Natural. cl_autowepswitch 0 disables auto weapon pickup switch. m_rawinput 1 remains in the generated file as a harmless no-op/documentation stub in current CS2 builds." `
@@ -132,11 +132,16 @@ if ($startStep -le 34) {
                         "// To revert one setting: remove or comment its line here.",
                         "// To revert all:         remove 'exec optimization.cfg' from autoexec.cfg.",
                         "//",
-                        "// Network condition CFGs (also in game\csgo\cfg\, use from console as needed):",
+                        "// Optional standalone CFGs (also in game\csgo\cfg\, use from console as needed):",
                         "//   exec net_stable     — optimal / reset (stable wired/fiber)",
                         "//   exec net_highping   — 60ms+ ping, stable route",
                         "//   exec net_unstable   — jitter + loss, ping OK (Wi-Fi / 4G)",
                         "//   exec net_bad        — high ping + jitter/loss (satellite / mobile)",
+                        "//   exec debug_hud      — temporary telemetry and network diagnostics",
+                        "//   exec debug_hud_off  — reset diagnostic telemetry to quiet defaults",
+                        "//   exec audio_stable   — suite audio buffer default / reset",
+                        "//   exec audio_lowlatency_025 — experimental lower audio buffer",
+                        "//   exec audio_lowlatency_001 — aggressive lower audio buffer",
                         ""
                     )
                     foreach ($kv in $effectiveAutoexec.GetEnumerator()) {
@@ -185,49 +190,66 @@ if ($startStep -le 34) {
                     Write-Info "To revert all:       remove '$execLine' from autoexec.cfg."
                     Write-Info "To revert one CVar:  remove its line from optimization.cfg."
 
-                    # ── Deploy network condition CFGs ──────────────────────────────────────────
-                    # These are standalone cfgs for bad-connection scenarios.
+                    # ── Deploy optional standalone CFGs ───────────────────────────────────────
+                    # These are standalone cfgs for network conditions, diagnostics, and
+                    # audio-buffer experiments.
                     # They are NOT exec'd automatically — user calls them from console as needed.
-                    $netCfgs = @("net_stable.cfg", "net_highping.cfg", "net_unstable.cfg", "net_bad.cfg")
+                    $optionalCfgs = @(
+                        "net_stable.cfg",
+                        "net_highping.cfg",
+                        "net_unstable.cfg",
+                        "net_bad.cfg",
+                        "debug_hud.cfg",
+                        "debug_hud_off.cfg",
+                        "audio_stable.cfg",
+                        "audio_lowlatency_025.cfg",
+                        "audio_lowlatency_001.cfg"
+                    )
                     $cfgSourceDir = "$ScriptRoot\cfgs"
-                    $netCfgsDeployed = 0
+                    $optionalCfgsDeployed = 0
                     if (Test-Path $cfgSourceDir) {
-                        foreach ($cfgFile in $netCfgs) {
+                        foreach ($cfgFile in $optionalCfgs) {
                             $src  = "$cfgSourceDir\$cfgFile"
                             $dest = "$cfgDir\$cfgFile"
                             if (Test-Path $src) {
                                 if (-not $SCRIPT:DryRun) {
                                     Copy-Item $src $dest -Force
-                                    $netCfgsDeployed++
+                                    $optionalCfgsDeployed++
                                 } else {
                                     Write-Host "  [DRY-RUN] Would copy: $cfgFile -> $cfgDir\" -ForegroundColor Magenta
                                 }
                             } else {
-                                Write-DebugLog "Network CFG not found at source: $src"
+                                Write-DebugLog "Optional CFG not found at source: $src"
                             }
                         }
-                        if ($netCfgsDeployed -gt 0) {
-                            Write-OK "$netCfgsDeployed network condition CFGs deployed to game\csgo\cfg\"
+                        if ($optionalCfgsDeployed -gt 0) {
+                            Write-OK "$optionalCfgsDeployed optional CFGs deployed to game\csgo\cfg\"
                         }
                     } else {
-                        Write-DebugLog "cfgs\ directory not found at: $cfgSourceDir — network CFGs not deployed."
+                        Write-DebugLog "cfgs\ directory not found at: $cfgSourceDir — optional CFGs not deployed."
                     }
 
-                    # ── Network CFG usage guide ──────────────────────────────────────────────
-                    if ($netCfgsDeployed -gt 0 -or ($SCRIPT:DryRun -and (Test-Path $cfgSourceDir))) {
+                    # ── Optional CFG usage guide ─────────────────────────────────────────────
+                    if ($optionalCfgsDeployed -gt 0 -or ($SCRIPT:DryRun -and (Test-Path $cfgSourceDir))) {
                         Write-Blank
                         Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
-                        Write-Host "  │  NETWORK CONDITION CFGs (console commands, use as needed)   │" -ForegroundColor Cyan
+                        Write-Host "  │  OPTIONAL CFGs (console commands, use manually as needed)   │" -ForegroundColor Cyan
                         Write-Host "  │                                                              │" -ForegroundColor Cyan
                         Write-Host "  │  exec net_stable     Optimal — stable wired/fiber           │" -ForegroundColor Green
                         Write-Host "  │  exec net_highping   60ms+ ping, stable route               │" -ForegroundColor Yellow
                         Write-Host "  │  exec net_unstable   Jitter + loss, ping OK (Wi-Fi/4G)      │" -ForegroundColor Yellow
                         Write-Host "  │  exec net_bad        High ping + jitter/loss (satellite/    │" -ForegroundColor Red
                         Write-Host "  │                      mobile roaming / hotel Wi-Fi)           │" -ForegroundColor Red
+                        Write-Host "  │  exec debug_hud      Show telemetry + print net diagnostics │" -ForegroundColor Yellow
+                        Write-Host "  │  exec debug_hud_off  Reset telemetry to quiet defaults      │" -ForegroundColor Green
+                        Write-Host "  │  exec audio_stable   Reset to suite audio default           │" -ForegroundColor Green
+                        Write-Host "  │  exec audio_lowlatency_025  Experimental lower audio buffer │" -ForegroundColor Yellow
+                        Write-Host "  │  exec audio_lowlatency_001  Aggressive audio experiment     │" -ForegroundColor Red
                         Write-Host "  │                                                              │" -ForegroundColor Cyan
                         Write-Host "  │  Each cfg prints a confirmation line when loaded.           │" -ForegroundColor DarkGray
                         Write-Host "  │  Reset with 'exec net_stable' on a stable connection.       │" -ForegroundColor DarkGray
-                        Write-Host "  │  These do NOT override optimization.cfg — they're additive. │" -ForegroundColor DarkGray
+                        Write-Host "  │  Audio experiments reset with 'exec audio_stable'.          │" -ForegroundColor DarkGray
+                        Write-Host "  │  These are not auto-executed.                               │" -ForegroundColor DarkGray
                         Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Cyan
                     }
                 } else {
@@ -322,9 +344,6 @@ if ($startStep -le 34) {
             Write-Host "  │  RECOMMENDED (evidence-based):                              │" -ForegroundColor White
             Write-Host "  │  -console        Open developer console at startup          │" -ForegroundColor Green
             Write-Host "  │  +exec autoexec  Force autoexec.cfg execution on start      │" -ForegroundColor Green
-            Write-Host "  │  -refresh [Hz]   Set display refresh rate (e.g. -refresh 144)│" -ForegroundColor Green
-            Write-Host "  │                  Required in exclusive fullscreen mode       │" -ForegroundColor DarkGray
-            Write-Host "  │                                                              │" -ForegroundColor Cyan
             Write-Host "  │  OPTIONAL (conditional):                                    │" -ForegroundColor White
             Write-Host "  │  -fullscreen     Exclusive fullscreen (lower latency than   │" -ForegroundColor DarkGray
             Write-Host "  │                  FSW on pre-HAGS systems; test both)        │" -ForegroundColor DarkGray
@@ -338,6 +357,8 @@ if ($startStep -le 34) {
             Write-Host "  │  -threads N     Valve warns: conflicts with engine threading│" -ForegroundColor Red
             Write-Host "  │  -tickrate 128  No-op in CS2 sub-tick (silently ignored)   │" -ForegroundColor Red
             Write-Host "  │  -nojoy         Useless in CS2 (no measurable impact)      │" -ForegroundColor Red
+            Write-Host "  │  -refresh Hz    Source 1-era refresh override; CS2 uses     │" -ForegroundColor Red
+            Write-Host "  │                 Windows / in-game display settings          │" -ForegroundColor Red
             Write-Host "  │  -softparticlesdefaultoff  Source 1 only, unparsed in CS2  │" -ForegroundColor Red
             Write-Host "  │  +cl_forcepreload 1  Source 1 only; causes VRAM spike      │" -ForegroundColor Red
             Write-Host "  │  +mat_queue_mode 2   Source 1 only; dead CVar in CS2       │" -ForegroundColor Red
@@ -349,7 +370,7 @@ if ($startStep -le 34) {
             Write-Blank
             "-console +exec autoexec" | Set-ClipboardSafe
             Write-OK "Launch options string copied to clipboard: -console +exec autoexec"
-            Write-Info "Add -refresh [Hz] with your monitor's refresh rate (e.g. -refresh 144)."
+            Write-Info "Set refresh rate in Windows Advanced display settings and CS2 video settings, not launch options."
             if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter] when launch options are set in Steam" }
 
             Complete-Step $PHASE 34 "Autoexec"
@@ -634,7 +655,14 @@ if ($startStep -le 38) {
     } else {
         Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
 
-        Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode
+        $runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
+        if (-not $runOnceResult.Applied) {
+            $SCRIPT:SafebootReady = $false
+            Write-Err "Phase 2 RunOnce registration failed — Safe Mode boot flag was NOT set."
+            Write-Host "  $([char]0x2139) What to do: fix the RunOnce error above, then re-run Step 38." -ForegroundColor Cyan
+            Write-Host "    Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
+            return
+        }
 
         # Use explicit {current} identifier — some Windows builds ignore the implicit default.
         # Capture exit code before piping (| Out-String resets $LASTEXITCODE in PS 5.1).

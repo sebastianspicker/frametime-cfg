@@ -109,18 +109,18 @@ function Show-StepInfoCard {
         default      { "?" }
     }
 
-    Write-Host "  ┌──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "  │  $Title" -ForegroundColor White
-    Write-Host "  │" -ForegroundColor DarkGray
-    if ($Why)         { Write-Host "  │  Why:          $Why" -ForegroundColor DarkGray }
-    if ($Risk)        { Write-Host "  │  Risk:         $riskIcon $riskLabel" -ForegroundColor $riskColor }
-    if ($Depth)       { Write-Host "  │  Modifies:     $Depth" -ForegroundColor DarkGray }
-    if ($Improvement) { Write-Host "  │  Expected:     $Improvement" -ForegroundColor Cyan }
-    if ($SideEffects) { Write-Host "  │  Side effects: $SideEffects" -ForegroundColor DarkYellow }
-    if ($Evidence)    { Write-Host "  │  Evidence:     $Evidence" -ForegroundColor DarkGray }
-    if ($Caveat)      { Write-Host "  │  Caveat:       $Caveat" -ForegroundColor DarkYellow }
-    if ($Undo)        { Write-Host "  │  Undo:         $Undo" -ForegroundColor DarkGray }
-    Write-Host "  └──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-ConsoleLine "  │  $Title" -ForegroundColor White
+    Write-ConsoleLine "  │" -ForegroundColor DarkGray
+    if ($Why)         { Write-ConsoleLine "  │  Why:          $Why" -ForegroundColor DarkGray }
+    if ($Risk)        { Write-ConsoleLine "  │  Risk:         $riskIcon $riskLabel" -ForegroundColor $riskColor }
+    if ($Depth)       { Write-ConsoleLine "  │  Modifies:     $Depth" -ForegroundColor DarkGray }
+    if ($Improvement) { Write-ConsoleLine "  │  Expected:     $Improvement" -ForegroundColor Cyan }
+    if ($SideEffects) { Write-ConsoleLine "  │  Side effects: $SideEffects" -ForegroundColor DarkYellow }
+    if ($Evidence)    { Write-ConsoleLine "  │  Evidence:     $Evidence" -ForegroundColor DarkGray }
+    if ($Caveat)      { Write-ConsoleLine "  │  Caveat:       $Caveat" -ForegroundColor DarkYellow }
+    if ($Undo)        { Write-ConsoleLine "  │  Undo:         $Undo" -ForegroundColor DarkGray }
+    Write-ConsoleLine "  └──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 }
 
 function Invoke-TieredStep {
@@ -158,9 +158,9 @@ function Invoke-TieredStep {
     # ── Profile risk filter (T2/T3 only — T1 always runs) ───────────
     if ($Tier -gt 1 -and $Risk -and -not (Test-RiskAllowed $Risk)) {
         $max = Get-ProfileMaxRisk
-        Write-Host "  $([char]0x25CB) [SKIP] Exceeds $($SCRIPT:Profile) profile ($Risk > $max threshold)" -ForegroundColor DarkGray
-        if ($Improvement) { Write-Host "         Would have: $Improvement" -ForegroundColor DarkGray }
-        if ($Undo)        { Write-Host "         Available in COMPETITIVE or CUSTOM profile" -ForegroundColor DarkGray }
+        Write-ConsoleLine "  $([char]0x25CB) [SKIP] Exceeds $($SCRIPT:Profile) profile ($Risk > $max threshold)" -ForegroundColor DarkGray
+        if ($Improvement) { Write-ConsoleLine "         Would have: $Improvement" -ForegroundColor DarkGray }
+        if ($Undo)        { Write-ConsoleLine "         Available in COMPETITIVE or CUSTOM profile" -ForegroundColor DarkGray }
         Write-DebugLog "Profile filter: '$Title' skipped ($Risk > $max)"
         Add-PhaseSkipped
         if ($SkipAction) { & $SkipAction }
@@ -198,13 +198,13 @@ function Invoke-TieredStep {
             # COMPETITIVE/CUSTOM/YOLO: intentionally preview all steps in DRY-RUN
         }
         if ($wouldSkip) {
-            Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would SKIP: $Title (filtered by $($SCRIPT:Profile) profile)" -ForegroundColor DarkGray
+            Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would SKIP: $Title (filtered by $($SCRIPT:Profile) profile)" -ForegroundColor DarkGray
             $SCRIPT:CurrentStepTitle = $null
             return $false
         }
-        Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would execute: $Title" -ForegroundColor Magenta
-        if ($Depth)       { Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Modifies: $Depth" -ForegroundColor Magenta }
-        if ($Improvement) { Write-Host "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Expected: $Improvement" -ForegroundColor Magenta }
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would execute: $Title" -ForegroundColor Magenta
+        if ($Depth)       { Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Modifies: $Depth" -ForegroundColor Magenta }
+        if ($Improvement) { Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Expected: $Improvement" -ForegroundColor Magenta }
         Write-DebugLog "DRY-RUN: '$Title' — preview only, no changes applied"
         # Run the action but Set-RegistryValue/Set-BootConfig intercept writes
         try { & $Action } catch { Write-Warn "Step '$Title' preview issue (DRY-RUN): $_" }
@@ -242,16 +242,16 @@ function Invoke-TieredStep {
                 # Prompt for T2 steps
                 Write-Blank
                 $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-Host "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
+                Write-ConsoleLine "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
                 if ($Improvement) {
-                    Write-Host "       Expected: $Improvement" -ForegroundColor Cyan
+                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
                 $r = Read-Host "  $Title — run? [y/N]"
                 $run = ($r -match "^[jJyY]$")
             } else {
                 # T3: skip in RECOMMENDED
-                Write-Host "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (community tip, no hard proof)." -ForegroundColor DarkCyan
+                Write-ConsoleLine "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (community tip, no hard proof)." -ForegroundColor DarkCyan
                 $run = $false
             }
         }
@@ -263,9 +263,9 @@ function Invoke-TieredStep {
             } elseif ($Tier -eq 2) {
                 Write-Blank
                 $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-Host "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
+                Write-ConsoleLine "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
                 if ($Improvement) {
-                    Write-Host "       Expected: $Improvement" -ForegroundColor Cyan
+                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
                 $r = Read-Host "  $Title — run? [y/N]"
@@ -274,9 +274,9 @@ function Invoke-TieredStep {
                 # T3: prompt in COMPETITIVE
                 Write-Blank
                 $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-Host "  $([char]0x25C6) [T3$rTag] Community tip $([char]0x2014) no hard benchmark proof." -ForegroundColor DarkCyan
+                Write-ConsoleLine "  $([char]0x25C6) [T3$rTag] Community tip $([char]0x2014) no hard benchmark proof." -ForegroundColor DarkCyan
                 if ($Improvement) {
-                    Write-Host "       Expected: $Improvement" -ForegroundColor Cyan
+                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
                 $r = Read-Host "  $Title — run anyway? [y/N]"
@@ -295,7 +295,7 @@ function Invoke-TieredStep {
                 default { "[T?$rTag] Unknown tier — apply?" }
             }
             $tColor = switch ($Tier) { 1 {"Green"} 2 {"Yellow"} 3 {"DarkCyan"} default {"White"} }
-            Write-Host "  $tLabel" -ForegroundColor $tColor
+            Write-ConsoleLine "  $tLabel" -ForegroundColor $tColor
             $defaultYes = ($Tier -eq 1)
             if ($defaultYes) {
                 $r = Read-Host "  $Title [Y/n]"
@@ -328,8 +328,8 @@ function Invoke-TieredStep {
         Write-DebugLog "Executing: '$Title'"
         try { & $Action } catch {
             Write-Err "Step '$Title' failed: $_"
-            Write-Host "  $([char]0x2139) What to do: This step was skipped safely. Your system is not affected." -ForegroundColor Cyan
-            Write-Host "  $([char]0x2139) You can retry later via START.bat, or continue $([char]0x2014) remaining steps still work." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) What to do: This step was skipped safely. Your system is not affected." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) You can retry later via START.bat, or continue $([char]0x2014) remaining steps still work." -ForegroundColor Cyan
             $actionOk = $false
         }
         # Update phase counters

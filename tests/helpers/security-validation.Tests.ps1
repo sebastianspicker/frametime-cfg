@@ -110,7 +110,7 @@ Describe "Set-BootConfig security validation" {
         $SCRIPT:DryRun = $true  # Use DRY-RUN to avoid calling bcdedit
         $SCRIPT:CurrentStepTitle = "Security Test"
         Mock Write-Warn {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Backup-BootConfig {}
     }
 
@@ -137,7 +137,7 @@ Describe "Set-BootConfig security validation" {
         It "accepts valid key like disabledynamictick" {
             Set-BootConfig "disabledynamictick" "yes" "test"
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match "DRY-RUN" }
+            Should -Invoke Write-ConsoleLine -ParameterFilter { $Message -match "DRY-RUN" }
         }
     }
 
@@ -158,13 +158,13 @@ Describe "Set-BootConfig security validation" {
         It "accepts valid value like yes" {
             Set-BootConfig "testkey" "yes" "test"
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match "DRY-RUN" }
+            Should -Invoke Write-ConsoleLine -ParameterFilter { $Message -match "DRY-RUN" }
         }
 
         It "accepts braced value like {current}" {
             Set-BootConfig "testkey" "{current}" "test"
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match "DRY-RUN" }
+            Should -Invoke Write-ConsoleLine -ParameterFilter { $Message -match "DRY-RUN" }
         }
     }
 }
@@ -176,7 +176,7 @@ Describe "Set-RunOnce security validation" {
         Reset-TestState
         $SCRIPT:DryRun = $true  # Use DRY-RUN to avoid real registry writes
         Mock Write-Warn {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
     }
 
     Context "rejects invalid names" {

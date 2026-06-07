@@ -96,7 +96,9 @@ if ($startStep -le 25) {
                     $wifiUp = Get-NetAdapter -ErrorAction SilentlyContinue |
                         Where-Object { $_.Status -eq "Up" -and $_.InterfaceDescription -match "Wi-Fi|Wireless" }
                     if ($wifiUp) { $wifiOnly = $true }
-                } catch {}
+                } catch {
+                    Write-DebugLog "Wi-Fi adapter detection failed during Nagle guidance: $($_.Exception.Message)"
+                }
                 if ($wifiOnly) {
                     Write-Warn "Wi-Fi connection detected — Nagle disable targets wired Ethernet adapters only."
                     Write-Info "For Wi-Fi: Settings -> Network -> Wi-Fi -> Hardware properties -> note the adapter GUID."
@@ -150,35 +152,44 @@ if ($startStep -le 27) {
         -SideEffects "Background media apps get slightly less priority. NoLazyMode: marginally higher CPU cycles. FTH disabled: rare heap errors may not be silently suppressed. Maintenance won't run automatically. NTFS: 8.3 filename aliases removed (breaks legacy 16-bit app compatibility)." `
         -Undo "Set SystemResponsiveness=20, Win32PrioritySeparation=2, delete Games/NoLazyMode keys; FTH\Enabled=1; MaintenanceDisabled=0; Delete NtfsDisableLastAccessUpdate or set to 2 (system-managed enabled); NtfsDisable8dot3NameCreation=0; DisableCoInstallers=0" `
         -Action {
+            function Set-RequiredRegistryValue {
+                param([string]$Path, [string]$Name, $Value, [string]$Type, [string]$Why)
+
+                $result = Set-RegistryValue $Path $Name $Value $Type $Why -PassThru
+                if (-not $result.Applied -and $result.Status -ne "DryRun") {
+                    throw "Required registry write failed for $Path | ${Name}: $($result.Message)"
+                }
+            }
+
             $mmPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
-            Set-RegistryValue $mmPath "SystemResponsiveness" 10 "DWord" "Less CPU reserved for MMCSS"
+            Set-RequiredRegistryValue $mmPath "SystemResponsiveness" 10 "DWord" "Less CPU reserved for MMCSS"
             # NoLazyMode: shifts MMCSS from periodic idle-detection to realtime-only operation.
             # djdallmann GamingPCSetup: "shifts from idle-detection modes to realtime-only operation"
-            Set-RegistryValue $mmPath "NoLazyMode" 1 "DWord" "MMCSS realtime-only (no idle detection)"
+            Set-RequiredRegistryValue $mmPath "NoLazyMode" 1 "DWord" "MMCSS realtime-only (no idle detection)"
             # NOTE: NetworkThrottlingIndex deliberately NOT set — djdallmann xperf shows 0xFFFFFFFF increases DPC latency
             $gamesPath = "$mmPath\Tasks\Games"
-            Set-RegistryValue $gamesPath "Priority"              6      "DWord"  "Gaming priority 6"
-            Set-RegistryValue $gamesPath "Scheduling Category"   "High" "String" "High scheduling"
-            Set-RegistryValue $gamesPath "GPU Priority"          8      "DWord"  "GPU priority 8"
+            Set-RequiredRegistryValue $gamesPath "Priority"              6      "DWord"  "Gaming priority 6"
+            Set-RequiredRegistryValue $gamesPath "Scheduling Category"   "High" "String" "High scheduling"
+            Set-RequiredRegistryValue $gamesPath "GPU Priority"          8      "DWord"  "GPU priority 8"
 
             # Foreground scheduler quantum: short interval, FIXED, max priority separation (PsPrioritySeparation=2)
             # 0x2A = binary 00 10 10 10 = Interval:Short(2), Length:Fixed(2), PrioritySeparation:2(Max boost)
             # Previous: 0x26 (Variable quantum). 2025 Blur Busters + Overclock.net benchmarks showed
             # Fixed quantum (0x2A) gives measurably lower input latency and better 1% lows than Variable.
             # Fixed = foreground always gets the full boosted quantum length, no scheduler-decided variation.
-            Set-RegistryValue "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
+            Set-RequiredRegistryValue "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
                 "Win32PrioritySeparation" 0x2A "DWord" "Short quantum, fixed, max foreground boost (0x2A)"
 
             # Keep kernel + driver code in physical RAM — reduces latency on page fault paths
             $memMgmt = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
-            Set-RegistryValue $memMgmt "DisablePagingExecutive" 1 "DWord" "Keep kernel code in RAM"
+            Set-RequiredRegistryValue $memMgmt "DisablePagingExecutive" 1 "DWord" "Keep kernel code in RAM"
 
             # Intel 12th gen+ hybrid: disable OS Power Throttling to prevent E-core thread migration
             $intelHybridName = Get-IntelHybridCpuName
             if ($intelHybridName) {
                 $ptPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
                 # Set-RegistryValue creates the key path if missing — no need for standalone New-Item
-                Set-RegistryValue $ptPath "PowerThrottlingOff" 1 "DWord" "Disable Intel Power Throttling (E-core mismatch)"
+                Set-RequiredRegistryValue $ptPath "PowerThrottlingOff" 1 "DWord" "Disable Intel Power Throttling (E-core mismatch)"
                 Write-ActionOK "Intel hybrid CPU ($intelHybridName) — Power Throttling disabled."
             } else {
                 Write-Sub "Power Throttling: not applicable (non-Intel-hybrid CPU)"
@@ -189,7 +200,7 @@ if ($startStep -le 27) {
             # This "fix" slows ALL memory allocations 10-15% until the process is restarted.
             # Disabling FTH globally prevents this silent performance regression.
             # Source: djdallmann/GamingPCSetup xperf analysis.
-            Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\FTH" "Enabled" 0 "DWord" `
+            Set-RequiredRegistryValue "HKLM:\SOFTWARE\Microsoft\FTH" "Enabled" 0 "DWord" `
                 "Disable Fault Tolerant Heap (prevents post-crash heap slowdown)"
 
             # ── DisableCoInstallers ──────────────────────────────────────────────────
@@ -197,14 +208,14 @@ if ($startStep -le 27) {
             # enumeration events (e.g., driver re-installation, device plug-in).
             # These DLLs can spike CPU briefly and are unnecessary post-setup.
             # Source: valleyofdoom/PC-Tuning.
-            Set-RegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer" `
+            Set-RequiredRegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer" `
                 "DisableCoInstallers" 1 "DWord" "Disable PnP co-installer DLLs"
 
             # ── Automatic Maintenance disable ────────────────────────────────────────
             # Windows schedules RunFullMemoryDiagnostic + disk defrag + scan during gaming.
             # djdallmann xperf captured 12-14% CPU consumption when maintenance fires mid-game.
             $maintPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance"
-            Set-RegistryValue $maintPath "MaintenanceDisabled" 1 "DWord" `
+            Set-RequiredRegistryValue $maintPath "MaintenanceDisabled" 1 "DWord" `
                 "Disable Windows Automatic Maintenance scheduler"
 
             # ── NTFS metadata write elimination ──────────────────────────────────────
@@ -221,9 +232,9 @@ if ($startStep -le 27) {
             # as Int32 (-2147483647) and [uint32] rejects negative values. Passing the raw hex
             # literal works: Set-ItemProperty -Type DWord writes the correct bit pattern regardless
             # of signed/unsigned interpretation.
-            Set-RegistryValue $fsPath "NtfsDisableLastAccessUpdate" 0x80000001 "DWord" `
+            Set-RequiredRegistryValue $fsPath "NtfsDisableLastAccessUpdate" 0x80000001 "DWord" `
                 "NTFS: disable last-access timestamp writes on file reads"
-            Set-RegistryValue $fsPath "NtfsDisable8dot3NameCreation" 1 "DWord" `
+            Set-RequiredRegistryValue $fsPath "NtfsDisable8dot3NameCreation" 1 "DWord" `
                 "NTFS: disable 8.3 legacy filename alias generation"
 
             Write-ActionOK "SystemProfile gaming priority set."

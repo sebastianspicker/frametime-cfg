@@ -37,6 +37,7 @@ body:
         - CS2 video settings
         - Power plan
         - Services / debloat
+        - GitHub / CI / repository hygiene
         - Documentation
         - Other
     validations:

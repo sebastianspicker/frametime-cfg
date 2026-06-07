@@ -102,8 +102,10 @@ function Set-CS2ProcessPriority {
 
         DRY-RUN: IFEO write intercepted by Set-RegistryValue. Task printed only.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param()
+
+    if (-not $PSCmdlet.ShouldProcess("cs2.exe", "Configure process priority and X3D affinity")) { return }
 
     # ── 1. IFEO PerfOptions — persistent High priority ────────────────
     $ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe\PerfOptions"
@@ -114,7 +116,7 @@ function Set-CS2ProcessPriority {
     $cs2 = Get-Process cs2 -ErrorAction SilentlyContinue
     if ($cs2) {
         if ($SCRIPT:DryRun) {
-            Write-Host "  [DRY-RUN] Would set running cs2.exe priority to High" -ForegroundColor Magenta
+            Write-ConsoleLine "  [DRY-RUN] Would set running cs2.exe priority to High" -ForegroundColor Magenta
         } else {
             try {
                 $cs2 | ForEach-Object { $_.PriorityClass = 'High' }
@@ -128,14 +130,14 @@ function Set-CS2ProcessPriority {
     if ($x3d -and $x3d.IsX3D) {
         Write-Blank
         if ($x3d.DualCCD) {
-            Write-Host "  X3D DETECTED: $($x3d.CpuName)" -ForegroundColor Yellow
-            Write-Host "  $($x3d.Reason)" -ForegroundColor White
-            Write-Host "  V-Cache CCD affinity mask: $($x3d.AffinityHex)" -ForegroundColor Cyan
+            Write-ConsoleLine "  X3D DETECTED: $($x3d.CpuName)" -ForegroundColor Yellow
+            Write-ConsoleLine "  $($x3d.Reason)" -ForegroundColor White
+            Write-ConsoleLine "  V-Cache CCD affinity mask: $($x3d.AffinityHex)" -ForegroundColor Cyan
 
             # Set affinity on running cs2.exe if present
             if ($cs2) {
                 if ($SCRIPT:DryRun) {
-                    Write-Host "  [DRY-RUN] Would set cs2.exe affinity to $($x3d.AffinityHex)" -ForegroundColor Magenta
+                    Write-ConsoleLine "  [DRY-RUN] Would set cs2.exe affinity to $($x3d.AffinityHex)" -ForegroundColor Magenta
                 } else {
                     try {
                         $cs2 | ForEach-Object { $_.ProcessorAffinity = [IntPtr]::new([long]$x3d.AffinityMask) }
@@ -156,7 +158,7 @@ function Set-CS2ProcessPriority {
 
     Write-Blank
     Write-OK "CS2 process priority: High (persistent via IFEO PerfOptions)"
-    Write-Host "  Alternative for advanced CPU management: bitsum.com/processlasso/" -ForegroundColor DarkGray
+    Write-ConsoleLine "  Alternative for advanced CPU management: bitsum.com/processlasso/" -ForegroundColor DarkGray
 }
 
 function Install-CS2AffinityTask {
@@ -171,8 +173,8 @@ function Install-CS2AffinityTask {
     param([uint64]$AffinityMask, [string]$AffinityHex)
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would create scheduled task '$CS2_AffinityTaskName'" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN] Would create affinity script: $CS2_AffinityScriptPath" -ForegroundColor DarkMagenta
+        Write-ConsoleLine "  [DRY-RUN] Would create scheduled task '$CS2_AffinityTaskName'" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would create affinity script: $CS2_AffinityScriptPath" -ForegroundColor DarkMagenta
         return
     }
 

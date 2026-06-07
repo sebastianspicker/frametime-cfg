@@ -11,7 +11,7 @@
 
 $Script:DashboardLastLoad = [datetime]::MinValue
 $Script:StartupDriftChecked = $false
-$Script:NetworkRegionPickerUpdating = $false
+$Script:GuiObservedStepKeys = @()
 
 function Get-StateDataSafe {
     try {
@@ -31,8 +31,10 @@ function Save-StateDataSafe {
 }
 
 function New-DefaultState {
+    param()
+
     return [PSCustomObject]@{
-        mode    = "AUTO"
+        mode    = Get-ModeForProfile -Profile "RECOMMENDED"
         profile = "RECOMMENDED"
     }
 }
@@ -70,7 +72,15 @@ function Should-SkipStartupDriftCheck {
     )
     if (-not $State -or -not $State.PSObject.Properties['startup_last_verified']) { return $false }
     try {
-        $lastVerified = [datetime]::Parse([string]$State.startup_last_verified)
+        $lastValue = $State.startup_last_verified
+        $lastVerified = if ($lastValue -is [datetime]) {
+            [datetime]$lastValue
+        } else {
+            [datetime]::Parse(
+                [string]$lastValue,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind)
+        }
         return (($Now - $lastVerified).TotalMinutes -lt 60)
     } catch {
         return $false
@@ -78,12 +88,15 @@ function Should-SkipStartupDriftCheck {
 }
 
 function Test-StartupConfigDrift {
+    param([switch]$Force)
+
     $state = Get-StateDataSafe
     $now = Get-Date
-    if (Should-SkipStartupDriftCheck -State $state -Now $now) {
+    if (-not $Force -and (Should-SkipStartupDriftCheck -State $state -Now $now)) {
         return [PSCustomObject]@{
             Skipped      = $true
-            HasDrift     = $false
+            Status       = "Unknown"
+            HasDrift     = $null
             DriftCount   = 0
             CheckedCount = 0
             DriftLabels  = @()
@@ -119,6 +132,7 @@ function Test-StartupConfigDrift {
 
     return [PSCustomObject]@{
         Skipped      = $false
+        Status       = if ($driftLabels.Count -gt 0) { "Drift" } else { "Clean" }
         HasDrift     = ($driftLabels.Count -gt 0)
         DriftCount   = $driftLabels.Count
         CheckedCount = $checks.Count
@@ -128,11 +142,22 @@ function Test-StartupConfigDrift {
 }
 
 function Update-StartupDriftBanner {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if (-not $PSCmdlet.ShouldProcess("dashboard startup drift banner", "Update GUI banner")) { return }
     if ($Script:StartupDriftChecked) { return }
     $Script:StartupDriftChecked = $true
 
     $result = Test-StartupConfigDrift
-    if ($result.Skipped -or -not $result.HasDrift) {
+    if ($result.Skipped -or $result.Status -eq "Unknown") {
+        (El "DashDriftBannerTitle").Text = "Configuration Drift Not Checked"
+        (El "DashDriftBannerText").Text = "Quick startup drift check was skipped because it ran recently. Current drift state is unknown; run Verify-Settings for a fresh review."
+        (El "DashDriftBanner").Visibility = "Visible"
+        return
+    }
+
+    if (-not $result.HasDrift) {
         (El "DashDriftBanner").Visibility = "Collapsed"
         return
     }
@@ -144,9 +169,10 @@ function Update-StartupDriftBanner {
 
 function Get-BenchmarkCapFromText {
     param([string]$Text)
-    if ($Text -notmatch "Avg\s*=\s*([\d.]+)") { return $null }
+    if ($Text -notmatch "Avg\s*=\s*(\S+?)(?:\s*,\s*P1|\s+P1|\s|$)") { return $null }
 
-    $avg = [double]$Matches[1]
+    $avg = ConvertTo-BenchmarkNumber $Matches[1]
+    if ($null -eq $avg) { return $null }
     $cap = [math]::Max($CFG_FpsCap_Min, [math]::Floor($avg - [math]::Floor($avg * $CFG_FpsCap_Percent)))
     return [PSCustomObject]@{
         AvgFps = $avg
@@ -156,11 +182,15 @@ function Get-BenchmarkCapFromText {
 
 function Get-BenchmarkResultFromText {
     param([string]$Text)
-    if ($Text -notmatch "Avg\s*=\s*([\d.]+).*P1\s*=\s*([\d.]+)") { return $null }
+    if ($Text -notmatch "Avg\s*=\s*(\S+?)(?:\s*,\s*P1|\s+P1)\s*=\s*(\S+)") { return $null }
+
+    $avg = ConvertTo-BenchmarkNumber $Matches[1]
+    $p1 = ConvertTo-BenchmarkNumber $Matches[2] -AllowZero
+    if ($null -eq $avg -or $null -eq $p1) { return $null }
 
     return [PSCustomObject]@{
-        AvgFps = [double]$Matches[1]
-        P1Fps  = [double]$Matches[2]
+        AvgFps = $avg
+        P1Fps  = $p1
     }
 }
 
@@ -321,6 +351,10 @@ function Load-Dashboard {
 # ANALYZE
 # ══════════════════════════════════════════════════════════════════════════════
 function Start-Analysis {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if (-not $PSCmdlet.ShouldProcess("system analysis panel", "Start GUI analysis")) { return }
     (El "BtnRunAnalysis").IsEnabled = $false
     (El "BtnRunAnalysis").Content   = "Scanning…"
     (El "AnalyzeScanTime").Text     = "Scanning…"
@@ -439,15 +473,17 @@ function Load-Optimize {
     try { $prog = Load-Progress } catch { Write-DebugLog "Optimize progress load failed: $($_.Exception.Message)" }
     $completed = if ($prog) { $prog.completedSteps } else { @() }
     $skipped   = if ($prog) { $prog.skippedSteps }   else { @() }
+    $observed  = @($Script:GuiObservedStepKeys)
 
     $rows = foreach ($s in $SCRIPT:StepCatalog) {
         $stepKey = "P$($s.Phase):$($s.Step)"
         $isDone  = $stepKey -in $completed
         $isSkip  = $stepKey -in $skipped
+        $isObserved = $stepKey -in $observed
 
-        $statusKey   = if ($s.CheckOnly) { "Check" } elseif ($isDone) { "Done" } elseif ($isSkip) { "Skipped" } else { "Pending" }
-        $statusLabel = if ($s.CheckOnly) { "—  Check" } elseif ($isDone) { "✓  Done" } elseif ($isSkip) { "—  Skipped" } else { "○  Pending" }
-        $statusColor = if ($s.CheckOnly) { "#6b7280" } elseif ($isDone) { "#22c55e" } elseif ($isSkip) { "#374151" } else { "#fbbf24" }
+        $statusKey   = if ($s.CheckOnly) { "Check" } elseif ($isDone) { "Done" } elseif ($isSkip) { "Skipped" } elseif ($isObserved) { "Observed" } else { "Pending" }
+        $statusLabel = if ($s.CheckOnly) { "—  Check" } elseif ($isDone) { "✓  Done" } elseif ($isSkip) { "—  Skipped" } elseif ($isObserved) { "◦  Observed" } else { "○  Pending" }
+        $statusColor = if ($s.CheckOnly) { "#6b7280" } elseif ($isDone) { "#22c55e" } elseif ($isSkip) { "#374151" } elseif ($isObserved) { "#38bdf8" } else { "#fbbf24" }
 
         $tierColor = switch ($s.Tier) { 1 { "#22c55e" } 2 { "#fbbf24" } 3 { "#e8520a" } default { "#6b7280" } }
         $riskColor = switch ($s.Risk) {
@@ -482,7 +518,7 @@ function Load-Optimize {
     (El "OptFilterCat").ItemsSource   = $cats
     (El "OptFilterCat").SelectedIndex = 0
 
-    $statuses = @("All", "Pending", "Done", "Skipped", "Check")
+    $statuses = @("All", "Pending", "Done", "Skipped", "Observed", "Check")
     (El "OptFilterStatus").ItemsSource   = $statuses
     (El "OptFilterStatus").SelectedIndex = 0
 }
@@ -503,10 +539,13 @@ function Filter-OptimizeGrid {
 }
 
 # ── Inline Verification ──────────────────────────────────────────────────────
-# Checks actual system state (registry/services) and updates progress.json
-# so the Optimize grid reflects which optimizations are actually applied,
-# even if progress.json was lost or corrupted.
+# Checks actual system state (registry/services) and records UI-only observed
+# state without marking runtime steps complete for resume purposes.
 function Start-InlineVerify {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if (-not $PSCmdlet.ShouldProcess("optimize panel", "Start inline verification")) { return }
     (El "BtnOptVerify").IsEnabled = $false
     (El "BtnOptVerify").Content   = "Verifying…"
 
@@ -535,7 +574,8 @@ function Start-InlineVerify {
             "P1:28" = @( @{P="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"; N="GlobalTimerResolutionRequests"; E=1} )
             "P1:29" = @( @{P="HKCU:\Control Panel\Mouse"; N="MouseSpeed"; E="0"},
                          @{P="HKCU:\Control Panel\Mouse"; N="MouseThreshold1"; E="0"},
-                         @{P="HKCU:\Control Panel\Mouse"; N="MouseThreshold2"; E="0"} )
+                         @{P="HKCU:\Control Panel\Mouse"; N="MouseThreshold2"; E="0"},
+                         @{P="HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters"; N="MouseDataQueueSize"; E=50} )
             "P1:31" = @( @{P="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR"; N="AppCaptureEnabled"; E=0},
                          @{P="HKCU:\SOFTWARE\Microsoft\GameBar"; N="UseNexusForGameBarEnabled"; E=0},
                          @{P="HKCU:\System\GameConfigStore"; N="GameDVR_Enabled"; E=0} )
@@ -562,7 +602,9 @@ function Start-InlineVerify {
             $sm = Get-Service -Name "SysMain" -ErrorAction Stop
             $ws = Get-Service -Name "WSearch" -ErrorAction Stop
             if ($sm.StartType -eq 'Disabled' -and $ws.StartType -eq 'Disabled') { $verified.Add("P1:37") }
-        } catch {}
+        } catch {
+            Write-DebugLog "Inline verification service check failed: $($_.Exception.Message)"
+        }
 
         # ── NIC check (P1:25 - Disable Nagle) ─────────────────────────
         try {
@@ -572,7 +614,9 @@ function Start-InlineVerify {
                 $r = Test-RegistryCheck $tcpBase "TcpNoDelay" 1 "" -Quiet
                 if ($r.Status -eq "OK") { $verified.Add("P1:25") }
             }
-        } catch {}
+        } catch {
+            Write-DebugLog "Inline verification NIC check failed: $($_.Exception.Message)"
+        }
 
         # ── NVIDIA GPU check (P3:4 - DRS Profile / PerfLevelSrc) ──────
         try {
@@ -589,56 +633,25 @@ function Start-InlineVerify {
                     }
                 }
             }
-        } catch {}
+        } catch {
+            Write-DebugLog "Inline verification NVIDIA check failed: $($_.Exception.Message)"
+        }
 
         $UISync["VerifyResults"] = @($verified)
     } -WorkArgs @($Script:Root, $Script:UISync) -OnDone {
         $verified = Get-UISyncValue -Store $Script:UISync -Name "VerifyResults"
         if (-not $verified) { $verified = @() }
 
-        # Update progress.json with verified steps
-        $prog = Load-Progress
-        if (-not $prog) {
-            $prog = [PSCustomObject]@{ phase=0; lastCompletedStep=0; completedSteps=@(); skippedSteps=@(); timestamps=[PSCustomObject]@{} }
-        }
+        $Script:GuiObservedStepKeys = @($verified | Sort-Object -Unique)
 
-        $added = 0
-        foreach ($stepKey in $verified) {
-            if ($stepKey -notin @($prog.completedSteps)) {
-                $prog.completedSteps = @($prog.completedSteps) + $stepKey
-                $added++
-            }
-        }
-        if ($added -gt 0) {
-            if (Test-BackupLock) {
-                Write-DebugLog "Inline verify: skipping progress save — backup lock held by another process"
-            } else {
-                $maxPhase = ($verified | ForEach-Object {
-                    if ($_ -match "^P(\d+):") { [int]$Matches[1] } else { 0 }
-                } | Measure-Object -Maximum).Maximum
-                if ($maxPhase -gt $prog.phase) { $prog.phase = $maxPhase }
-                Save-Progress $prog
-                $state = Get-StateDataSafe
-                if (-not $state) {
-                    $state = New-DefaultState
-                }
-                $state | Add-Member -NotePropertyName "startup_last_verified" -NotePropertyValue ((Get-Date).ToString("o")) -Force
-                Save-StateDataSafe -State $state
-            }
-        }
-
-        # Reload grid with updated progress
+        # Reload grid with UI-only observed status; do not mutate progress.json.
         Load-Optimize
 
         (El "BtnOptVerify").IsEnabled = $true
         (El "BtnOptVerify").Content   = "✓  Verify All"
 
         $total = @($verified).Count
-        $msg = if ($added -gt 0) {
-            "Verified: $total steps applied.`n$added step(s) recovered to progress."
-        } else {
-            "Verified: $total steps applied.`nProgress already up to date."
-        }
+        $msg = "Observed: $total step(s) match expected state.`nRuntime progress was not changed."
         [System.Windows.MessageBox]::Show($msg, "Verification Complete")
         Set-UISyncValue -Store $Script:UISync -Name "VerifyResults" -Value $null
     }
@@ -757,7 +770,7 @@ function Load-Backup {
     if ($r -eq "Yes") {
         Set-BackupLock
         try {
-            # Call step restores directly — Restore-AllChanges uses Read-Host which blocks GUI (no console)
+            # Call step restores directly because the GUI cannot use console prompts.
             $bd = Get-BackupData
             if ($bd.entries -and $bd.entries.Count -gt 0) {
                 $stepNames = @(($bd.entries | Group-Object -Property step).Name)
@@ -1153,10 +1166,12 @@ function Invoke-GuiValveRelayBlock {
 }
 
 function Start-LatencyDiagnostic {
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [ValidateSet("baseline", "post")][string]$Kind
     )
 
+    if (-not $PSCmdlet.ShouldProcess("network diagnostics panel", "Start $Kind latency diagnostic")) { return }
     $buttonName = if ($Kind -eq "baseline") { "BtnNetBaseline" } else { "BtnNetPost" }
     (El "BtnNetBaseline").IsEnabled = $false
     (El "BtnNetPost").IsEnabled = $false
@@ -1476,9 +1491,7 @@ function Save-SettingsToState {
             } elseif ((El "RadioCustom").IsChecked)      { "CUSTOM"
             } else                                        { "RECOMMENDED" }
     $dry  = (El "ChkDryRun").IsChecked -eq $true
-    $mode = if ($dry) { "DRY-RUN" } else {
-        switch ($prof) { "SAFE" {"AUTO"} "RECOMMENDED" {"AUTO"} "COMPETITIVE" {"CONTROL"} "CUSTOM" {"INFORMED"} "YOLO" {"YOLO"} }
-    }
+    $mode = Get-ModeForProfile -Profile $prof -DryRun:$dry
     try {
         $state = $null
         $state = Get-StateDataSafe

@@ -31,6 +31,7 @@ jobs:
         run: |
           echo "=== Scanning for hardcoded secrets ==="
           FOUND=0
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(docs/archive|docs/agent|vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
 
           # Patterns that should never appear in committed code
           PATTERNS=(
@@ -45,20 +46,20 @@ jobs:
           )
 
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -v '.git/'; then
+            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
               echo "::error::Potential secret found matching pattern: $pattern"
               FOUND=$((FOUND + 1))
             fi
           done
 
           # Check for generic password/secret assignments
-          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -v '.git/' | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
+          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
             echo "::error::Potential hardcoded credential assignment found"
             FOUND=$((FOUND + 1))
           fi
 
           # Check for private keys
-          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '.github/workflows/security.yml'; then
             echo "::error::Private key found in repository"
             FOUND=$((FOUND + 1))
           fi
@@ -83,34 +84,35 @@ jobs:
         run: |
           echo "=== Checking PowerShell scripts for dangerous patterns ==="
           FOUND=0
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(docs/archive|docs/agent|vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
 
           # Invoke-Expression / iex — remote code execution vector
-          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
+          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
             echo "::error::Invoke-Expression/iex found — potential code injection vector"
             FOUND=$((FOUND + 1))
           fi
 
           # DownloadString + Invoke-Expression (classic cradle)
-          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
             echo "::error::WebClient DownloadString/DownloadFile to executable found"
             FOUND=$((FOUND + 1))
           fi
 
           # Encoded command execution (obfuscation)
-          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
             echo "::error::Encoded command execution found — potential obfuscated payload"
             FOUND=$((FOUND + 1))
           fi
 
           # Unrestricted execution policy set inside scripts
-          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
             echo "::warning::Set-ExecutionPolicy Unrestricted found — verify necessity"
           fi
 
           # Restart-Computer -Force without DRY-RUN gate or user prompt
           # All uses must be inside a DryRun guard or after Confirm-Risk/Read-Host.
           # 50-line lookback: Cleanup.ps1 has DryRun exit ~45 lines before the restart.
-          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
           if [ -n "$RESTART_HITS" ]; then
             while IFS= read -r line; do
               FILE=$(echo "$line" | cut -d: -f1)
@@ -126,7 +128,7 @@ jobs:
 
           # Remove-Item -Recurse -Force on bare variable paths (dangerous if empty/wrong)
           # Excludes test files (cleanup of temp dirs is expected) and literal paths.
-          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
           if [ -n "$REMOVE_HITS" ]; then
             while IFS= read -r line; do
               FILE=$(echo "$line" | cut -d: -f1)

@@ -1,7 +1,7 @@
 # PSScriptAnalyzer settings for CS2 Optimization Suite
 # Run: Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
 #
-# Last reviewed: 2026-03-21 (E3 CI audit)
+# Last reviewed: 2026-05-26 (RP-022 empty-catch audit)
 # All exclusions validated against current codebase — each has documented justification.
 @{
     Severity = @('Error', 'Warning')
@@ -13,11 +13,6 @@
 
         # UTF-8 without BOM is preferred (modern tooling, git compatibility)
         'PSUseBOMForUnicodeEncodedFile',
-
-        # Empty catches are intentional best-effort patterns (7 instances):
-        # Setup-Profile.ps1 state load, PostReboot-Setup.ps1 state save,
-        # process-priority.ps1 affinity, CS2-Optimize-GUI.ps1 teardown (4x)
-        'PSAvoidUsingEmptyCatchBlock',
 
         # $global:ProgressPreference needed for PS 5.1 Invoke-WebRequest compat
         'PSAvoidGlobalVars',

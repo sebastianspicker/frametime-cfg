@@ -305,7 +305,13 @@ if ($doDriver) {
 
     # Reset all progress unconditionally — Phase 2+3 will re-run from scratch
     Clear-Progress $null
-    Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode
+    $runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
+    if (-not $runOnceResult.Applied) {
+        Write-Err "Phase 2 RunOnce registration failed. Safe Mode boot flag was NOT set."
+        Write-Host "  Fix the RunOnce error above, then retry Driver Refresh." -ForegroundColor Cyan
+        Write-Host "  Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
+        return
+    }
     $SCRIPT:CurrentStepTitle = "Driver Refresh — Safe Mode boot"
     $null = Set-BootConfig "safeboot" "minimal" "Driver Refresh — Safe Mode for GPU driver clean"
     try { Flush-BackupBuffer } catch { Write-DebugLog "Flush after boot config backup failed: $_" }

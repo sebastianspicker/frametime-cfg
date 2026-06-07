@@ -220,7 +220,7 @@ Describe "Install-NvidiaDriverClean" {
 
     It "returns true in DRY-RUN mode without executing" {
         $SCRIPT:DryRun = $true
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
 
         $result = Install-NvidiaDriverClean -DriverExe "C:\fake\driver.exe"
         $result | Should -Be $true

@@ -68,7 +68,6 @@ Describe "Initialize-Backup" {
         Mock Write-Warn {}
         Mock Set-BackupLock { $script:InitOrder.Add("lock") | Out-Null }
         Mock Move-Item { $script:InitOrder.Add("move") | Out-Null }
-        Mock Prune-BackupVersions { $script:InitOrder.Add("prune") | Out-Null }
         Mock New-BackupFile { $script:InitOrder.Add("new") | Out-Null }
         Mock Set-SecureAcl { $script:InitOrder.Add("acl") | Out-Null }
 
@@ -302,7 +301,7 @@ Describe "Restore-StepChanges" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -555,7 +554,7 @@ Describe "Service restore allowlist" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -602,6 +601,65 @@ Describe "Service restore allowlist" {
         $result | Should -Be $false
         Should -Invoke Set-Service -Exactly 0
         Should -Invoke Write-Warn -ParameterFilter { $t -match 'unsupported start type' }
+    }
+}
+
+Describe "Service restore failure retention" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Write-ConsoleLine {}
+        Mock Write-Step {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-DebugLog {}
+        Mock Write-Info {}
+    }
+
+    It "retains the service entry when delayed auto-start restore fails" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "DiagTrack"; originalStartType = "Auto";
+                originalStatus = "Stopped"; delayedAutoStart = $true;
+                step = "Service Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service { [PSCustomObject]@{ Name = "DiagTrack"; Status = "Stopped" } }
+        Mock Set-Service {}
+        Mock Set-ItemProperty { throw "Delayed flag write failed" }
+        Mock Start-Service {}
+
+        $result = Restore-StepChanges -StepTitle "Service Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-Service -Exactly 1
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter { $Name -eq "DelayedAutostart" }
+        Should -Invoke Start-Service -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "retains the service entry when restart restore fails" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "DiagTrack"; originalStartType = "Auto";
+                originalStatus = "Running"; delayedAutoStart = $false;
+                step = "Service Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service { [PSCustomObject]@{ Name = "DiagTrack"; Status = "Stopped" } }
+        Mock Set-Service {}
+        Mock Set-ItemProperty {}
+        Mock Start-Service { throw "Service failed to start" }
+
+        $result = Restore-StepChanges -StepTitle "Service Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-Service -Exactly 1
+        Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Start-Service -Exactly 1
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
     }
 }
 
@@ -730,7 +788,7 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -907,7 +965,7 @@ Describe "Registry restore allowlist" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
