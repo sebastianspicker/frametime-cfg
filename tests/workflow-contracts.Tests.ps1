@@ -96,6 +96,9 @@ Describe "lint workflow contract" {
         $script:LintWorkflow | Should -Not -Match '!docs/archive/\*\*'
         $script:LintWorkflow | Should -Not -Match '!docs/agent/\*\*'
         $script:LintWorkflow | Should -Not -Match '\(docs/archive\|docs/agent\|vendor'
+        $script:LintWorkflow | Should -Match 'git grep -n -E'
+        $script:LintWorkflow | Should -Match "grep -v 'tests/workflow-contracts.Tests.ps1'"
+        $script:LintWorkflow | Should -Match "grep -v '.github/REPO_SETTINGS.md'"
     }
 
     It "documents exactly the required branch-protection checks" {

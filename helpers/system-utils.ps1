@@ -608,6 +608,25 @@ function Set-BootConfig {
     return $true
 }
 
+function Invoke-BcdEditCaptured {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $output = $null
+    $exitCode = $null
+    try {
+        $output = & bcdedit @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $output = $_
+    }
+
+    return [PSCustomObject]@{
+        Output   = $output
+        ExitCode = $exitCode
+    }
+}
+
 function Clear-SafeBootVerified {
     <#  Removes the SafeBoot element from the current loader and then verifies
         its absence using the locale-independent raw BCD element identifier.
@@ -617,25 +636,12 @@ function Clear-SafeBootVerified {
     [CmdletBinding()]
     param()
 
-    $deleteOutput = $null
-    $deleteExitCode = $null
-    try {
-        $deleteOutput = bcdedit /deletevalue safeboot 2>&1
-        $deleteExitCode = $LASTEXITCODE
-    } catch {
-        $deleteOutput = $_
-        $deleteExitCode = $null
-    }
+    $deleteResult = Invoke-BcdEditCaptured -Arguments @('/deletevalue', 'safeboot')
+    $deleteExitCode = $deleteResult.ExitCode
 
-    $enumOutput = $null
-    $enumExitCode = $null
-    try {
-        $enumOutput = bcdedit /enum "{current}" /v 2>&1
-        $enumExitCode = $LASTEXITCODE
-    } catch {
-        $enumOutput = $_
-        $enumExitCode = $null
-    }
+    $enumResult = Invoke-BcdEditCaptured -Arguments @('/enum', '{current}', '/v')
+    $enumOutput = $enumResult.Output
+    $enumExitCode = $enumResult.ExitCode
 
     $applied = $deleteExitCode -eq 0
     if ($enumExitCode -ne 0) {

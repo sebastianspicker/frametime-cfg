@@ -171,10 +171,12 @@ jobs:
       - name: Verify EstimateKey references are retired
         shell: bash
         run: |
-          if grep -rEn --include='*.ps1' --include='*.psd1' --include='*.yml' --include='*.yaml' --include='*.md' \
-            'EstimateKey|CFG_ImprovementEstimates' . |
+          if git grep -n -E 'EstimateKey|CFG_ImprovementEstimates' -- \
+            '*.ps1' '*.psd1' '*.yml' '*.yaml' '*.md' |
             grep -v 'CHANGELOG.md' |
             grep -v '.github/workflows/lint.yml' |
+            grep -v '.github/REPO_SETTINGS.md' |
+            grep -v 'tests/workflow-contracts.Tests.ps1' |
             grep -Ev '(^|/)(vendor|third_party|third-party|3rdparty|external)/'; then
             echo "::error::Retired EstimateKey references remain"
             exit 1

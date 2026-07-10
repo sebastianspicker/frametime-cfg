@@ -399,13 +399,17 @@ Describe "Clear-SafeBootVerified" {
         $script:BcdDeleteExit = 0
         $script:BcdEnumExit = 0
         $script:BcdEnumOutput = "identifier {current}"
-        Mock bcdedit {
-            if ($CmdArgs[0] -eq '/deletevalue') {
-                $global:LASTEXITCODE = $script:BcdDeleteExit
-                return "delete output"
+        Mock Invoke-BcdEditCaptured {
+            if ($Arguments[0] -eq '/deletevalue') {
+                return [PSCustomObject]@{
+                    Output = "delete output"
+                    ExitCode = $script:BcdDeleteExit
+                }
             }
-            $global:LASTEXITCODE = $script:BcdEnumExit
-            return $script:BcdEnumOutput
+            return [PSCustomObject]@{
+                Output = $script:BcdEnumOutput
+                ExitCode = $script:BcdEnumExit
+            }
         }
     }
 
@@ -417,7 +421,7 @@ Describe "Clear-SafeBootVerified" {
         $result.Applied | Should -BeTrue
         $result.DeleteExitCode | Should -Be 0
         $result.EnumExitCode | Should -Be 0
-        Should -Invoke bcdedit -Exactly 2
+        Should -Invoke Invoke-BcdEditCaptured -Exactly 2
     }
 
     It "treats an already absent element as verified but not applied" {
@@ -456,7 +460,7 @@ Describe "Clear-SafeBootVerified" {
         $result.Applied | Should -BeFalse
         $result.DeleteExitCode | Should -Be 7
         $result.EnumExitCode | Should -Be 31
-        Should -Invoke bcdedit -Exactly 1 -ParameterFilter { $CmdArgs -join ' ' -eq '/enum {current} /v' }
+        Should -Invoke Invoke-BcdEditCaptured -Exactly 1 -ParameterFilter { $Arguments -join ' ' -eq '/enum {current} /v' }
     }
 }
 
