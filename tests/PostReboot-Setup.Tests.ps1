@@ -9,6 +9,7 @@ BeforeAll {
     if (-not (Get-Command Apply-NvidiaCS2Profile -ErrorAction SilentlyContinue)) {
         function global:Apply-NvidiaCS2Profile {}
     }
+    function global:shutdown { param([Parameter(ValueFromRemainingArguments)]$CmdArgs) }
 }
 
 AfterAll {
@@ -28,6 +29,154 @@ Describe "PostReboot-Setup.ps1 shipped smoke contract" {
         $exitCode | Should -Be 0
         $errorRecords | Should -BeNullOrEmpty
         $output | Should -Match 'SMOKE TEST OK'
+    }
+}
+
+Describe "PostReboot-Setup.ps1 entrypoint wrapper" {
+
+    BeforeAll {
+        . $script:TargetScript
+    }
+
+    It "bypasses administrator validation before orchestration for smoke tests" {
+        Mock Assert-PostRebootSetupAdministrator { throw "Administrator check should not run" }
+        Mock Invoke-PostRebootSetup { throw "Orchestration should not run" }
+        Mock Write-Host {}
+
+        { Invoke-PostRebootSetupEntryPoint -SmokeTest } | Should -Not -Throw
+        Should -Invoke Assert-PostRebootSetupAdministrator -Exactly 0
+        Should -Invoke Invoke-PostRebootSetup -Exactly 0
+    }
+
+    It "blocks orchestration when administrator validation fails" {
+        Mock Assert-PostRebootSetupAdministrator { throw "Not elevated" }
+        Mock Invoke-PostRebootSetup {}
+
+        { Invoke-PostRebootSetupEntryPoint } | Should -Throw "Not elevated"
+        Should -Invoke Assert-PostRebootSetupAdministrator -Exactly 1
+        Should -Invoke Invoke-PostRebootSetup -Exactly 0
+    }
+
+    It "runs administrator validation before orchestration" {
+        $script:CallOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Assert-PostRebootSetupAdministrator { $script:CallOrder.Add("assert") }
+        Mock Invoke-PostRebootSetup { $script:CallOrder.Add("orchestrate") }
+
+        Invoke-PostRebootSetupEntryPoint
+
+        $script:CallOrder | Should -Be @("assert", "orchestrate")
+    }
+}
+
+Describe "PostReboot-Setup.ps1 Safe Mode recovery" {
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $false
+        $env:SAFEBOOT_OPTION = "MINIMAL"
+        Mock Load-State {
+            [PSCustomObject]@{
+                gpuInput = "2"
+                mode = "CONTROL"
+                logLevel = "NORMAL"
+                profile = "RECOMMENDED"
+                fpsCap = 0
+                avgFps = 0
+            }
+        }
+        Mock Write-Host {}
+        Mock Write-DebugLog {}
+        Mock Read-Host { "" }
+        Mock Test-YoloProfile { $false }
+        Mock Start-Sleep {}
+        Mock shutdown {}
+        Mock Complete-Step {}
+        Mock Clear-SafeBootVerified {
+            [PSCustomObject]@{
+                Status = "Success"
+                Verified = $true
+                Applied = $true
+                DeleteExitCode = 0
+                EnumExitCode = 0
+                Message = "Safe Mode disabled and verified."
+            }
+        }
+        Mock Set-RunOnce {
+            [PSCustomObject]@{
+                Status = "Success"
+                Applied = $true
+                Message = "RunOnce set"
+            }
+        }
+    }
+
+    AfterEach {
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+    }
+
+    It "keeps the session running when SafeBoot verification fails" {
+        Mock Clear-SafeBootVerified {
+            [PSCustomObject]@{
+                Status = "Failed"
+                Verified = $false
+                Applied = $true
+                DeleteExitCode = 0
+                EnumExitCode = 5
+                Message = "enum failed"
+            }
+        }
+
+        . $script:TargetScript
+        Invoke-PostRebootSetup
+
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+        Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Read-Host -Exactly 1
+    }
+
+    It "keeps the session running when Phase 3 RunOnce registration fails" {
+        Mock Set-RunOnce {
+            [PSCustomObject]@{
+                Status = "Failed"
+                Applied = $false
+                Message = "registry write failed"
+            }
+        }
+
+        . $script:TargetScript
+        Invoke-PostRebootSetup
+
+        Should -Invoke Set-RunOnce -Exactly 1 -ParameterFilter { $PassThru }
+        Should -Invoke shutdown -Exactly 0
+        Should -Invoke Start-Sleep -Exactly 0
+        Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Read-Host -Exactly 1
+    }
+
+    It "restarts only after verified SafeBoot removal and an applied Phase 3 handoff" {
+        . $script:TargetScript
+        Invoke-PostRebootSetup
+
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke Set-RunOnce -Exactly 1 -ParameterFilter { $PassThru }
+        Should -Invoke Start-Sleep -Exactly 1
+        Should -Invoke shutdown -Exactly 1
+        Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Read-Host -Exactly 0
+    }
+
+    It "does not remove another process lock when backup initialization fails" {
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+        Mock Initialize-Backup { throw "backup lock is already held" }
+        Mock Remove-BackupLock {}
+
+        . $script:TargetScript
+        Invoke-PostRebootSetup
+
+        Should -Invoke Remove-BackupLock -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+        Should -Invoke Complete-Step -Exactly 0
     }
 }
 
@@ -111,6 +260,7 @@ Describe "PostReboot-Setup.ps1 NVIDIA profile Step 4" {
         }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -Not -BeNullOrEmpty
         $script:ActionError.Exception.Message | Should -Match "NVIDIA CS2 profile did not complete"
@@ -129,6 +279,7 @@ Describe "PostReboot-Setup.ps1 NVIDIA profile Step 4" {
         }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -BeNullOrEmpty
         Should -Invoke Complete-Step -Exactly 1 -ParameterFilter {
@@ -229,6 +380,7 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         Mock Set-VerifiedDnsProfileForAdapter { throw "DNS post-check failed" }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -Not -BeNullOrEmpty
         $script:ActionError.Exception.Message | Should -Match "DNS post-check failed"
@@ -260,6 +412,7 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -Not -BeNullOrEmpty
         $script:ActionError.Exception.Message | Should -Match "DNS post-check failed"
@@ -273,6 +426,7 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         Mock Get-NetAdapter { @() }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -Not -BeNullOrEmpty
         $script:ActionError.Exception.Message | Should -Match "No active network adapter"
@@ -301,6 +455,7 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         $script:ActionError | Should -BeNullOrEmpty
         Should -Invoke Set-VerifiedDnsProfileForAdapter -Exactly 2
@@ -322,6 +477,7 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         }
 
         . $script:TargetScript
+        Invoke-PostRebootSetup
 
         Should -Invoke Set-VerifiedDnsProfileForAdapter -Exactly 0
         Should -Invoke Complete-Step -Exactly 1 -ParameterFilter {

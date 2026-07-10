@@ -19,23 +19,34 @@
 
 param([switch]$SmokeTest)
 
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: PostReboot-Setup" -ForegroundColor Green
-    exit 0
-}
-
-function Assert-Administrator {
+function Test-PostRebootSetupAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-PostRebootSetupAdministrator {
+    if (-not (Test-PostRebootSetupAdministrator)) {
         throw "PostReboot-Setup.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
     }
 }
 
-Assert-Administrator
+function Invoke-PostRebootSetupEntryPoint {
+    param([switch]$SmokeTest)
+
+    if ($SmokeTest) {
+        Write-Host "SMOKE TEST OK: PostReboot-Setup" -ForegroundColor Green
+        return
+    }
+
+    Assert-PostRebootSetupAdministrator
+    Invoke-PostRebootSetup
+}
+
+function Invoke-PostRebootSetup {
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptRoot = $PSScriptRoot
 . "$ScriptRoot\config.env.ps1"
 . "$ScriptRoot\helpers.ps1"
 . "$ScriptRoot\Guide-VideoSettings.ps1"
@@ -116,30 +127,35 @@ if ($env:SAFEBOOT_OPTION) {
     Write-Host "    Normal Mode. The Safe Mode boot flag may not have been cleared." -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  Clearing Safe Mode flag now..." -ForegroundColor White
-    try {
-        $bcdResult = bcdedit /deletevalue safeboot 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  $([char]0x2714) Safe Mode disabled. Restarting into Normal Mode..." -ForegroundColor Green
-            Write-Host "    Phase 3 will run automatically on next boot." -ForegroundColor White
-            Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1"
+    $safeBootResult = Clear-SafeBootVerified
+    if ($safeBootResult.Verified) {
+        $runOnceResult = Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1" -PassThru
+        if ($runOnceResult.Applied) {
+            Write-Host "  $([char]0x2714) Safe Mode disabled and Phase 3 handoff applied." -ForegroundColor Green
+            Write-Host "    Restarting into Normal Mode; Phase 3 will run automatically." -ForegroundColor White
             Start-Sleep -Seconds 2
             shutdown /r /t 0 /f
-            exit 0
+            return
         }
-    } catch {
-        Write-DebugLog "Safe Mode clear attempt failed: $($_.Exception.Message)"
+        Write-Host "  $([char]0x26A0) Safe Mode was cleared, but the Phase 3 automatic handoff failed." -ForegroundColor Yellow
+    } else {
+        Write-Host "  $([char]0x26A0) $($safeBootResult.Message)" -ForegroundColor Yellow
     }
-    Write-Host "  $([char]0x26A0) Could not clear Safe Mode flag automatically." -ForegroundColor Yellow
+    Write-Host "  Automatic restart is blocked. Remain in this session and recover manually." -ForegroundColor Yellow
     Write-Host "  Run in elevated cmd.exe:" -ForegroundColor White
     Write-Host "    bcdedit /deletevalue safeboot" -ForegroundColor Cyan
+    Write-Host "    bcdedit /enum {current} /v" -ForegroundColor Cyan
+    Write-Host "  After Safe Mode is confirmed absent, register or launch Phase 3 manually." -ForegroundColor White
     Write-Host "    shutdown /r /t 0" -ForegroundColor Cyan
     if (-not (Test-YoloProfile)) { Read-Host "  Press Enter to exit" }
-    exit 1
+    return
 }
 
+$backupInitialized = $false
 try {
 # Initialize backup system for this phase (inside try so finally releases the lock on error)
 Initialize-Backup
+$backupInitialized = $true
 Initialize-PhaseCounters
 
 Ensure-Dir $CFG_LogDir
@@ -147,7 +163,7 @@ Initialize-Log
 Write-Banner 3 3 "Normal Boot  ·  Driver · MSI · CS2"
 
 $startStep = Show-ResumePrompt $PHASE 13
-if ($startStep -gt 13) { Write-Info "Phase 3 already completed."; Remove-BackupLock; if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter]" }; exit 0 }
+if ($startStep -gt 13) { Write-Info "Phase 3 already completed."; Remove-PhaseHandoff -Name "CS2_Phase3"; Remove-BackupLock; if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter]" }; exit 0 }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 1 — INSTALL DRIVER  [T1]
@@ -991,6 +1007,7 @@ Write-Blank
 if ($SCRIPT:DryRun) {
     Write-PhaseSummary -PhaseLabel "PHASE 3" -DryRun
 } else {
+    Remove-PhaseHandoff -Name "CS2_Phase3"
     Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -NextAction "Good luck, have fun! GG"
 
     $r = if (Test-YoloProfile) { "y" } else { Read-Host "  Final restart recommended (MSI changes). Now? [y/N]" }
@@ -1013,7 +1030,12 @@ if ($SCRIPT:DryRun) {
     Write-Host ""
     if (-not (Test-YoloProfile)) { Read-Host "  Press [Enter] to exit (error details above)" }
 } finally {
-    # Release backup lock — acquired by Initialize-Backup at the top of this script.
-    # In try/finally to ensure release on crash, Ctrl+C, or normal exit.
-    Remove-BackupLock
+    # Release only the lock acquired by this invocation. Initialize-Backup can
+    # reject an active lock owned by another process before acquiring one.
+    if ($backupInitialized) { Remove-BackupLock }
+}
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-PostRebootSetupEntryPoint -SmokeTest:$SmokeTest
 }
