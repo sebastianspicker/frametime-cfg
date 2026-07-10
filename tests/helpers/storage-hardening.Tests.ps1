@@ -115,6 +115,7 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
         Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
         Mock Set-SecureAcl {}
         Mock Set-ItemProperty {}
+        Mock New-Item {}
     }
 
     It "uses CFG_RunOnceExecutionPolicy in the RunOnce command line" {
@@ -123,8 +124,21 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
         Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
 
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-            $Name -eq "CS2_Phase3" -and
+            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
+            $Name -eq "CS2_OPTIMIZE_CS2_Phase3" -and
+            $Value -match "-Verb RunAs" -and
             $Value -match "-ExecutionPolicy AllSigned"
+        }
+    }
+
+    It "keeps Safe Mode execution semantics for the Phase 2 handoff" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\SafeMode-DriverClean.ps1" }
+
+        Set-RunOnce -name "CS2_Phase2" -scriptPath "C:\CS2_OPTIMIZE\SafeMode-DriverClean.ps1" -SafeMode
+
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Name -eq "*CS2_Phase2" -and
+            $Value -match "-ExecutionPolicy Bypass"
         }
     }
 

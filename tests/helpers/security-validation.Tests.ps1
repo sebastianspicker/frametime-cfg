@@ -220,6 +220,12 @@ Describe "Set-RunOnce security validation" {
 
             Should -Invoke Write-Warn -ParameterFilter { $t -match "must be under" }
         }
+
+        It "rejects handoff paths that cannot be embedded safely" {
+            Set-RunOnce "CS2_Test" "C:\CS2_OPTIMIZE\Phase 3'.ps1"
+
+            Should -Invoke Write-Warn -ParameterFilter { $t -match "unsupported characters" }
+        }
     }
 }
 

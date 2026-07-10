@@ -31,23 +31,34 @@
 #>
 param([switch]$SmokeTest)
 
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: SafeMode-DriverClean" -ForegroundColor Green
-    exit 0
-}
-
-function Assert-Administrator {
+function Test-SafeModeDriverCleanAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
-    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-SafeModeDriverCleanAdministrator {
+    if (-not (Test-SafeModeDriverCleanAdministrator)) {
         throw "SafeMode-DriverClean.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
     }
 }
 
-Assert-Administrator
+function Invoke-SafeModeDriverCleanEntryPoint {
+    param([switch]$SmokeTest)
+
+    if ($SmokeTest) {
+        Write-Host "SMOKE TEST OK: SafeMode-DriverClean" -ForegroundColor Green
+        return
+    }
+
+    Assert-SafeModeDriverCleanAdministrator
+    Invoke-SafeModeDriverClean
+}
+
+function Invoke-SafeModeDriverClean {
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
-$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ScriptRoot = $PSScriptRoot
 . "$ScriptRoot\config.env.ps1"
 . "$ScriptRoot\helpers.ps1"
 
@@ -89,16 +100,23 @@ function Register-Phase3RunOnce {
 
     $runOnceResult = Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1" -PassThru
     if (-not $runOnceResult.Applied) {
-        Write-Err "Phase 3 RunOnce registration failed."
+        Write-Err "Phase 3 automatic handoff registration failed."
         Write-Host "  $([char]0x2139) What to do: after rebooting into Normal Mode, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
         return $false
     }
     return $true
 }
 
+$safeBootVerified = $false
+$driverCleanupAttempted = $false
+$driverRemoved = $false
+$phase3Registered = $false
+$backupInitialized = $false
+
 try {
     # Initialize backup inside try so finally releases the lock on error
     Initialize-Backup
+    $backupInitialized = $true
 
     # Validate we're actually in Safe Mode
     # $env:SAFEBOOT_OPTION is set by winload.exe on Safe Mode boot ("MINIMAL" or "NETWORK").
@@ -132,54 +150,23 @@ try {
         }
     }
     if ($SCRIPT:DryRun -and -not $env:SAFEBOOT_OPTION) {
-        Write-Host "  [DRY-RUN] Would run: bcdedit /deletevalue safeboot" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN] CRITICAL: In a real run this removes Safe Mode boot flag" -ForegroundColor Magenta
-    } else {
-        $smOutput = bcdedit /deletevalue safeboot 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            # bcdedit returns non-zero if the value doesn't exist — this is expected on re-run
-            # (safeboot was already cleared by a previous execution) or if not in Safe Mode.
-            # NOTE: bcdedit error text is LOCALIZED ("element not found" in English, but different
-            # on German/French/etc Windows). Instead of parsing the error message, we verify the
-            # actual BCD state using bcdedit /enum /v, which outputs RAW BCD element IDs
-            # (e.g., "0x26000081") instead of human-readable names. Element names like "safeboot"
-            # ARE localized (e.g., German: "Abgesicherter Start"), but the /v flag outputs the
-            # numeric ID which is always "0x26000081" regardless of locale.
-            $bcdEnum = bcdedit /enum "{current}" /v 2>&1
-            $bcdEnumExitCode = $LASTEXITCODE
-            $bcdEnumText = ($bcdEnum | Out-String)
-            if ($bcdEnumExitCode -ne 0) {
-                # bcdedit /enum itself failed — possible BCD corruption or permissions issue.
-                # Cannot determine Safe Mode state; treat as critical and ask user.
-                Write-Err "CRITICAL: bcdedit /enum failed (exit $bcdEnumExitCode). Cannot verify Safe Mode state."
-                Write-Err "BCD may be corrupted or permissions insufficient."
-                Write-Err ""
-                Write-Err "MANUAL FIX (run in elevated cmd.exe):"
-                Write-Err "  bcdedit /deletevalue safeboot"
-                Write-Err "  shutdown /r /t 0"
-                $smConfirm = if (Test-YoloProfile) { "y" } else { Read-Host "  Continue anyway? [y/N]" }
-                if ($smConfirm -notmatch "^[jJyY]$") { exit 1 }
-            } else {
-                # BCD element 0x26000081 = BcdOSLoaderInteger_SafeBoot (safeboot type).
-                # With /v, this appears as the raw hex ID, never localized.
-                $safebootStillSet = $bcdEnumText -match "(?m)^\s*0x26000081\s"
-                if (-not $safebootStillSet) {
-                    Write-OK "Safe Mode already disabled (safeboot element not present). OK to continue."
-                } else {
-                    Write-Err "CRITICAL: Failed to disable Safe Mode (exit $LASTEXITCODE): $smOutput"
-                    Write-Err "System will boot into Safe Mode again on next restart!"
-                    Write-Err ""
-                    Write-Err "MANUAL FIX (run in elevated cmd.exe):"
-                    Write-Err "  bcdedit /deletevalue safeboot"
-                    Write-Err "  shutdown /r /t 0"
-                    $smConfirm = if (Test-YoloProfile) { "y" } else { Read-Host "  Continue anyway? [y/N]" }
-                    if ($smConfirm -notmatch "^[jJyY]$") { exit 1 }
-                }
-            }
-        } else {
-            Write-OK "Safe Mode disabled (next boot = normal)."
-        }
+        Write-Host "  [DRY-RUN] Would remove and verify the Safe Mode boot flag." -ForegroundColor Magenta
+        Write-Info "Phase 2 cannot safely simulate driver cleanup without verifying the live boot state. No changes were made."
+        return
     }
+    $safeBootResult = Clear-SafeBootVerified
+    $safeBootVerified = $safeBootResult.Verified
+    if (-not $safeBootVerified) {
+        Write-Err "CRITICAL: $($safeBootResult.Message)"
+        Write-Err "No driver removal, Phase 3 registration, or restart will be attempted."
+        Write-Err "MANUAL RECOVERY (run in elevated cmd.exe):"
+        Write-Err "  bcdedit /deletevalue safeboot"
+        Write-Err "  bcdedit /enum {current} /v"
+        Write-Err "  shutdown /r /t 0"
+        if (-not (Test-YoloProfile)) { Read-Host "  Press Enter after noting the recovery commands" }
+        return
+    }
+    Write-OK $safeBootResult.Message
     Complete-Step $PHASE 1 "SafeMode off"
 
     Write-Section "Step 2 — GPU Driver Clean Removal"
@@ -215,6 +202,7 @@ try {
         if ($rPhase3 -match "^[jJyY]$") {
             Write-Section "Step 3 — Register Phase 3 for next boot"
             if (Register-Phase3RunOnce) {
+                $phase3Registered = $true
                 Complete-Step $PHASE 3 "RunOnce Phase3"
             }
         } else {
@@ -222,13 +210,16 @@ try {
             Skip-Step $PHASE 3 "RunOnce Phase3"
         }
     } else {
+        $driverCleanupAttempted = $true
         $driverCleanResult = Remove-GpuDriverClean -GpuVendor $gpuName -PassThru
         if ($driverCleanResult.CanCompleteStep) {
+            $driverRemoved = $true
             Complete-Step $PHASE 2 "DriverClean"
 
             # Register Phase 3 RunOnce AFTER driver removal
             Write-Section "Step 3 — Register Phase 3 for next boot"
             if (Register-Phase3RunOnce) {
+                $phase3Registered = $true
                 Complete-Step $PHASE 3 "RunOnce Phase3"
             }
         } else {
@@ -238,13 +229,15 @@ try {
         }
     }
 
-    Write-Blank
-    Write-Info "Restart to continue."
-    if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would prompt for restart" -ForegroundColor Magenta
-    } else {
+    if ($phase3Registered -and (-not $driverCleanupAttempted -or $driverRemoved)) {
+        Write-Blank
+        Write-Info "Restart to continue."
         $r2 = if (Test-YoloProfile) { "Y" } else { Read-Host "  Restart now? [Y/n]" }
         if ($r2 -notmatch "^[nN]$") { shutdown /r /t 0 /f }
+    } else {
+        Write-Warn "Automatic restart is blocked because the Phase 3 handoff was not applied."
+        Write-Host "  Resolve the error above, or use the documented manual recovery commands." -ForegroundColor Cyan
+        if (-not (Test-YoloProfile)) { Read-Host "  Press Enter to remain in this session" }
     }
 } catch {
     # Unhandled exception — display recovery instructions so user isn't stuck.
@@ -255,11 +248,13 @@ try {
     Write-Host "  Error: $_" -ForegroundColor Red
     if ($_.ScriptStackTrace) { Write-Host "  Stack: $($_.ScriptStackTrace)" -ForegroundColor DarkGray }
 
-    # Best-effort: register Phase 3 RunOnce so the user isn't left with no autostart.
-    # Step 1 (bcdedit) already ran, so next boot is Normal Mode — Phase 3 should fire.
+    # Recovery registration is safe only after verified normal-boot configuration
+    # and once cleanup has actually begun. Initialize-Backup failures therefore
+    # cannot create a Phase 3 handoff.
     try {
-        if (-not (Test-StepDone $PHASE 3)) {
+        if ($safeBootVerified -and $driverCleanupAttempted -and -not $phase3Registered -and -not (Test-StepDone $PHASE 3)) {
             if (Register-Phase3RunOnce) {
+                $phase3Registered = $true
                 Write-Host "" -ForegroundColor Green
                 Write-Host "  $([char]0x2714) Phase 3 registered — it will start automatically on next boot." -ForegroundColor Green
             }
@@ -283,7 +278,12 @@ try {
     Write-Host "" -ForegroundColor White
     if (-not (Test-YoloProfile)) { Read-Host "  Press Enter to exit" }
 } finally {
-    # Release backup lock — acquired by Initialize-Backup at the top of this script.
-    # In try/finally to ensure release on crash, Ctrl+C, or normal exit.
-    Remove-BackupLock
+    # Release only the lock acquired by this invocation. Initialize-Backup can
+    # reject an active lock owned by another process before acquiring one.
+    if ($backupInitialized) { Remove-BackupLock }
+}
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-SafeModeDriverCleanEntryPoint -SmokeTest:$SmokeTest
 }
