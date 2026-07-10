@@ -58,21 +58,28 @@ progress.md
 # Local-only automation and audit workspace
 .agents/
 .codex/
+.codegraph/
 .kilo/
+.serena/
 .github/codex/
 .github/workflows/codex.yml
 HARNESS_PRINCIPLES.md
 code_review.md
 docs/agent/
+docs/archive/
 docs/source-audit/
 AGENT_AUDIT_REPORT.md
 debug-log-*.md
 scripts/topology_inventory.sh
 
 # Local analysis outputs; keep durable config such as .codacy/codacy.config.json
+.codacy/cli-config.yaml
+.codacy/codacy.yaml
+.codacy/generated/
 .codacy/logs/
 .codacy/results/
 .codacy/tmp/
+.codacy/tools-configs/
 coverage/
 reports/
 *.sarif

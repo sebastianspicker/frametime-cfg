@@ -485,10 +485,6 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | [`docs/backup-restore.md`](docs/backup-restore.md) | `backup.json` structure, all 6 backup types (registry, service, bootconfig, powerplan, drs, scheduledtask), manual restore |
 | [`docs/video.txt`](docs/video.txt) | Copy-ready annotated CS2 `video.txt` with 2026 meta values for Low / Mid / High GPU tiers |
 
-Historical audit packets, completed remediation ledgers, and superseded local
-status files live in [`docs/archive/`](docs/archive/). Active agent scratch
-evidence remains ignored under `docs/agent/` unless it is intentionally archived.
-
 ---
 
 ## Sources & References
