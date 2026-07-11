@@ -9,6 +9,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+The current `main` lineage is canonical. The existing `v2.2` tag belongs to
+disconnected legacy history and is not an ancestor of this release line. The
+next release from the canonical lineage will be `v2.3`; this development work
+does not create a tag.
+
 ### Added
 - Phase 3 Step 7: VBS / Core Isolation (Memory Integrity) disable — detects HVCI via `Win32_DeviceGuard`, disables via registry, warns about FACEIT/Vanguard dependency. Replaces the previously reserved step slot.
 - DRS profile: rBAR Enable (`983226`) + rBAR Options (`983227`) — per-application Resizable BAR control. Set to `0` (Disabled) for CS2 — ThourCS2 2026: ~6% better 1% lows with rBAR OFF. System-wide BIOS rBAR stays enabled for other titles

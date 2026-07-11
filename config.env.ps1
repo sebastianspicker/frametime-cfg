@@ -15,7 +15,7 @@
 #      access to C:\CS2_OPTIMIZE\, the system is already compromised at that privilege level)
 #
 
-$CFG_Version        = "v2.1"
+$CFG_Version        = "v2.3-dev"
 $CFG_WorkDir        = "C:\CS2_OPTIMIZE"
 $CFG_LogDir         = "$CFG_WorkDir\Logs"
 $CFG_LogFile        = "$CFG_LogDir\optimize_current.log"

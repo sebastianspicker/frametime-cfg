@@ -199,6 +199,7 @@ Describe "Write helper result contracts" {
         Mock Backup-BootConfig {}
         Mock Ensure-SecureWorkDir {}
         Mock Set-SecureAcl {}
+        Mock New-Item {}
     }
 
     It "Set-RegistryValue returns success status with -PassThru after a write" {
@@ -265,18 +266,22 @@ Describe "Write helper result contracts" {
 
         $result.Status | Should -Be "Success"
         $result.Applied | Should -Be $true
-        Should -Invoke Set-ItemProperty -Exactly 1
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
+            $Name -eq "CS2_OPTIMIZE_CS2_Phase3" -and
+            $Value -match "-Verb RunAs" -and $Value -match "-Wait"
+        }
     }
 
     It "Set-RunOnce returns failed status with -PassThru when registration throws" {
         Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
-        Mock Set-ItemProperty { throw "registry denied" }
+        Mock Set-ItemProperty { throw "access denied" }
 
         $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "Failed"
         $result.Applied | Should -Be $false
-        $result.Message | Should -Match "Failed to set RunOnce"
+        $result.Message | Should -Match "Failed to register phase handoff"
     }
 
     It "Set-RunOnce returns dry-run status without applying writes" {
@@ -308,6 +313,29 @@ Describe "Write helper result contracts" {
         $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
 
         $result | Should -BeNullOrEmpty
+    }
+
+    It "leaves a registered normal-mode handoff pending until explicit cleanup" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Set-ItemProperty {}
+        Mock Remove-ItemProperty {}
+
+        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+
+        $result.Applied | Should -Be $true
+        Should -Invoke Set-ItemProperty -Exactly 1
+        Should -Invoke Remove-ItemProperty -Exactly 0
+    }
+
+    It "removes the durable handoff only when completion requests cleanup" {
+        Mock Remove-ItemProperty {}
+
+        Remove-PhaseHandoff -Name "CS2_Phase3"
+
+        Should -Invoke Remove-ItemProperty -Exactly 1 -ParameterFilter {
+            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
+            $Name -eq "CS2_OPTIMIZE_CS2_Phase3"
+        }
     }
 
     It "Set-BootConfig returns dry-run status with -PassThru without applying a boot write" {
@@ -360,6 +388,79 @@ Describe "Write helper result contracts" {
         $SCRIPT:DryRun = $true
 
         Set-BootConfig "disabledynamictick" "yes" "Test boot config" | Should -Be $true
+    }
+}
+
+# ── Fail-closed SafeBoot removal ─────────────────────────────────────────────
+Describe "Clear-SafeBootVerified" {
+
+    BeforeEach {
+        Reset-TestState
+        $script:BcdDeleteExit = 0
+        $script:BcdEnumExit = 0
+        $script:BcdEnumOutput = "identifier {current}"
+        Mock Invoke-BcdEditCaptured {
+            if ($Arguments[0] -eq '/deletevalue') {
+                return [PSCustomObject]@{
+                    Output = "delete output"
+                    ExitCode = $script:BcdDeleteExit
+                }
+            }
+            return [PSCustomObject]@{
+                Output = $script:BcdEnumOutput
+                ExitCode = $script:BcdEnumExit
+            }
+        }
+    }
+
+    It "reports an applied verified success when deletion succeeds" {
+        $result = Clear-SafeBootVerified
+
+        $result.Status | Should -Be "Success"
+        $result.Verified | Should -BeTrue
+        $result.Applied | Should -BeTrue
+        $result.DeleteExitCode | Should -Be 0
+        $result.EnumExitCode | Should -Be 0
+        Should -Invoke Invoke-BcdEditCaptured -Exactly 2
+    }
+
+    It "treats an already absent element as verified but not applied" {
+        $script:BcdDeleteExit = 1
+
+        $result = Clear-SafeBootVerified
+
+        $result.Status | Should -Be "Success"
+        $result.Verified | Should -BeTrue
+        $result.Applied | Should -BeFalse
+        $result.DeleteExitCode | Should -Be 1
+        $result.EnumExitCode | Should -Be 0
+    }
+
+    It "fails closed when the raw SafeBoot element remains" {
+        $script:BcdEnumOutput = "  0x26000081    0x1"
+
+        $result = Clear-SafeBootVerified
+
+        $result.Status | Should -Be "Failed"
+        $result.Verified | Should -BeFalse
+        $result.Applied | Should -BeTrue
+        $result.DeleteExitCode | Should -Be 0
+        $result.EnumExitCode | Should -Be 0
+        $result.Message | Should -Match "0x26000081"
+    }
+
+    It "fails closed on enum failure and preserves both native exit codes" {
+        $script:BcdDeleteExit = 7
+        $script:BcdEnumExit = 31
+
+        $result = Clear-SafeBootVerified
+
+        $result.Status | Should -Be "Failed"
+        $result.Verified | Should -BeFalse
+        $result.Applied | Should -BeFalse
+        $result.DeleteExitCode | Should -Be 7
+        $result.EnumExitCode | Should -Be 31
+        Should -Invoke Invoke-BcdEditCaptured -Exactly 1 -ParameterFilter { $Arguments -join ' ' -eq '/enum {current} /v' }
     }
 }
 

@@ -463,12 +463,13 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    # Windows RunOnce entries prefixed with '*' execute even in Safe Mode.
-    # Without the prefix, Safe Mode deletes them without running.
-    if ($SafeMode) { $name = "*$name" }
+    # Safe Mode handoffs use HKLM RunOnce with '*' because normal Run entries
+    # are ignored in Safe Mode. Normal-mode handoffs use a durable HKCU Run
+    # bootstrap and remove it only after Phase 3 completes successfully.
+    $registrationName = if ($SafeMode) { "*$name" } else { "CS2_OPTIMIZE_$name" }
     # SECURITY: Validate script path — must be under C:\CS2_OPTIMIZE\ and end in .ps1.
-    # RunOnce executes at boot as the logged-on user with admin elevation (HKLM).
-    # If an attacker could set $scriptPath to an arbitrary location, they get code execution.
+    # If an attacker could set $scriptPath to an arbitrary location, the normal
+    # handoff would execute it through a highest-privilege task.
     $normalizedPath = $scriptPath -replace '/', '\'
     if (-not (Test-TrustedSuiteScriptPath -Path $normalizedPath)) {
         $message = "Set-RunOnce: script path must be under C:\CS2_OPTIMIZE\ and end in .ps1 — rejected: $scriptPath"
@@ -476,10 +477,16 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
+    if ($normalizedPath -notmatch '^C:\\CS2_OPTIMIZE\\[a-zA-Z0-9_.-]+\.ps1$') {
+        $message = "Set-RunOnce: phase handoff path contains unsupported characters: $scriptPath"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
+        return
+    }
 
     if ($SCRIPT:DryRun) {
-        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set RunOnce: $name -> $scriptPath" -ForegroundColor Magenta
-        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "RunOnce previewed: $name -> $normalizedPath") }
+        Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would register phase handoff: $registrationName -> $scriptPath" -ForegroundColor Magenta
+        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "Phase handoff previewed: $registrationName -> $normalizedPath") }
         return
     }
     # Validate target script exists before registering — a RunOnce pointing to a missing
@@ -508,23 +515,48 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    # Bypass stays the default because the suite runs locally and is already admin-elevated.
-    $cmd = "powershell.exe -NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File `"$normalizedPath`""
-    if (-not $PSCmdlet.ShouldProcess($name, "Register RunOnce entry for $normalizedPath")) {
-        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "RunOnce skipped: $name -> $normalizedPath") }
+    $directCommand = "powershell.exe -NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File `"$normalizedPath`""
+    $elevatedArguments = "-NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File $normalizedPath"
+    $bootstrap = "Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList '$elevatedArguments'"
+    $elevatedCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -Command `"$bootstrap`""
+    if (-not $SafeMode -and $elevatedCommand.Length -gt 260) {
+        $message = "Set-RunOnce: generated phase handoff exceeds the Windows Run command-line limit"
+        Write-Warn $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($registrationName, "Register phase handoff for $normalizedPath")) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Phase handoff skipped: $registrationName -> $normalizedPath") }
         return
     }
     try {
-        Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name $name -Value $cmd -ErrorAction Stop
-        Write-OK "RunOnce: $name -> $normalizedPath"
-        if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "RunOnce set: $name -> $normalizedPath") }
+        if ($SafeMode) {
+            Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name $registrationName -Value $directCommand -ErrorAction Stop
+        } else {
+            $runKey = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+            if (-not (Test-Path $runKey)) { New-Item -Path $runKey -Force -ErrorAction Stop | Out-Null }
+            Set-ItemProperty $runKey -Name $registrationName -Value $elevatedCommand -ErrorAction Stop
+        }
+        Write-OK "Phase handoff: $registrationName -> $normalizedPath"
+        if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Phase handoff set: $registrationName -> $normalizedPath") }
     } catch {
-        $message = "Failed to set RunOnce '$name': $_"
+        $message = "Failed to register phase handoff '$registrationName': $_"
         Write-Err $message
         Write-ConsoleLine "  $([char]0x2139) What to do: Phase 3 will NOT auto-start after reboot." -ForegroundColor Cyan
         Write-ConsoleLine "    After rebooting, run Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
         if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
     }
+}
+
+function Remove-PhaseHandoff {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9_]+$')][string]$Name)
+
+    $registrationName = "CS2_OPTIMIZE_$Name"
+    $runKey = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    if ($SCRIPT:DryRun -or -not $PSCmdlet.ShouldProcess($registrationName, "Remove completed phase handoff")) { return }
+    Remove-ItemProperty -Path $runKey -Name $registrationName -Force -ErrorAction SilentlyContinue
+    Write-DebugLog "Removed completed phase handoff '$registrationName'."
 }
 
 function Set-BootConfig {
@@ -574,6 +606,80 @@ function Set-BootConfig {
     Write-OK "Set: $key = $val"
     if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Boot config set: $key = $val") }
     return $true
+}
+
+function Invoke-BcdEditCaptured {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $output = $null
+    $exitCode = $null
+    try {
+        $output = & bcdedit @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $output = $_
+    }
+
+    return [PSCustomObject]@{
+        Output   = $output
+        ExitCode = $exitCode
+    }
+}
+
+function Clear-SafeBootVerified {
+    <#  Removes the SafeBoot element from the current loader and then verifies
+        its absence using the locale-independent raw BCD element identifier.
+        The verification is authoritative: neither a successful delete nor an
+        unattended profile may bypass a failed /enum check or a remaining
+        0x26000081 element.  #>
+    [CmdletBinding()]
+    param()
+
+    $deleteResult = Invoke-BcdEditCaptured -Arguments @('/deletevalue', 'safeboot')
+    $deleteExitCode = $deleteResult.ExitCode
+
+    $enumResult = Invoke-BcdEditCaptured -Arguments @('/enum', '{current}', '/v')
+    $enumOutput = $enumResult.Output
+    $enumExitCode = $enumResult.ExitCode
+
+    $applied = $deleteExitCode -eq 0
+    if ($enumExitCode -ne 0) {
+        return [PSCustomObject]@{
+            Status         = "Failed"
+            Verified       = $false
+            Applied        = $applied
+            DeleteExitCode = $deleteExitCode
+            EnumExitCode   = $enumExitCode
+            Message        = "Safe Mode state could not be verified: bcdedit /enum failed (delete exit $deleteExitCode, enum exit $enumExitCode)."
+        }
+    }
+
+    $enumText = ($enumOutput | ForEach-Object { $_.ToString() }) -join "`n"
+    if ($enumText -match '(?im)^\s*0x26000081(?:\s|$)') {
+        return [PSCustomObject]@{
+            Status         = "Failed"
+            Verified       = $false
+            Applied        = $applied
+            DeleteExitCode = $deleteExitCode
+            EnumExitCode   = $enumExitCode
+            Message        = "Safe Mode remains enabled: BCD element 0x26000081 is still present (delete exit $deleteExitCode, enum exit $enumExitCode)."
+        }
+    }
+
+    $message = if ($applied) {
+        "Safe Mode disabled and verified (delete exit $deleteExitCode, enum exit $enumExitCode)."
+    } else {
+        "Safe Mode was already absent and is verified disabled (delete exit $deleteExitCode, enum exit $enumExitCode)."
+    }
+    return [PSCustomObject]@{
+        Status         = "Success"
+        Verified       = $true
+        Applied        = $applied
+        DeleteExitCode = $deleteExitCode
+        EnumExitCode   = $enumExitCode
+        Message        = $message
+    }
 }
 
 function Test-BootConfigSet($key) {

@@ -216,6 +216,18 @@ Describe "NIC Tweaks configuration" {
 # ── Path format validation ───────────────────────────────────────────────────
 Describe "Path format validation" {
 
+    It "uses the intentional v2.3 development identity" {
+        $CFG_Version | Should -Be "v2.3-dev"
+    }
+
+    It "displays the shared version identity in both GUI version fields" {
+        $guiContent = Get-Content (Join-Path $script:ProjectRoot "CS2-Optimize-GUI.ps1") -Raw
+
+        $guiContent | Should -Match '\(El "TitleVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
+        $guiContent | Should -Match '\(El "SettingsVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
+        $guiContent | Should -Not -Match 'v2\.[12](?:\b|["''])'
+    }
+
     It "CFG_WorkDir uses backslash Windows path format" {
         $SCRIPT:_OriginalCfgWorkDir | Should -Not -Match "/" -Because "Windows paths should use backslashes"
         $SCRIPT:_OriginalCfgWorkDir | Should -Match "^[A-Z]:\\" -Because "WorkDir should be an absolute Windows path"

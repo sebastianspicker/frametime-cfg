@@ -31,7 +31,9 @@ jobs:
         run: |
           echo "=== Scanning for hardcoded secrets ==="
           FOUND=0
-          EXCLUDE_ANALYSIS_PATHS='(^|/)(docs/archive|docs/agent|vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
+          # Scan all tracked first-party documentation, including files that
+          # would normally live in ignored local audit workspaces.
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
 
           # Patterns that should never appear in committed code
           PATTERNS=(
