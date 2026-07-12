@@ -50,11 +50,17 @@ function script:Get-ContrastRatio {
     return ($lighter + 0.05) / ($darker + 0.05)
 }
 
-    $script:ProductSource = Get-Content $script:ProductPath -Raw
-    $script:DesignSource = Get-Content $script:DesignPath -Raw
-    $script:XamlSource = Get-Content $script:XamlPath -Raw
-    $script:GuiScriptSource = Get-Content $script:GuiScriptPath -Raw
-    $script:GuiPanelsSource = Get-Content $script:GuiPanelsPath -Raw
+function script:Get-NormalizedText {
+    param([Parameter(Mandatory)][string]$Path)
+
+    return (Get-Content $Path -Raw) -replace "`r`n?", "`n"
+}
+
+    $script:ProductSource = Get-NormalizedText -Path $script:ProductPath
+    $script:DesignSource = Get-NormalizedText -Path $script:DesignPath
+    $script:XamlSource = Get-NormalizedText -Path $script:XamlPath
+    $script:GuiScriptSource = Get-NormalizedText -Path $script:GuiScriptPath
+    $script:GuiPanelsSource = Get-NormalizedText -Path $script:GuiPanelsPath
     $script:XamlDocument = [xml]$script:XamlSource
 }
 
