@@ -109,7 +109,12 @@ namespace System.Windows.Automation {
     function Load-Settings {}
     function Add-BenchmarkResult {}
     function Get-BenchmarkHistory { @() }
-    function Stop-AsyncOperation { param([hashtable]$Operation) }
+    function Stop-AsyncOperation {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([hashtable]$Operation)
+
+        if (-not $PSCmdlet.ShouldProcess("asynchronous operation", "Stop")) { return }
+    }
     function Write-DebugLog {}
 
     $Script:UISync = @{}
