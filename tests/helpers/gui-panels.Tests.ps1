@@ -19,12 +19,23 @@ namespace System.Windows {
 '@
     }
 
+    if (-not ("System.Windows.Automation.AutomationProperties" -as [type])) {
+        Add-Type -TypeDefinition @'
+namespace System.Windows.Automation {
+    public static class AutomationProperties {
+        public static void SetItemStatus(object element, string value) { }
+    }
+}
+'@
+    }
+
     . "$Script:Root/helpers/step-catalog.ps1"
 
     function New-FakeGuiElement {
         param()
 
         $element = [PSCustomObject]@{
+            Name         = ""
             Visibility   = "Collapsed"
             Style        = $null
             Text         = ""
@@ -40,9 +51,19 @@ namespace System.Windows {
             Children     = [System.Collections.ArrayList]::new()
             ActualWidth  = 600
             ActualHeight = 130
+            ClickHandler = $null
+            SelectionChangedHandler = $null
         }
-        $element | Add-Member -MemberType ScriptMethod -Name Add_Click -Value { param($Handler) }
-        $element | Add-Member -MemberType ScriptMethod -Name Add_SelectionChanged -Value { param($Handler) }
+        $element | Add-Member -MemberType ScriptMethod -Name Add_Click -Value {
+            param($Handler)
+            [void]($this.ClickHandler = $Handler)
+            $script:GuiClickHandlers[$this.Name] = $Handler
+        }
+        $element | Add-Member -MemberType ScriptMethod -Name Add_SelectionChanged -Value {
+            param($Handler)
+            [void]($this.SelectionChangedHandler = $Handler)
+            $script:GuiSelectionChangedHandlers[$this.Name] = $Handler
+        }
         $element | Add-Member -MemberType ScriptMethod -Name Add_Checked -Value { param($Handler) }
         $element | Add-Member -MemberType ScriptMethod -Name Add_Unchecked -Value { param($Handler) }
         $element | Add-Member -MemberType ScriptMethod -Name UpdateLayout -Value { }
@@ -50,10 +71,20 @@ namespace System.Windows {
     }
 
     $script:GuiElements = @{}
+    $script:GuiClickHandlers = @{}
+    $script:GuiSelectionChangedHandlers = @{}
     function El {
         param([string]$Name)
         if (-not $script:GuiElements.ContainsKey($Name)) {
-            $script:GuiElements[$Name] = New-FakeGuiElement
+            $element = New-FakeGuiElement
+            $element.Name = $Name
+            if ($script:GuiClickHandlers.ContainsKey($Name)) {
+                $element.ClickHandler = $script:GuiClickHandlers[$Name]
+            }
+            if ($script:GuiSelectionChangedHandlers.ContainsKey($Name)) {
+                $element.SelectionChangedHandler = $script:GuiSelectionChangedHandlers[$Name]
+            }
+            $script:GuiElements[$Name] = $element
         }
         return $script:GuiElements[$Name]
     }
@@ -77,6 +108,8 @@ namespace System.Windows {
     function Load-Video {}
     function Load-Settings {}
     function Add-BenchmarkResult {}
+    function Get-BenchmarkHistory { @() }
+    function Stop-AsyncOperation { param([hashtable]$Operation) }
     function Write-DebugLog {}
 
     $Script:UISync = @{}
@@ -231,14 +264,16 @@ Describe "Inline verification provenance" {
         $script:GuiElements = @{}
         $Script:GuiObservedStepKeys = @()
         $Script:UISync = @{}
+        $Script:VerifyInFlight = $false
         New-TestProgressFile -Phase 1 -LastStep 0 -CompletedSteps @() -SkippedSteps @() | Out-Null
     }
 
     It "shows observed state without completing runtime progress" {
         Mock Invoke-Async {
-            param($Work, $WorkArgs, $OnDone)
+            param($Work, $WorkArgs, $OnDone, $OnError, $OnFinally)
             $Script:UISync.VerifyResults = @("P1:4")
             & $OnDone
+            & $OnFinally
         }
         Mock Save-Progress { throw "Inline verification must not save progress." }
         Mock Save-StateDataSafe { throw "Inline verification must not save state." }
@@ -253,10 +288,17 @@ Describe "Inline verification provenance" {
             Where-Object { $_._Step.Phase -eq 1 -and $_._Step.Step -eq 4 } |
             Select-Object -First 1
         $row.StatusKey | Should -Be "Observed"
+        $Script:VerifyInFlight | Should -BeFalse
+        (El "BtnOptVerify").IsEnabled | Should -BeTrue
     }
 }
 
 Describe "Benchmark parsing helpers" {
+
+    BeforeEach {
+        $script:GuiElements = @{}
+        $Script:UISync = @{}
+    }
 
     It "extracts an FPS cap from VProf text" {
         $result = Get-BenchmarkCapFromText "Noise [VProf] Avg=300.5 P1=220.4"
@@ -305,6 +347,129 @@ Describe "Benchmark parsing helpers" {
         }
 
         Test-Path $CFG_BenchmarkFile | Should -Be $false
+    }
+
+    It "clears a stale cap and disables Copy Cap when parsing fails" {
+        Set-UISyncValue -Store $Script:UISync -Name "LastCap" -Value 240
+        (El "BtnBenchCopy").IsEnabled = $true
+        (El "BenchVprof").Text = "not benchmark output"
+
+        & (El "BtnBenchParse").ClickHandler
+
+        Get-UISyncValue -Store $Script:UISync -Name "LastCap" | Should -BeNullOrEmpty
+        (El "BtnBenchCopy").IsEnabled | Should -BeFalse
+    }
+
+    It "does not record a benchmark result when its label is empty" {
+        (El "BenchVprof").Text = "[VProf] FPS: Avg=280.0, P1=190.0"
+        Mock Get-BenchmarkResultLabel { "" }
+        Mock Add-BenchmarkResult {}
+
+        & (El "BtnBenchAdd").ClickHandler
+
+        Should -Invoke Add-BenchmarkResult -Times 0 -Exactly
+    }
+}
+
+Describe "Backup panel loading" {
+
+    BeforeEach {
+        $script:GuiElements = @{}
+    }
+
+    It "clears stale rows and disables backup actions when no entries exist" {
+        (El "BackupGrid").ItemsSource = @([pscustomobject]@{ Step = "stale" })
+        Mock Get-BackupData { [pscustomobject]@{ entries = @(); created = "2026-07-11" } }
+
+        Load-Backup
+
+        (El "BackupGrid").ItemsSource | Should -BeNullOrEmpty
+        foreach ($name in "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
+            (El $name).IsEnabled | Should -BeFalse
+        }
+    }
+
+    It "clears stale rows and disables backup actions when loading fails" {
+        (El "BackupGrid").ItemsSource = @([pscustomobject]@{ Step = "stale" })
+        Mock Get-BackupData { throw "corrupt backup" }
+
+        Load-Backup
+
+        (El "BackupGrid").ItemsSource | Should -BeNullOrEmpty
+        (El "BackupSummary").Text | Should -Match "Error loading backup.json"
+        foreach ($name in "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
+            (El $name).IsEnabled | Should -BeFalse
+        }
+    }
+
+    It "enables selected-step recovery only after a row is selected" {
+        $grid = El "BackupGrid"
+        (El "BtnRestoreStep").IsEnabled = $false
+        $grid.SelectedItem = [pscustomobject]@{ Step = "Phase 1" }
+
+        & $grid.SelectionChangedHandler
+
+        (El "BtnRestoreStep").IsEnabled | Should -BeTrue
+    }
+}
+
+Describe "Benchmark panel loading" {
+
+    It "clears the chart when benchmark history is empty" {
+        $script:GuiElements = @{}
+        [void](El "BenchChart").Children.Add("stale point")
+        Mock Get-BenchmarkHistory { @() }
+
+        Load-Benchmark
+
+        (El "BenchChart").Children.Count | Should -Be 0
+    }
+}
+
+Describe "Analyze async lifecycle" {
+
+    BeforeEach {
+        $script:GuiElements = @{}
+        $Script:UISync = @{}
+        $Script:AnalysisInFlight = $false
+    }
+
+    It "does not start a second analysis while the first owns the shared result slots" {
+        Mock Invoke-Async {}
+
+        Start-Analysis
+        Start-Analysis
+
+        Should -Invoke Invoke-Async -Times 1 -Exactly
+        $Script:AnalysisInFlight | Should -BeTrue
+    }
+
+    It "releases the analysis guard and restores its button after an async failure" {
+        Mock Invoke-Async {
+            param($Work, $WorkArgs, $OnDone, $OnError, $OnFinally)
+            & $OnError "runspace failed"
+            & $OnFinally
+        }
+
+        Start-Analysis
+
+        $Script:AnalysisInFlight | Should -BeFalse
+        (El "BtnRunAnalysis").IsEnabled | Should -BeTrue
+        (El "BtnRunAnalysis").Content | Should -Be "Run full scan"
+        (El "BtnCancelAnalysis").IsEnabled | Should -BeFalse
+        (El "AnalyzeScanTime").Text | Should -Match "runspace failed"
+    }
+
+    It "cancels the owned analysis operation and prevents duplicate cancel requests" {
+        $Script:AnalysisOperation = @{ Cancelled = $false }
+        (El "BtnCancelAnalysis").IsEnabled = $true
+        Mock Stop-AsyncOperation {}
+
+        & (El "BtnCancelAnalysis").ClickHandler
+
+        Should -Invoke Stop-AsyncOperation -Times 1 -Exactly
+        (El "BtnCancelAnalysis").IsEnabled | Should -BeFalse
+        (El "AnalyzeScanTime").Text | Should -Be "Cancelling scan…"
     }
 }
 

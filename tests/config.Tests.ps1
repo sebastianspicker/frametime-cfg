@@ -220,10 +220,10 @@ Describe "Path format validation" {
         $CFG_Version | Should -Be "v2.3-dev"
     }
 
-    It "displays the shared version identity in both GUI version fields" {
+    It "displays the shared version identity in native title and sidebar" {
         $guiContent = Get-Content (Join-Path $script:ProjectRoot "CS2-Optimize-GUI.ps1") -Raw
 
-        $guiContent | Should -Match '\(El "TitleVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
+        $guiContent | Should -Match '\$Window\.Title\s*=\s*"CS2 Optimize \$CFG_Version"'
         $guiContent | Should -Match '\(El "SettingsVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
         $guiContent | Should -Not -Match 'v2\.[12](?:\b|["''])'
     }

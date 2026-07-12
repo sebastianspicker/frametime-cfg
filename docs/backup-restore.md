@@ -152,7 +152,8 @@ Select a number to restore that step, or `A` to restore everything.
 
 ### From the GUI
 
-Backup panel → shows the same grouped list → restore buttons per step.
+Recovery → shows the same grouped list and enables per-step restore after a row
+is selected.
 
 ---
 

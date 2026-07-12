@@ -15,6 +15,14 @@ next release from the canonical lineage will be `v2.3`; this development work
 does not create a tag.
 
 ### Added
+
+- External WPF layout at `ui/CS2-Optimize-GUI.xaml`, with repository-specific
+  product and visual contracts in `PRODUCT.md` and `DESIGN.md`.
+- Desktop accessibility contracts for visible keyboard focus, connected form
+  labels, UI Automation names/live regions, Windows High Contrast resources,
+  and 200% scaling expectations.
+- Cancellable system assessment and deterministic success, error,
+  cancellation, and cleanup callbacks for background GUI work.
 - Phase 3 Step 7: VBS / Core Isolation (Memory Integrity) disable — detects HVCI via `Win32_DeviceGuard`, disables via registry, warns about FACEIT/Vanguard dependency. Replaces the previously reserved step slot.
 - DRS profile: rBAR Enable (`983226`) + rBAR Options (`983227`) — per-application Resizable BAR control. Set to `0` (Disabled) for CS2 — ThourCS2 2026: ~6% better 1% lows with rBAR OFF. System-wide BIOS rBAR stays enabled for other titles
 - NIC: RSS master switch (`*RSS`) check — creates/enables if absent or disabled (some Realtek drivers ship with `*RSS=0`, silently ignoring all RSS sub-parameters)
@@ -29,21 +37,39 @@ does not create a tag.
 - Debloat: Win11 25H2 package IDs `Microsoft.OutlookForWindows`, `Microsoft.Windows.DevHome`, `MSTeams`, `Microsoft.BingSearch`, and `Microsoft.PowerAutomateDesktop`
 - Documentation: fresh Windows baseline guide recommending official Windows 11 25H2 media before running the suite and documenting why prebuilt debloated ISOs are not the default recommendation
 
+### Changed
+
+- Reorganized the desktop interface around seven task areas: Overview, Assess,
+  Setup and verify, Benchmark, Network, Video settings, and Recovery. Profile
+  and preview controls now live with Setup and verify.
+- Recovery mutations now run outside the UI thread, stale backup and benchmark
+  state is cleared before actions can be reused, and the window cannot close
+  during an active recovery operation.
+- Replaced custom window chrome and decorative navigation glyphs with native
+  Windows behavior, sentence-case labels, explicit action text, and a restrained
+  operational visual system.
+- Removed obsolete, unreferenced screenshots from the public documentation;
+  replacement screenshots require validation on the supported Windows runtime.
+
 ### Changed (initial release)
+
 - DRS profile: removed `279476686` (Variable refresh rate) — not present in NPI, likely inert; 6 remaining G-SYNC/VRR settings cover all paths
 - DRS profile: removed `1074665807` (CUDA Force P2 State) — undocumented duplicate; `1343646814` (CUDA_STABLE_PERF_LIMIT) handles same override
 - DRS profile: `Trilinear optimization` name corrected — value `0` means ON (driver perf shortcut enabled), not OFF
 - Power plan: PCIe ASPM GUIDs fixed — previous GUIDs were incorrect, meaning ASPM disable was never applied. Now uses correct subgroup `501a4d13-...` and setting `ee12f906-...`
 
 ### Removed (initial release)
+
 - Simplicity First cleanup: removed unused wrappers/test helpers and the runtime improvement-estimate engine. Benchmark history remains the source of before/after comparison.
 
 ### Added (previous — initial release)
+
 - `helpers/process-priority.ps1` — replaces Process Lasso (final external tool eliminated). IFEO PerfOptions for persistent High CPU priority; scheduled task for dual-CCD X3D affinity pinning (7900X3D/7950X3D/9900X3D/9950X3D)
 - `helpers/power-plan.ps1` — replaces FPSHeaven `.pow` binary import with native `powercfg` calls. Fixed 4 bugs in the original plan (passive cooling, AMD PROCTHROTTLEMIN, duty cycling, PERFAUTONOMOUS)
 - `helpers/nvidia-drs.ps1` + `helpers/nvidia-profile.ps1` — direct `nvapi64.dll` DRS write via C# `Add-Type`, replacing NVIDIA Profile Inspector dependency. 52 DWORD settings decoded and written to DRS binary database
 - `helpers/benchmark-history.ps1` — iterative FPS tracking across sessions (`benchmark_history.json`)
-- `CS2-Optimize-GUI.ps1` + `START-GUI.bat` — WPF dashboard with 7 panels: Dashboard, Analyze, Optimize, Backup, Benchmark, Video, Settings
+- `CS2-Optimize-GUI.ps1` + `START-GUI.bat` — WPF operational interface;
+  the current task-oriented layout is documented under Unreleased
 - `helpers/hardware-detect.ps1` — `Get-IntelHybridCpuName` and `Get-SteamPath` shared helpers (eliminates duplicated registry reads across 7 files)
 - Risk/consent system on all steps: `-Risk`, `-Depth`, `-Improvement`, `-SideEffects`, `-Undo` metadata on every `Invoke-TieredStep` call
 - `Backup-ScheduledTask` type in backup system for X3D affinity task rollback
@@ -57,9 +83,10 @@ does not create a tag.
 - `docs/audio.md`, `docs/process-priority.md`, `docs/backup-restore.md`, `docs/debloat.md` and 10 additional deep-dive documentation files
 - `.github/workflows/security.yml` — secret scanning, PowerShell safety patterns, workflow integrity checks
 - `.github/CODEOWNERS`, `.github/REPO_SETTINGS.md`, `.github/dependabot.yml`
-- `SECURITY.md` with DRY-RUN system documentation and responsible disclosure
+- `.github/SECURITY.md` with DRY-RUN system documentation and responsible disclosure
 
-### Changed
+### Changed (previous — initial release)
+
 - All 8 external tool dependencies eliminated — pure PowerShell with zero external binaries (except NVIDIA driver .exe download)
 - Step 12 (Game Mode): reversed from Disable to Enable — WU suppression + MMCSS `Games` scheduling; IFEO supersedes any priority interference
 - Step 16 (NIC): interrupt moderation set to Medium for ALL profiles (djdallmann empirical result — Disabled causes interrupt storms under background traffic)

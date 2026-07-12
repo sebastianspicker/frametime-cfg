@@ -1,0 +1,1004 @@
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="CS2 Optimize" Width="1180" Height="760"
+    MinWidth="900" MinHeight="500"
+    WindowStyle="SingleBorderWindow" ResizeMode="CanResize"
+    Background="{DynamicResource BgMain}"
+    Foreground="{DynamicResource TextPri}"
+    FontFamily="Segoe UI Variable Text, Segoe UI, Arial"
+    FontSize="13"
+    AutomationProperties.Name="CS2 Optimize"
+    KeyboardNavigation.TabNavigation="Continue"
+    UseLayoutRounding="True"
+    SnapsToDevicePixels="True">
+
+  <Window.Resources>
+    <SolidColorBrush x:Key="BgMain"        Color="#0B0D10"/>
+    <SolidColorBrush x:Key="BgSide"        Color="#11151A"/>
+    <SolidColorBrush x:Key="BgCard"        Color="#11151A"/>
+    <SolidColorBrush x:Key="BgHeader"      Color="#11151A"/>
+    <SolidColorBrush x:Key="BgRaised"      Color="#181D23"/>
+    <SolidColorBrush x:Key="BgSelected"    Color="#242B33"/>
+    <SolidColorBrush x:Key="Accent"        Color="#E8520A"/>
+    <SolidColorBrush x:Key="AccentHover"   Color="#F05A16"/>
+    <SolidColorBrush x:Key="AccentPressed" Color="#D94B08"/>
+    <SolidColorBrush x:Key="AccentText"    Color="#0B0D10"/>
+    <SolidColorBrush x:Key="Success"       Color="#22C55E"/>
+    <SolidColorBrush x:Key="SuccessFill"   Color="#153A27"/>
+    <SolidColorBrush x:Key="Warning"       Color="#FBBF24"/>
+    <SolidColorBrush x:Key="WarningFill"   Color="#3F3312"/>
+    <SolidColorBrush x:Key="Danger"        Color="#F87171"/>
+    <SolidColorBrush x:Key="DangerFill"    Color="#B42318"/>
+    <SolidColorBrush x:Key="DangerText"    Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Info"          Color="#38BDF8"/>
+    <SolidColorBrush x:Key="TextPri"       Color="#F4F6F8"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#B8C0CC"/>
+    <SolidColorBrush x:Key="TextMuted"     Color="#9AA5B4"/>
+    <SolidColorBrush x:Key="Border"        Color="#313943"/>
+    <SolidColorBrush x:Key="ControlBorder" Color="#667085"/>
+
+    <Style x:Key="KeyboardFocusVisual" TargetType="Control">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate>
+            <Border BorderBrush="{DynamicResource Accent}" BorderThickness="2"
+                    CornerRadius="4" Margin="-2"/>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="NavBtn" TargetType="Button">
+      <Setter Property="Background"              Value="Transparent"/>
+      <Setter Property="Foreground"              Value="{DynamicResource TextSecondary}"/>
+      <Setter Property="BorderThickness"         Value="0"/>
+      <Setter Property="Height"                  Value="40"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+      <Setter Property="Padding"                 Value="16,0,0,0"/>
+      <Setter Property="FontSize"                Value="13"/>
+      <Setter Property="Cursor"                  Value="Hand"/>
+      <Setter Property="FocusVisualStyle"         Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderThickness="0" CornerRadius="4" Margin="8,1">
+              <ContentPresenter VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSelected}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgCard}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="NavBtnActive" TargetType="Button" BasedOn="{StaticResource NavBtn}">
+      <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border Background="{DynamicResource BgSelected}" BorderThickness="0"
+                    CornerRadius="4" Margin="8,1">
+              <ContentPresenter VerticalAlignment="Center"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="AccBtn" TargetType="Button">
+      <Setter Property="Background"      Value="{DynamicResource Accent}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource AccentText}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="16,8"/>
+      <Setter Property="MinHeight"       Value="36"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="FontWeight"      Value="SemiBold"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentHover}"/>
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentPressed}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSelected}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="SecBtn" TargetType="Button">
+      <Setter Property="Background"      Value="{DynamicResource BgRaised}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource TextPri}"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource ControlBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding"         Value="14,8"/>
+      <Setter Property="MinHeight"       Value="36"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSelected}"/>
+                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource TextMuted}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSide}"/>
+                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Border}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="CardBorder" TargetType="Border">
+      <Setter Property="Background"       Value="{DynamicResource BgRaised}"/>
+      <Setter Property="BorderBrush"      Value="{DynamicResource Border}"/>
+      <Setter Property="BorderThickness"  Value="1"/>
+      <Setter Property="CornerRadius"     Value="6"/>
+      <Setter Property="Padding"          Value="16"/>
+    </Style>
+
+    <Style TargetType="DataGrid">
+      <Setter Property="Background"               Value="{DynamicResource BgMain}"/>
+      <Setter Property="Foreground"               Value="{DynamicResource TextPri}"/>
+      <Setter Property="BorderThickness"          Value="0"/>
+      <Setter Property="RowBackground"            Value="{DynamicResource BgMain}"/>
+      <Setter Property="AlternatingRowBackground" Value="{DynamicResource BgSide}"/>
+      <Setter Property="GridLinesVisibility"      Value="Horizontal"/>
+      <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource Border}"/>
+      <Setter Property="AutoGenerateColumns"      Value="False"/>
+      <Setter Property="CanUserAddRows"           Value="False"/>
+      <Setter Property="CanUserDeleteRows"        Value="False"/>
+      <Setter Property="SelectionMode"            Value="Single"/>
+      <Setter Property="FontSize"                 Value="12"/>
+      <Setter Property="RowHeight"                Value="34"/>
+      <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
+      <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+    </Style>
+
+    <Style TargetType="DataGridColumnHeader">
+      <Setter Property="Background"      Value="{DynamicResource BgHeader}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource TextSecondary}"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource Border}"/>
+      <Setter Property="BorderThickness" Value="0,0,0,1"/>
+      <Setter Property="Padding"         Value="10,8"/>
+      <Setter Property="FontSize"        Value="12"/>
+      <Setter Property="FontWeight"      Value="SemiBold"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="DataGridColumnHeader">
+            <Border Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    Padding="{TemplateBinding Padding}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <ContentPresenter Grid.Column="0"
+                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="Center"/>
+                <Path x:Name="SortArrow" Grid.Column="1"
+                      Fill="{DynamicResource TextMuted}" Margin="4,0,0,0"
+                      VerticalAlignment="Center" Visibility="Collapsed"/>
+                <Thumb x:Name="PART_RightHeaderGripper" Grid.Column="1"
+                       Width="2" HorizontalAlignment="Right" Cursor="SizeWE"
+                       Style="{x:Null}">
+                  <Thumb.Template>
+                    <ControlTemplate TargetType="Thumb">
+                      <Border Background="Transparent" Width="2"/>
+                    </ControlTemplate>
+                  </Thumb.Template>
+                </Thumb>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="SortDirection" Value="Ascending">
+                <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="SortArrow" Property="Data" Value="M 0,5 L 4,0 L 8,5 Z"/>
+              </Trigger>
+              <Trigger Property="SortDirection" Value="Descending">
+                <Setter TargetName="SortArrow" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="SortArrow" Property="Data" Value="M 0,0 L 4,5 L 8,0 Z"/>
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource BgSelected}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="DataGridCell">
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding"         Value="10,0"/>
+      <Setter Property="Foreground"      Value="{DynamicResource TextPri}"/>
+    </Style>
+
+    <Style TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+    </Style>
+
+    <Style TargetType="Label">
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+
+    <Style TargetType="TextBox">
+      <Setter Property="Background"      Value="{DynamicResource BgRaised}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource TextPri}"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource ControlBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding"         Value="8,5"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="MinHeight"       Value="36"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="CaretBrush"      Value="{DynamicResource Accent}"/>
+    </Style>
+
+    <ControlTemplate x:Key="ComboBoxToggle" TargetType="ToggleButton">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition/>
+          <ColumnDefinition Width="20"/>
+        </Grid.ColumnDefinitions>
+        <Border x:Name="Border" Grid.ColumnSpan="2"
+                Background="{DynamicResource BgRaised}" BorderBrush="{DynamicResource ControlBorder}" BorderThickness="1" CornerRadius="4"/>
+        <Path Grid.Column="1" Data="M 0,0 L 4,4 L 8,0 Z" Fill="{DynamicResource TextMuted}"
+              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      </Grid>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter TargetName="Border" Property="BorderBrush" Value="{DynamicResource TextMuted}"/>
+        </Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <Style TargetType="ComboBox">
+      <Setter Property="Background"      Value="{DynamicResource BgRaised}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource TextPri}"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource ControlBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding"         Value="8,5"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="MinHeight"       Value="36"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <ToggleButton Template="{StaticResource ComboBoxToggle}"
+                            IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                            Focusable="False" ClickMode="Press"/>
+              <ContentPresenter IsHitTestVisible="False"
+                                Content="{TemplateBinding SelectionBoxItem}"
+                                ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                Margin="10,4,24,4" VerticalAlignment="Center"
+                                HorizontalAlignment="Left"/>
+              <Popup x:Name="Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
+                     Placement="Bottom" Focusable="False" AllowsTransparency="True"
+                     PopupAnimation="None">
+                <Border x:Name="DropDown" Background="{DynamicResource BgRaised}" BorderBrush="{DynamicResource ControlBorder}"
+                        BorderThickness="1" CornerRadius="4" Padding="0,4"
+                        MinWidth="{TemplateBinding ActualWidth}"
+                        MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                  <ScrollViewer SnapsToDevicePixels="True">
+                    <ItemsPresenter/>
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Background"  Value="Transparent"/>
+      <Setter Property="Foreground"  Value="{DynamicResource TextPri}"/>
+      <Setter Property="Padding"     Value="10,6"/>
+      <Setter Property="FontSize"    Value="12"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBoxItem">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    Padding="{TemplateBinding Padding}">
+              <ContentPresenter/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsHighlighted" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Border}"/>
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSelected}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+      <Setter Property="FontSize"   Value="13"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+    </Style>
+
+    <Style TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{DynamicResource TextPri}"/>
+      <Setter Property="FontSize"   Value="13"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+    </Style>
+
+    <Style TargetType="ProgressBar">
+      <Setter Property="Background" Value="{DynamicResource Border}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Height"     Value="10"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ProgressBar">
+            <Grid>
+              <Border x:Name="PART_Track" Background="{TemplateBinding Background}" CornerRadius="5"/>
+              <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="5" HorizontalAlignment="Left"/>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="DangerBtn" TargetType="Button">
+      <Setter Property="Background"      Value="{DynamicResource DangerFill}"/>
+      <Setter Property="Foreground"      Value="{DynamicResource DangerText}"/>
+      <Setter Property="BorderBrush"     Value="{DynamicResource Danger}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding"         Value="12,7"/>
+      <Setter Property="FontSize"        Value="13"/>
+      <Setter Property="MinHeight"       Value="36"/>
+      <Setter Property="Cursor"          Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{StaticResource KeyboardFocusVisual}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}"
+                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource DangerText}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource BgSide}"/>
+                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Border}"/>
+                <Setter Property="Foreground" Value="{DynamicResource TextMuted}"/>
+                <Setter Property="Cursor" Value="Arrow"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="SectionHeader" TargetType="TextBlock">
+      <Setter Property="FontSize"    Value="14"/>
+      <Setter Property="FontWeight"  Value="SemiBold"/>
+      <Setter Property="Foreground"  Value="{DynamicResource TextMuted}"/>
+      <Setter Property="Margin"      Value="0,0,0,10"/>
+    </Style>
+
+    <Style TargetType="Separator">
+      <Setter Property="Background" Value="{DynamicResource Border}"/>
+    </Style>
+  </Window.Resources>
+
+  <!-- Native window chrome preserves Windows keyboard, scaling, and accessibility behavior. -->
+  <Grid>
+    <!-- Sidebar + task content -->
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="176"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- Sidebar -->
+      <Border Grid.Column="0" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,1,0">
+        <DockPanel LastChildFill="False">
+          <StackPanel DockPanel.Dock="Top" Margin="0,10,0,0">
+            <Button x:Name="NavDashboard" Content="Overview" Style="{StaticResource NavBtnActive}" ToolTip="Overview (Ctrl+1)"/>
+            <Button x:Name="NavAnalyze" Content="Assess" Style="{StaticResource NavBtn}" ToolTip="Assess (Ctrl+2)"/>
+            <Button x:Name="NavOptimize" Content="Setup and verify" Style="{StaticResource NavBtn}" ToolTip="Setup and verify (Ctrl+3)"/>
+            <Button x:Name="NavBenchmark" Content="Benchmark" Style="{StaticResource NavBtn}" ToolTip="Benchmark (Ctrl+4)"/>
+            <Button x:Name="NavNetwork" Content="Network" Style="{StaticResource NavBtn}" ToolTip="Network (Ctrl+5)"/>
+            <Button x:Name="NavVideo" Content="Video settings" Style="{StaticResource NavBtn}" ToolTip="Video settings (Ctrl+6)"/>
+            <Button x:Name="NavBackup" Content="Recovery" Style="{StaticResource NavBtn}" ToolTip="Recovery (Ctrl+7)"/>
+          </StackPanel>
+          <StackPanel DockPanel.Dock="Bottom" Margin="14,0,14,16">
+            <Separator Margin="0,0,0,12"/>
+            <TextBlock x:Name="SbProfile" Text="Profile: —"   FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
+            <Border x:Name="SbDryRunBadge" Visibility="Collapsed"
+                    Background="{DynamicResource BgCard}" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
+                    CornerRadius="3" Padding="6,3" Margin="0,6,0,0" HorizontalAlignment="Left">
+              <TextBlock x:Name="SbDryRun" Text="DRY-RUN" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
+            </Border>
+            <TextBlock x:Name="SbPhase" Text="Phase: —" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"/>
+            <TextBlock x:Name="SettingsVersion" Text="" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
+          </StackPanel>
+        </DockPanel>
+      </Border>
+
+      <!-- ════ CONTENT PANELS ════ -->
+      <Grid Grid.Column="1">
+
+        <!-- ═══ DASHBOARD ═══ -->
+        <ScrollViewer x:Name="PanelDashboard" Visibility="Visible" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="28,20,28,28">
+            <TextBlock Text="Overview" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,20"/>
+
+            <Border x:Name="DashDriftBanner" Visibility="Collapsed"
+                    Background="{DynamicResource BgCard}" BorderBrush="{DynamicResource Warning}" BorderThickness="1"
+                    CornerRadius="6" Padding="14" Margin="0,0,0,18">
+              <StackPanel>
+                <TextBlock x:Name="DashDriftBannerTitle" Text="Configuration drift detected"
+                           AutomationProperties.LiveSetting="Polite"
+                           FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Warning}"/>
+                <TextBlock x:Name="DashDriftBannerText" Text=""
+                           TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,4,0,0"/>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Text="System summary" Style="{StaticResource SectionHeader}"/>
+            <UniformGrid Columns="2" Margin="0,0,0,12">
+              <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                  <TextBlock Text="CPU" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                  <TextBlock x:Name="CardCpuName"  Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock x:Name="CardCpuTier"  Text=""  FontSize="11" Foreground="{DynamicResource Accent}"/>
+                  <TextBlock x:Name="CardCpuExtra" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                  <TextBlock Text="GPU" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                  <TextBlock x:Name="CardGpuName"   Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock x:Name="CardGpuDriver" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}"/>
+                  <TextBlock x:Name="CardGpuVendor" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <StackPanel>
+                  <TextBlock Text="RAM" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                  <TextBlock x:Name="CardRamSize"  Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2"/>
+                  <TextBlock x:Name="CardRamSpeed" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}"/>
+                  <TextBlock x:Name="CardRamXmp"   Text=""  FontSize="11" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Border>
+              <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                  <TextBlock Text="Network" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                  <TextBlock x:Name="CardNicName"  Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock x:Name="CardNicSpeed" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}"/>
+                  <TextBlock x:Name="CardNicType"  Text=""  FontSize="11" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Border>
+            </UniformGrid>
+
+            <UniformGrid Columns="2" Margin="0,0,0,22">
+              <Border Style="{StaticResource CardBorder}" Margin="0,0,8,0">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="OS" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                    <TextBlock x:Name="CardOsName"  Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2"/>
+                    <TextBlock x:Name="CardOsBuild" Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}"/>
+                    <TextBlock x:Name="CardOsHags"  Text=""  FontSize="11" Margin="0,2,0,0"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="12,0,0,0">
+                    <TextBlock Text="CS2" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                    <TextBlock x:Name="CardCs2Status" Text="…" FontSize="12" FontWeight="SemiBold" Margin="0,5,0,2"/>
+                    <TextBlock x:Name="CardCs2Cfg"    Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}"/>
+                    <TextBlock x:Name="CardCs2Video"  Text=""  FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </Grid>
+              </Border>
+              <Border Style="{StaticResource CardBorder}">
+                <StackPanel>
+                  <TextBlock Text="Performance" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource TextMuted}" Margin="0,0,0,2"/>
+                  <TextBlock x:Name="DashPerfBaseline" Text="No benchmark data yet" FontSize="12" Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
+                  <TextBlock x:Name="DashPerfLatest"   Text=""  FontSize="12" Foreground="{DynamicResource TextMuted}" Margin="0,3,0,0"/>
+                  <TextBlock x:Name="DashPerfDelta"    Text=""  FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Success}" Margin="0,6,0,0"/>
+                </StackPanel>
+              </Border>
+            </UniformGrid>
+
+            <TextBlock Text="Recorded phase progress" Style="{StaticResource SectionHeader}"/>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,22">
+              <StackPanel>
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="75"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="60"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Phase 1" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                  <ProgressBar Grid.Column="1" x:Name="ProgressP1" Minimum="0" Maximum="38" Value="0" Margin="10,0" VerticalAlignment="Center" AutomationProperties.Name="Phase 1 progress"/>
+                  <TextBlock Grid.Column="2" x:Name="ProgressP1Txt" Text="0 / 38" FontSize="12" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Margin="0,0,0,14">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="75"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="60"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Phase 2" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                  <ProgressBar Grid.Column="1" x:Name="ProgressP2" Minimum="0" Maximum="3" Value="0" Margin="10,0" VerticalAlignment="Center" AutomationProperties.Name="Phase 2 progress"/>
+                  <TextBlock Grid.Column="2" x:Name="ProgressP2Txt" Text="0 / 3" FontSize="12" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <Grid Margin="0,0,0,12">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="75"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="60"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="Phase 3" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                  <ProgressBar Grid.Column="1" x:Name="ProgressP3" Minimum="0" Maximum="13" Value="0" Margin="10,0" VerticalAlignment="Center" AutomationProperties.Name="Phase 3 progress"/>
+                  <TextBlock Grid.Column="2" x:Name="ProgressP3Txt" Text="0 / 13" FontSize="12" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
+                <TextBlock x:Name="DashIssueHint" Text="" FontSize="12" Foreground="{DynamicResource Warning}" Margin="0,2,0,0" AutomationProperties.LiveSetting="Polite"/>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Text="Next actions" Style="{StaticResource SectionHeader}"/>
+            <WrapPanel>
+              <Button x:Name="BtnDashAnalyze"   Content="Assess system"             Style="{StaticResource AccBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnDashPhase1"    Content="Run phase 1"               Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnDashVerify"    Content="Verify supported settings" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnDashBackup"    Content="Review recovery"           Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnDashLaunchCs2" Content="Launch CS2"                Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+            </WrapPanel>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- ═══ ANALYZE ═══ -->
+        <Grid x:Name="PanelAnalyze" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="28,14">
+            <StackPanel>
+              <TextBlock Text="Assess system" FontSize="20" FontWeight="SemiBold"/>
+              <TextBlock x:Name="AnalyzeScanTime" Text="Not yet scanned" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0"
+                         AutomationProperties.LiveSetting="Polite"/>
+              <WrapPanel Margin="0,12,0,0">
+                <TextBlock x:Name="AnalyzeSummary" Text="" FontSize="13" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,16,0"
+                           AutomationProperties.LiveSetting="Polite"/>
+                <Button x:Name="BtnRunAnalysis" Content="Run full scan" Style="{StaticResource AccBtn}" Margin="0,0,8,0"/>
+                <Button x:Name="BtnCancelAnalysis" Content="Cancel scan" Style="{StaticResource SecBtn}" IsEnabled="False"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <DataGrid Grid.Row="1" x:Name="AnalysisGrid" SelectionUnit="FullRow"
+                    CanUserSortColumns="True" AutomationProperties.Name="System assessment results">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Category"    Binding="{Binding Category}" Width="90"  SortDirection="{x:Null}"/>
+              <DataGridTextColumn Header="Group"       Binding="{Binding Group}"    Width="100" SortDirection="{x:Null}"/>
+              <DataGridTextColumn Header="Item"        Binding="{Binding Item}"     Width="170" SortDirection="{x:Null}"/>
+              <DataGridTextColumn Header="Current"     Binding="{Binding Current}"  Width="130" SortDirection="{x:Null}"/>
+              <DataGridTextColumn Header="Recommended" Binding="{Binding Recommended}" Width="120" SortDirection="{x:Null}"/>
+              <DataGridTemplateColumn Header="Status"  Width="85" SortMemberPath="Status" SortDirection="{x:Null}">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StatusLabel}" Foreground="{Binding StatusColor}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Step"   Binding="{Binding StepRef}" Width="65"  SortDirection="{x:Null}"/>
+              <DataGridTextColumn Header="Impact" Binding="{Binding Impact}"  Width="*"   SortDirection="{x:Null}"/>
+            </DataGrid.Columns>
+          </DataGrid>
+          <Border Grid.Row="2" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="28,12">
+            <WrapPanel>
+              <Button x:Name="BtnAnalyzeGotoOpt" Content="Open setup and verify" Style="{StaticResource AccBtn}" Margin="0,0,10,0"/>
+              <Button x:Name="BtnAnalyzeExport"  Content="Export report"         Style="{StaticResource SecBtn}"/>
+              <Button x:Name="BtnAnalyzeStorageRefresh" Content="Refresh storage health" Style="{StaticResource SecBtn}" Margin="10,0,10,0"/>
+              <Button x:Name="BtnAnalyzeTrimEnable" Content="Enable TRIM" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+              <Button x:Name="BtnAnalyzeRetrim" Content="ReTrim…" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+              <TextBlock x:Name="AnalyzeStorageHealth" Text="" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap"/>
+            </WrapPanel>
+          </Border>
+        </Grid>
+
+        <!-- ═══ OPTIMIZE ═══ -->
+        <Grid x:Name="PanelOptimize" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Expander Grid.Row="0" Header="Profile and preview mode" Background="{DynamicResource BgSide}"
+                    Foreground="{DynamicResource TextPri}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1"
+                    Padding="28,10" AutomationProperties.Name="Profile and preview mode">
+            <StackPanel Margin="0,8,0,4">
+              <TextBlock Text="Recommended is the balanced default. Competitive and YOLO include aggressive changes; benchmark and keep recovery data."
+                         Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+              <WrapPanel>
+                <RadioButton x:Name="RadioSafe" GroupName="Profile" Content="Safe" Margin="0,0,18,8"
+                             AutomationProperties.Name="Safe profile" AutomationProperties.HelpText="Conservative low-risk system changes."/>
+                <RadioButton x:Name="RadioRecommended" GroupName="Profile" Content="Recommended" Margin="0,0,18,8" IsChecked="True"
+                             AutomationProperties.Name="Recommended profile" AutomationProperties.HelpText="Balanced default with confirmation for moderate changes."/>
+                <RadioButton x:Name="RadioCompetitive" GroupName="Profile" Content="Competitive" Margin="0,0,18,8"
+                             AutomationProperties.Name="Competitive profile" AutomationProperties.HelpText="Includes aggressive latency experiments with prompts."/>
+                <RadioButton x:Name="RadioCustom" GroupName="Profile" Content="Custom" Margin="0,0,18,8"
+                             AutomationProperties.Name="Custom profile" AutomationProperties.HelpText="Review and approve steps individually."/>
+                <RadioButton x:Name="RadioYolo" GroupName="Profile" Content="YOLO" Margin="0,0,18,8"
+                             AutomationProperties.Name="YOLO profile" AutomationProperties.HelpText="Expert-only aggressive automation without individual prompts."/>
+                <CheckBox x:Name="ChkDryRun" Content="Preview changes without applying them" Margin="0,0,0,8"
+                          AutomationProperties.Name="Preview changes without applying them"/>
+              </WrapPanel>
+            </StackPanel>
+          </Expander>
+          <Border Grid.Row="1" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="28,14">
+            <StackPanel>
+              <TextBlock Text="Setup and verify" FontSize="20" FontWeight="SemiBold"/>
+              <TextBlock Text="Review each risk tier and system state before opening a terminal workflow." FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Label Target="{Binding ElementName=OptFilterCat}" Content="Category" Margin="0,0,8,0"/>
+                <ComboBox x:Name="OptFilterCat" Width="140" Margin="0,0,16,0" AutomationProperties.Name="Filter by category"/>
+                <Label Target="{Binding ElementName=OptFilterStatus}" Content="Status" Margin="0,0,8,0"/>
+                <ComboBox x:Name="OptFilterStatus" Width="140" Margin="0,0,16,0" AutomationProperties.Name="Filter by status"/>
+                <Button x:Name="BtnOptPhase1" Content="Run phase 1" Style="{StaticResource AccBtn}" Margin="0,0,8,0"/>
+                <Button x:Name="BtnBootSafeMode" Content="Boot to Safe Mode"
+                        ToolTip="Reboot into Safe Mode for GPU driver clean removal"
+                        Style="{StaticResource SecBtn}" Margin="0,0,8,0"/>
+                <Button x:Name="BtnOptPhase2" Content="Review phase 2 (Safe Mode)"
+                        ToolTip="Phase 2 runs automatically in Safe Mode after Phase 1 completes"
+                        Style="{StaticResource SecBtn}" Margin="0,0,8,0"/>
+                <Button x:Name="BtnOptPhase3" Content="Run phase 3" Style="{StaticResource SecBtn}"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <DataGrid Grid.Row="2" x:Name="OptimizeGrid" SelectionUnit="FullRow"
+                    CanUserSortColumns="True" AutomationProperties.Name="Setup steps and verification status">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Ph"    Binding="{Binding PhLabel}"    Width="30"/>
+              <DataGridTextColumn Header="Step"  Binding="{Binding StepLabel}"  Width="40"/>
+              <DataGridTextColumn Header="Cat."  Binding="{Binding Category}"   Width="80"/>
+              <DataGridTextColumn Header="Title" Binding="{Binding Title}"      Width="*"/>
+              <DataGridTemplateColumn Header="Tier" Width="38" SortMemberPath="TierLabel">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding TierLabel}" Foreground="{Binding TierColor}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="4,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Risk" Width="80" SortMemberPath="Risk">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Risk}" Foreground="{Binding RiskColor}"
+                               VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Status" Width="90" SortMemberPath="StatusLabel">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StatusLabel}" Foreground="{Binding StatusColor}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Reboot?" Binding="{Binding RebootLabel}" Width="60"/>
+            </DataGrid.Columns>
+          </DataGrid>
+          <Border Grid.Row="3" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="28,12">
+            <WrapPanel>
+              <Button x:Name="BtnOptFullSetup" Content="Run full setup (phases 1 to 3)" Style="{StaticResource AccBtn}" Margin="0,0,10,0"/>
+              <Button x:Name="BtnOptVerify"    Content="Verify supported settings"      Style="{StaticResource SecBtn}"/>
+            </WrapPanel>
+          </Border>
+        </Grid>
+
+        <!-- ═══ BACKUP ═══ -->
+        <Grid x:Name="PanelBackup" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="28,14">
+            <StackPanel>
+              <TextBlock Text="Recovery" FontSize="20" FontWeight="SemiBold"/>
+              <TextBlock x:Name="BackupSummary" Text="Loading…" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0"
+                         AutomationProperties.LiveSetting="Polite"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Button x:Name="BtnBackupRefresh" Content="Refresh"      Style="{StaticResource SecBtn}" Margin="0,0,8,0"/>
+                <Button x:Name="BtnBackupExport" Content="Export JSON" Style="{StaticResource SecBtn}" Margin="0,0,8,0" IsEnabled="False"/>
+                <Button x:Name="BtnRestoreAll" Content="Restore all" Style="{StaticResource AccBtn}" IsEnabled="False"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <DataGrid Grid.Row="1" x:Name="BackupGrid" SelectionUnit="FullRow"
+                    CanUserSortColumns="True" AutomationProperties.Name="Available recovery data">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Step"     Binding="{Binding Step}"      Width="160"/>
+              <DataGridTextColumn Header="Type"     Binding="{Binding Type}"      Width="80"/>
+              <DataGridTextColumn Header="Key"      Binding="{Binding Key}"       Width="*"/>
+              <DataGridTextColumn Header="Original" Binding="{Binding Original}"  Width="120"/>
+              <DataGridTextColumn Header="Timestamp" Binding="{Binding Timestamp}" Width="130"/>
+            </DataGrid.Columns>
+          </DataGrid>
+          <Border Grid.Row="2" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="28,12">
+            <WrapPanel>
+              <Button x:Name="BtnRestoreStep" Content="Restore selected step" Style="{StaticResource AccBtn}" Margin="0,0,10,0" IsEnabled="False"/>
+              <Button x:Name="BtnClearBackup" Content="Clear all backups" Style="{StaticResource DangerBtn}" IsEnabled="False"/>
+            </WrapPanel>
+          </Border>
+        </Grid>
+
+        <!-- ═══ BENCHMARK ═══ -->
+        <Grid x:Name="PanelBenchmark" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="200"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="28,14">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="180"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="Benchmark &amp; FPS Cap" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center"/>
+              <Label Grid.Column="1" Target="{Binding ElementName=BenchLabel}" Content="Result label" Margin="16,0,8,0"/>
+              <TextBox Grid.Column="2" x:Name="BenchLabel" AutomationProperties.Name="Benchmark result label" Margin="0,0,8,0"/>
+              <Button Grid.Column="3" x:Name="BtnBenchAdd" Content="Add result" Style="{StaticResource AccBtn}"/>
+            </Grid>
+          </Border>
+          <Border Grid.Row="1" Background="{DynamicResource BgMain}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1">
+            <Canvas x:Name="BenchChart" Margin="50,16,20,28"/>
+          </Border>
+          <DataGrid Grid.Row="2" x:Name="BenchGrid" SelectionUnit="FullRow"
+                    CanUserSortColumns="True">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="#"       Binding="{Binding Index}"    Width="35"/>
+              <DataGridTextColumn Header="Date"    Binding="{Binding Date}"     Width="90"/>
+              <DataGridTextColumn Header="Label"   Binding="{Binding Label}"    Width="*"/>
+              <DataGridTextColumn Header="Avg FPS" Binding="{Binding AvgFps}"   Width="70"/>
+              <DataGridTextColumn Header="1% Low"  Binding="{Binding P1Fps}"    Width="65"/>
+              <DataGridTemplateColumn Header="Δ Avg" Width="65" SortMemberPath="DeltaAvg">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding DeltaAvg}" Foreground="{Binding DeltaColor}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Δ 1%" Width="65" SortMemberPath="DeltaP1">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding DeltaP1}" Foreground="{Binding DeltaP1Color}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+          <!-- FPS Cap bar -->
+          <Border Grid.Row="3" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="28,12">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="240"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <Label Grid.Column="0" Target="{Binding ElementName=BenchVprof}" Content="VProf result" FontWeight="SemiBold" Margin="0,0,12,0"/>
+              <TextBox Grid.Column="1" x:Name="BenchVprof"
+                       AutomationProperties.Name="VProf benchmark result"
+                       AutomationProperties.HelpText="Paste a VProf FPS line containing average and one-percent-low values."
+                       ToolTip="Paste [VProf] FPS: Avg=… line here"/>
+              <Button    Grid.Column="2" x:Name="BtnBenchParse" Content="Parse" Style="{StaticResource SecBtn}" Margin="10,0"/>
+              <TextBlock Grid.Column="3" x:Name="BenchCapLabel" Text="" VerticalAlignment="Center" FontSize="12" Foreground="{DynamicResource TextSecondary}" Margin="16,0,8,0"/>
+              <TextBlock Grid.Column="4" x:Name="BenchCapValue" Text="" VerticalAlignment="Center" FontSize="22" FontWeight="Bold" Foreground="{DynamicResource Accent}" Margin="0,0,16,0"
+                         AutomationProperties.LiveSetting="Polite"/>
+              <Button    Grid.Column="6" x:Name="BtnBenchCopy" Content="Copy cap" Style="{StaticResource SecBtn}" IsEnabled="False"/>
+            </Grid>
+          </Border>
+        </Grid>
+
+        <!-- ═══ NETWORK ═══ -->
+        <ScrollViewer x:Name="PanelNetwork" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="28,20,28,28">
+            <TextBlock Text="Valve Region Latency Diagnostic" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,10"/>
+            <TextBlock Text="Diagnostic proxy for route quality and relay reachability. This is not a guaranteed in-match CS2 ping." Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,18"/>
+
+            <TextBlock Text="Network summary" Style="{StaticResource SectionHeader}"/>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,18">
+              <StackPanel>
+                <TextBlock x:Name="NetDiagAdapterSummary" Text="Adapter: loading…" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,6"
+                           AutomationProperties.LiveSetting="Polite"/>
+                <TextBlock x:Name="NetDiagDnsSummary" Text="DNS: loading…" FontSize="12" Foreground="{DynamicResource TextSecondary}"/>
+                <TextBlock x:Name="NetDiagHistorySummary" Text="" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Text="DNS workflow" Style="{StaticResource SectionHeader}"/>
+            <WrapPanel Margin="0,0,0,18">
+              <Button x:Name="BtnNetRefresh" Content="Refresh" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetBaseline" Content="Run baseline test" Style="{StaticResource AccBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetPost" Content="Run post-change retest" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetDnsCloudflare" Content="Use Cloudflare" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetDnsGoogle" Content="Use Google" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetDnsDhcp" Content="Reset to DHCP" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+              <Button x:Name="BtnNetDnsRestore" Content="Restore previous DNS" Style="{StaticResource SecBtn}" Margin="0,0,10,10"/>
+            </WrapPanel>
+
+            <TextBlock Text="Region focus" Style="{StaticResource SectionHeader}"/>
+            <Border Style="{StaticResource CardBorder}" Margin="0,0,0,18">
+              <StackPanel>
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <Label Target="{Binding ElementName=NetDiagRegionPicker}" Content="Focus region" Margin="0,0,0,6"/>
+                    <ComboBox x:Name="NetDiagRegionPicker" Width="200" HorizontalAlignment="Left" AutomationProperties.Name="Focus region"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="1" x:Name="NetDiagRegionSummary" Text="Run a baseline test to choose a region." FontSize="12" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </Grid>
+                <WrapPanel Margin="0,12,0,0">
+                  <Button x:Name="BtnNetBlockRegion" Content="Block focus region" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <Button x:Name="BtnNetUnblockRegion" Content="Unblock focus region" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <Button x:Name="BtnNetUnblockAllRegions" Content="Unblock all network regions" Style="{StaticResource SecBtn}" Margin="0,0,10,0"/>
+                  <TextBlock x:Name="NetDiagFirewallSummary" Text="" FontSize="12" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+
+            <Grid Margin="0,0,0,8">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="Latest baseline versus post-change" Style="{StaticResource SectionHeader}" VerticalAlignment="Center"/>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Label Target="{Binding ElementName=NetDiagSortPicker}" Content="Sort by" Margin="0,0,8,0"/>
+                <ComboBox x:Name="NetDiagSortPicker" Width="150" AutomationProperties.Name="Sort network comparison"/>
+              </StackPanel>
+            </Grid>
+            <DataGrid x:Name="NetDiagComparisonGrid" SelectionUnit="FullRow" CanUserSortColumns="True" Margin="0,0,0,18">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Region" Binding="{Binding TargetLabel}" Width="210"/>
+                <DataGridTextColumn Header="PoP" Binding="{Binding RegionCode}" Width="55"/>
+                <DataGridTextColumn Header="Baseline Avg" Binding="{Binding BaselineAvgMs}" SortMemberPath="BaselineSort" Width="95"/>
+                <DataGridTextColumn Header="Post Avg" Binding="{Binding PostAvgMs}" SortMemberPath="PostSort" Width="85"/>
+                <DataGridTextColumn Header="Δ ms" Binding="{Binding DeltaMs}" SortMemberPath="DeltaSort" Width="70"/>
+                <DataGridTextColumn Header="Timeouts" Binding="{Binding TimeoutSummary}" SortMemberPath="TimeoutSort" Width="90"/>
+                <DataGridTextColumn Header="Protocol" Binding="{Binding ProtocolUsed}" Width="70"/>
+                <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" Width="*"/>
+              </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock Text="Run history" Style="{StaticResource SectionHeader}"/>
+            <DataGrid x:Name="NetDiagHistoryGrid" SelectionUnit="FullRow" CanUserSortColumns="True">
+              <DataGrid.Columns>
+                <DataGridTextColumn Header="Timestamp" Binding="{Binding Timestamp}" Width="135"/>
+                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="70"/>
+                <DataGridTextColumn Header="Adapter" Binding="{Binding AdapterName}" Width="120"/>
+                <DataGridTextColumn Header="DNS" Binding="{Binding DnsProvider}" Width="90"/>
+                <DataGridTextColumn Header="Focus Region" Binding="{Binding SelectedRegion}" Width="150"/>
+                <DataGridTextColumn Header="Region RTT" Binding="{Binding RegionRttMs}" Width="80"/>
+                <DataGridTextColumn Header="Regions OK" Binding="{Binding RegionsOk}" Width="80"/>
+              </DataGrid.Columns>
+            </DataGrid>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- ═══ VIDEO ═══ -->
+        <Grid x:Name="PanelVideo" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Border Grid.Row="0" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,1" Padding="28,14">
+            <StackPanel>
+              <TextBlock Text="Video settings" FontSize="20" FontWeight="SemiBold"/>
+              <TextBlock x:Name="VideoTxtPath" Text="Searching for video.txt…" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,4,0,0"
+                         AutomationProperties.LiveSetting="Polite"/>
+              <WrapPanel Margin="0,12,0,0">
+                <Label Target="{Binding ElementName=VideoTierPicker}" Content="Hardware tier" Margin="0,0,8,0"/>
+                <ComboBox x:Name="VideoTierPicker" Width="140" Margin="0,0,12,0" AutomationProperties.Name="Video hardware tier"/>
+                <Button   x:Name="BtnVideoWrite"   Content="Write video.txt" Style="{StaticResource AccBtn}"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <DataGrid Grid.Row="1" x:Name="VideoGrid" SelectionUnit="FullRow"
+                    CanUserSortColumns="True" AutomationProperties.Name="Current and recommended video settings">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Setting"     Binding="{Binding Setting}"     Width="*"/>
+              <DataGridTextColumn Header="Your Value"  Binding="{Binding YourValue}"   Width="120"/>
+              <DataGridTextColumn Header="Recommended" Binding="{Binding Recommended}" Width="120"/>
+              <DataGridTemplateColumn Header="Status"  Width="80" SortMemberPath="StatusLabel">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding StatusLabel}" Foreground="{Binding StatusColor}"
+                               FontWeight="SemiBold" VerticalAlignment="Center" Margin="6,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Notes" Binding="{Binding Notes}" Width="220"/>
+            </DataGrid.Columns>
+          </DataGrid>
+          <Border Grid.Row="2" Background="{DynamicResource BgHeader}" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Padding="28,12">
+            <WrapPanel>
+              <TextBlock x:Name="VideoSummary" Text="" VerticalAlignment="Center" Margin="0,0,18,0" FontSize="12" Foreground="{DynamicResource TextSecondary}"
+                         AutomationProperties.LiveSetting="Polite"/>
+              <Button x:Name="BtnVideoWriteFooter" Content="Write video.txt and preserve the original as .bak" Style="{StaticResource AccBtn}"/>
+            </WrapPanel>
+          </Border>
+        </Grid>
+
+
+      </Grid><!-- end content panels -->
+    </Grid><!-- end sidebar and content -->
+  </Grid><!-- end root grid -->
+</Window>

@@ -6,6 +6,12 @@ Desktop.ini
 # IDE / editor
 .vscode/
 .idea/
+.fleet/
+.history/
+.run/
+*.code-workspace
+*.suo
+*.user
 *.swp
 *.swo
 *~
@@ -39,6 +45,12 @@ cs2_optimize.log
 *.pfx
 *.cer
 *.crt
+*.kdbx
+*.ovpn
+*.credentials
+*.credential
+*.secret
+*.token
 id_rsa
 id_ed25519
 *.secrets
@@ -50,6 +62,10 @@ service-account*.json
 
 # Personal configurations (internal testing only)
 *_sebastian.*
+*.local.ps1
+*.local.json
+*.local.yaml
+*.local.yml
 
 # Agent orchestration files (loop definitions, progress tracking)
 .claude/
@@ -72,6 +88,20 @@ AGENT_AUDIT_REPORT.md
 debug-log-*.md
 scripts/topology_inventory.sh
 
+# Root-only private notes and remediation working papers
+/private/
+/local/
+/scratch/
+/tmp/
+/temp/
+/notes.md
+/plan.md
+/status.md
+/*-audit.md
+/*-ledger.md
+/*-report.md
+/*-status.md
+
 # Local analysis outputs; keep durable config such as .codacy/codacy.config.json
 .codacy/cli-config.yaml
 .codacy/codacy.yaml
@@ -82,8 +112,21 @@ scripts/topology_inventory.sh
 .codacy/tools-configs/
 coverage/
 reports/
+.cache/
+artifacts/
+TestResults/
+coverage.xml
+*.coverage
+*.trx
 *.sarif
 *.jsonl
+*.clixml
+*.etl
+*.evtx
+*.wer
+*.dmp
+*.har
+*.nupkg
 
 # Local Windows-style artifact paths produced during cross-platform tests
 C:*
@@ -92,14 +135,22 @@ tmp-winstyle-check*
 # Test artifacts
 testResults.xml
 test-results.xml
+junit.xml
+junit-*.xml
 
-# Legacy ad hoc screenshot captures; keep named docs screenshots tracked
-docs/screenshots/[0-9][0-9].png
+# Unvalidated GUI captures; publish only after Windows accessibility review
+/docs/screenshots/[0-9][0-9].png
+/docs/screenshots/*.local.png
+/docs/screenshots/*.draft.png
 
 # Debug scripts
 debug-*.bat
 debug-*.ps1
+transcript*.txt
+transcript*.log
 
 # Temp
 *.tmp
 *.bak
+*.orig
+*.rej
