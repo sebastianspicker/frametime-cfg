@@ -22,7 +22,7 @@ performance tuning. The core design constraints are:
 `START.bat` is the terminal menu most users run. It launches the PowerShell
 entrypoints with `-ExecutionPolicy Bypass` after elevating itself.
 
-`START-GUI.bat` launches `CS2-Optimize-GUI.ps1`, the WPF dashboard. The GUI is
+`START-GUI.bat` launches `CS2-Optimize-GUI.ps1`, the WPF desktop interface. It is
 for analysis, backup review, benchmarking, network diagnostics, storage checks,
 and settings. Full optimization still runs through the terminal phase scripts.
 
@@ -99,9 +99,9 @@ Core helper responsibilities:
 
 GUI-only helpers are loaded by the GUI entrypoint:
 
-- `helpers/gui-panels.ps1`: WPF panel builders and event handlers;
-- `helpers/step-catalog.ps1`: data-only step catalog for the Optimize panel;
-- `helpers/system-analysis.ps1`: non-destructive health checks for Analyze.
+- `helpers/gui-panels.ps1`: WPF task data mapping and event handlers;
+- `helpers/step-catalog.ps1`: data-only step catalog for Setup and verify;
+- `helpers/system-analysis.ps1`: non-destructive checks for Assess.
 
 ## Phase Handoff
 
@@ -145,7 +145,7 @@ identity checks narrower than the live write path.
 For a new optimization step, update the same surfaces together:
 
 1. phase script with the `Invoke-TieredStep` call or explicit step block;
-2. `helpers/step-catalog.ps1` so the GUI Optimize panel mirrors the workflow;
+2. `helpers/step-catalog.ps1` so Setup and verify mirrors the workflow;
 3. README Phase Breakdown and any relevant deep-dive doc;
 4. focused tests under `tests/helpers/` or `tests/integration/`;
 5. workflow contract tests if the change affects entrypoints or CI behavior.
@@ -173,6 +173,15 @@ The repository is PowerShell-first. The relevant local checks are:
 
 CI mirrors those surfaces in `.github/workflows/lint.yml` and adds security
 checks in `.github/workflows/security.yml`.
+
+## Desktop frontend
+
+The WPF shell is split between `CS2-Optimize-GUI.ps1`,
+`ui/CS2-Optimize-GUI.xaml`, and `helpers/gui-panels.ps1`. The script owns
+runtime lifecycle and asynchronous operation cleanup, the XAML owns layout and
+shared presentation resources, and the panel helper maps domain data and
+interactions. See [frontend.md](frontend.md) for component, accessibility,
+responsive, content, and Windows validation conventions.
 
 On macOS, Windows-specific behavior cannot be fully reproduced. Treat local
 Pester, parse, analyzer, and smoke results as useful gates, but keep Windows

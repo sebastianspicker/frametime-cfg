@@ -1,3 +1,5 @@
+# Pull request
+
 ## What does this PR do?
 
 <!-- Brief description of the change -->
@@ -10,7 +12,7 @@
 
 - [ ] Runtime behavior changed
 - [ ] Documentation/configuration only
-- [ ] Historical archive or local-agent status files updated
+- [ ] Desktop interface or accessibility contract changed
 
 ## Checklist
 
@@ -19,6 +21,7 @@
 - [ ] DRY-RUN mode works correctly for any new registry/boot changes
 - [ ] Backup/restore handles the new changes
 - [ ] README and relevant docs updated (if applicable)
+- [ ] Public docs describe the current checkout and contain no stale screenshots
 - [ ] No external tool dependencies added
 - [ ] Local-only artifacts remain ignored or archived intentionally
 - [ ] Codacy local evidence and Codacy Cloud status are not conflated
@@ -26,6 +29,7 @@
 ## Security
 
 - [ ] No secrets, tokens, API keys, or credentials in the diff
+- [ ] No personal paths, raw diagnostics, runtime state, or local agent artifacts
 - [ ] No `Invoke-Expression` / `iex` / `-EncodedCommand` usage
 - [ ] New system-modifying calls respect `$SCRIPT:DryRun` guard
 - [ ] No new `Invoke-WebRequest` calls to untrusted URLs

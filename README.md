@@ -9,6 +9,13 @@
 > **Evidence-based Counter-Strike 2 performance optimization for Windows 11.**
 > Every tweak is categorized by what the data actually shows — not what the community assumes.
 
+**Current development identity:** `v2.3-dev`. The canonical `main` lineage is
+preparing the next v2.3 release; the disconnected historical `v2.2` tag is not
+an ancestor of this line. The PowerShell and documentation gates run
+cross-platform, but the redesigned WPF interface still requires final Windows
+UI Automation, High Contrast, scaling, and screenshot validation before a
+release tag.
+
 ---
 
 ## Table of Contents
@@ -19,7 +26,7 @@
 - [What It Cannot Fix](#what-it-cannot-fix)
 - [Requirements](#requirements)
 - [Quick Start](#quick-start)
-- [GUI Dashboard](#gui-dashboard)
+- [Desktop Interface](#desktop-interface)
 - [File Overview](#file-overview)
 - [Maintainer Orientation](#maintainer-orientation)
 - [Development / Verification](#development--verification)
@@ -112,10 +119,10 @@ ISOs as the default baseline. See [`docs/fresh-windows-baseline.md`](docs/fresh-
 
 ## Quick Start
 
-**Option A — GUI Dashboard** *(recommended for first-time users)*
+**Option A — Desktop interface** *(recommended for first-time users)*
 1. Extract the ZIP to any folder (e.g. `C:\CS2_OPT_SETUP\`)
 2. Right-click `START-GUI.bat` → **Run as administrator**
-3. Use the dashboard to analyze your system, review backups, and launch optimization phases
+3. Use Overview to assess the system, confirm profile and preview mode, and launch the next phase
 
 **Option B — Terminal** *(full optimization flow)*
 1. Extract the ZIP to any folder
@@ -139,21 +146,21 @@ flowchart LR
 
 ---
 
-## GUI Dashboard
+## Desktop Interface
 
 `START-GUI.bat` → Run as administrator
 
-Eight panels: **Dashboard** (hardware summary, progress), **Analyze** (40+ setting health scan + storage health), **Optimize** (step catalog reference), **Backup** (per-step restore), **Benchmark** (FPS history + cap calculator), **Network** (Valve Region Latency Diagnostic + DNS workflow), **Video** (video.txt comparison + one-click write), **Settings** (profile/mode config).
+Seven task areas: **Overview**, **Assess**, **Setup and verify** (including
+profile and preview mode), **Benchmark**, **Network**, **Video settings**, and
+**Recovery**. The interface keeps expert tables and filters while making current
+state, risk, cancellation, and recovery paths explicit.
 
-| | | |
-|---|---|---|
-| ![Dashboard](docs/screenshots/01-dashboard.png) | ![Analyze](docs/screenshots/02-analyze.png) | ![Optimize](docs/screenshots/03-optimize.png) |
-| ![Backup](docs/screenshots/04-backup.png) | ![Benchmark](docs/screenshots/05-benchmark.png) | ![Video](docs/screenshots/06-video.png) |
-| ![Settings](docs/screenshots/07-settings.png) | *(Network panel — screenshot pending)* | |
+The GUI does not execute the phase internals — Phases 1–3 continue in resumable
+terminal processes. It does perform explicitly confirmed maintenance, DNS,
+video-file, and recovery operations.
 
-The GUI does not run optimizations — Phases 1–3 use the terminal. The dashboard handles analysis, backup, benchmarking, network diagnostics, storage maintenance, and configuration.
-
-For full panel documentation, see [`docs/gui.md`](docs/gui.md).
+For usage and implementation conventions, see [`docs/gui.md`](docs/gui.md)
+and [`docs/frontend.md`](docs/frontend.md).
 
 ---
 
@@ -161,9 +168,13 @@ For full panel documentation, see [`docs/gui.md`](docs/gui.md).
 
 ```
 CS2-Optimize-Suite/
+├── PRODUCT.md                 Product purpose, audiences, and design principles
+├── DESIGN.md                  Frontend visual tokens and component rules
 ├── START.bat                  Main menu (run as Administrator)
-├── START-GUI.bat              WPF dashboard launcher
-├── CS2-Optimize-GUI.ps1       WPF dashboard
+├── START-GUI.bat              WPF desktop-interface launcher
+├── CS2-Optimize-GUI.ps1       WPF lifecycle, navigation, and async operations
+├── ui/
+│   └── CS2-Optimize-GUI.xaml  WPF layout, resources, and accessibility metadata
 ├── config.env.ps1             Central config (paths, maps, NIC, DNS, autoexec CVars)
 ├── helpers.ps1                Module loader
 ├── helpers/
@@ -171,7 +182,7 @@ CS2-Optimize-Suite/
 │   ├── benchmark-history.ps1  Before/after benchmark tracking
 │   ├── debloat.ps1            Native system debloat
 │   ├── gpu-driver-clean.ps1   Native GPU driver removal (replaces DDU)
-│   ├── gui-panels.ps1         WPF panel builders for GUI dashboard
+│   ├── gui-panels.ps1         WPF task data and interaction handlers
 │   ├── hardware-detect.ps1    RAM, CPU, GPU detection
 │   ├── logging.ps1            Output formatting
 │   ├── msi-interrupts.ps1     MSI interrupt configuration
@@ -184,7 +195,7 @@ CS2-Optimize-Suite/
 │   ├── storage-health.ps1     TRIM health + ReTrim maintenance helpers
 │   ├── step-state.ps1         Progress tracking (state.json / progress.json)
 │   ├── step-catalog.ps1       Step metadata for GUI
-│   ├── system-analysis.ps1    Health checks for GUI Analyze panel
+│   ├── system-analysis.ps1    Health checks for the GUI Assess task
 │   ├── system-utils.ps1       Registry, boot config, utilities
 │   └── tier-system.ps1        Profile execution + risk system
 ├── Run-Optimize.ps1           Full optimization run (38 steps)
@@ -211,7 +222,7 @@ CS2-Optimize-Suite/
 │   ├── audio_lowlatency_025.cfg Optional lower-buffer audio experiment
 │   ├── audio_lowlatency_001.cfg Optional aggressive audio experiment
 │   └── valve-latency-targets.json Heuristic target definitions for the Valve Region Latency Diagnostic
-└── docs/                      Deep-dive documentation (20 active Markdown files + video.txt — see below)
+└── docs/                      21 active Markdown guides + video.txt reference
 ```
 
 All state is stored in `C:\CS2_OPTIMIZE\`. Logs in `C:\CS2_OPTIMIZE\Logs\`. Backups in `C:\CS2_OPTIMIZE\backup.json`. FPS history stays in `benchmark_history.json`; latency runs are stored separately in `latency_history.json`.
@@ -355,7 +366,7 @@ The reason: a gaming PC always has background network traffic (Discord, Steam, W
 
 ### Game Mode: Why We Still Enable It
 
-Many 2020–2022 guides recommended disabling Game Mode, citing valleyofdoom/PC-Tuning findings about "thread priority interference." The suite still prefers enabling Game Mode, but the repo now treats that as a Windows gaming-default choice rather than a proved Windows Update suppression contract. Critically, Game Mode and Game DVR/Bar are *separate systems* despite the same Settings panel — Step 31 disables DVR (recording overhead), Step 12 keeps the game-priority path enabled. → [`docs/windows-scheduler.md`](docs/windows-scheduler.md)
+Many 2020–2022 guides recommended disabling Game Mode, citing valleyofdoom/PC-Tuning findings about "thread priority interference." The suite still prefers enabling Game Mode, but the repo now treats that as a Windows gaming-default choice rather than a proved Windows Update suppression contract. Critically, Game Mode and Game DVR/Bar are *separate Windows settings* — Step 31 disables DVR (recording overhead), Step 12 keeps the game-priority path enabled. → [`docs/windows-scheduler.md`](docs/windows-scheduler.md)
 
 ### NetworkThrottlingIndex: Why We Do NOT Set It
 
@@ -451,7 +462,7 @@ Use **Full Cleanup** after any Windows or GPU driver update (shader cache invali
 
 Every modification is automatically backed up before application — registry values (original + type + existence), service start types, boot config entries, power plan GUID, DRS per-setting previous values, scheduled task state. All stored in `C:\CS2_OPTIMIZE\backup.json`, tagged by step title and timestamp.
 
-Access via `START.bat → [7] Restore / Rollback` — per-step rollback or full restore. The GUI **Backup** panel provides the same functionality with a visual interface.
+Access via `START.bat → [7] Restore / Rollback` — per-step rollback or full restore. The GUI **Recovery** task provides the same functionality with a visual interface.
 
 For manual rollback reference, backup format details, and all 6 backup types, see [`docs/backup-restore.md`](docs/backup-restore.md).
 
@@ -467,7 +478,8 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | [`docs/fresh-windows-baseline.md`](docs/fresh-windows-baseline.md) | Official Windows 11 baseline before running the suite; guidance against prebuilt debloated ISOs |
 | [`docs/evidence.md`](docs/evidence.md) | Per-optimization impact notes, risk trade-off analysis, full step decision matrix |
 | [`docs/debunked.md`](docs/debunked.md) | 40+ debunked settings with evidence, contested optimizations, AMD Anti-Lag history, known limitations |
-| [`docs/gui.md`](docs/gui.md) | GUI dashboard panels, interaction details, layout examples |
+| [`docs/gui.md`](docs/gui.md) | Desktop task areas, interaction behavior, safety boundaries, and limitations |
+| [`docs/frontend.md`](docs/frontend.md) | WPF architecture, styling, accessibility, responsive behavior, and validation |
 | [`docs/network-diagnostics.md`](docs/network-diagnostics.md) | Valve Region Latency Diagnostic, DNS workflow, history model, wording constraints |
 | [`docs/storage-health.md`](docs/storage-health.md) | TRIM health, enable flow, ReTrim maintenance, evidence posture |
 | [`docs/audio.md`](docs/audio.md) | Headphone-mode spatial baseline (`speaker_config` + `snd_spatialize_lerp`), headphone EQ preference study, ducking, voice CVars |
