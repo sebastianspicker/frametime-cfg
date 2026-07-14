@@ -39,6 +39,13 @@ function Complete-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     if ($stepKey -notin @($prog.completedSteps)) {
         $prog.completedSteps = @($prog.completedSteps) + $stepKey
     }
+    # Completion and skip are mutually exclusive states. This also canonicalizes
+    # legacy progress when a previously skipped step is completed on retry.
+    if ($prog.PSObject.Properties['skippedSteps']) {
+        $prog.skippedSteps = @($prog.skippedSteps | Where-Object { $_ -ne $stepKey })
+    } else {
+        $prog | Add-Member -NotePropertyName skippedSteps -NotePropertyValue @() -Force
+    }
     # Ensure timestamps is a PSCustomObject for consistent Add-Member behavior.
     # On first call, timestamps may be a hashtable (from the initial @{} literal);
     # Add-Member on a hashtable creates a NoteProperty that is lost during JSON
@@ -49,6 +56,7 @@ function Complete-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     $prog.timestamps | Add-Member -NotePropertyName "$phase-$stepNum" `
         -NotePropertyValue (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Force
     Save-Progress $prog
+    $SCRIPT:CurrentTierStepOutcome = 'Applied'
     Write-DebugLog "Step $stepNum completed: $stepName"
 }
 
@@ -61,6 +69,11 @@ function Skip-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     $stepKey = "P${phase}:${stepNum}"
     if ($stepKey -notin @($prog.skippedSteps)) {
         $prog.skippedSteps = @($prog.skippedSteps) + $stepKey
+    }
+    if ($prog.PSObject.Properties['completedSteps']) {
+        $prog.completedSteps = @($prog.completedSteps | Where-Object { $_ -ne $stepKey })
+    } else {
+        $prog | Add-Member -NotePropertyName completedSteps -NotePropertyValue @() -Force
     }
     # Do NOT add to completedSteps — skippedSteps is a separate semantic.
     # Test-StepDone checks both arrays for resume purposes.
@@ -75,6 +88,7 @@ function Skip-Step([int]$phase, [int]$stepNum, [string]$stepName) {
         $prog.lastSkippedStep = [math]::Max($prog.lastSkippedStep, $stepNum)
     }
     Save-Progress $prog
+    $SCRIPT:CurrentTierStepOutcome = 'Skipped'
 }
 
 function Test-StepDone([int]$phase, [int]$stepNum) {
@@ -86,6 +100,14 @@ function Test-StepDone([int]$phase, [int]$stepNum) {
     # Legacy progress files with bare numbers are treated as empty (user re-runs from step 1).
     $stepKey = "P${phase}:${stepNum}"
     return ($stepKey -in @($prog.completedSteps) -or $stepKey -in @($prog.skippedSteps))
+}
+
+function Test-StepCompleted([int]$phase, [int]$stepNum) {
+    <# Checks applied completion only. Use Test-StepDone for resume routing. #>
+    $prog = Load-Progress
+    if (-not $prog) { return $false }
+    $stepKey = "P${phase}:${stepNum}"
+    return ($stepKey -in @($prog.completedSteps))
 }
 
 function Show-ResumePrompt($phase, $totalSteps) {

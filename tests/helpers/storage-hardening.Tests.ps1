@@ -48,6 +48,19 @@ Describe "Get-BackupDataRaw corruption handling" {
                 Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}(?:\d{3})?\.json$' }
         ).Count | Should -Be 0
     }
+
+    It "leaves the only corrupted backup untouched when preservation fails" {
+        $corruptContent = "not json and must survive"
+        Set-Content $CFG_BackupFile -Value $corruptContent -Encoding UTF8
+        Mock Copy-Item { throw "disk full" }
+        Mock Write-Warn {}
+
+        { Get-BackupDataRaw } | Should -Throw '*Refusing to reset corrupted backup*'
+
+        Test-Path -LiteralPath $CFG_BackupFile | Should -Be $true
+        (Get-Content -LiteralPath $CFG_BackupFile -Raw).Trim() | Should -BeExactly $corruptContent
+        @(Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.corrupt.*.json").Count | Should -Be 0
+    }
 }
 
 Describe "Sensitive JSON ACL re-application" {

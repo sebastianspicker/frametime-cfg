@@ -19,6 +19,57 @@
 
 param([switch]$SmokeTest)
 
+function Test-PublishedRuntimePayloadBootstrap {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RuntimeRoot)
+
+    try {
+        $manifestPath = Join-Path $RuntimeRoot "runtime-manifest.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "runtime-manifest.json is missing" }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($manifest.schemaVersion -ne 1) { throw "unsupported runtime manifest schema" }
+        $expectedContract = "bba9d71061a9cd0b7897c97c5792aab42f29d6cd3f89f2bcd80883cd5f2c75c4"
+        $entries = @($manifest.files)
+        if ($entries.Count -eq 0) { throw "runtime manifest has no files" }
+        $manifestPaths = @($entries | ForEach-Object { [string]$_.path })
+        if (@($manifestPaths | Group-Object | Where-Object Count -gt 1).Count -gt 0) { throw "runtime manifest contains duplicate paths" }
+        $contractText = (@($manifestPaths | Sort-Object) -join "`n")
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $actualContract = (([BitConverter]::ToString($sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($contractText))) -replace '-', '').ToLowerInvariant())
+        } finally {
+            $sha256.Dispose()
+        }
+        if ($manifest.payloadContract -ne $expectedContract -or $actualContract -ne $expectedContract) { throw "runtime payload contract mismatch" }
+        foreach ($relativePath in $manifestPaths) {
+            if ($relativePath -notmatch '^[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)*$' -or $relativePath -match '(^|/)\.\.(/|$)') {
+                throw "runtime manifest contains an unsafe path"
+            }
+        }
+        $rootPath = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        $actualPaths = @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop |
+            Where-Object { $_.FullName -ne $manifestPath } |
+            ForEach-Object {
+                (([IO.Path]::GetFullPath($_.FullName).Substring($rootPath.Length) -replace '^[\\/]+', '') -replace '\\', '/')
+            })
+        if (@(Compare-Object -ReferenceObject @($manifestPaths | Sort-Object) -DifferenceObject @($actualPaths | Sort-Object)).Count -gt 0) {
+            throw "runtime contains missing or extra files"
+        }
+        foreach ($entry in $entries) {
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "invalid manifest hash for $relativePath" }
+            $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($actualHash -ne $expectedHash) { throw "runtime hash mismatch: $relativePath" }
+        }
+        return [PSCustomObject]@{ Valid = $true; Message = "Published runtime payload verified." }
+    } catch {
+        return [PSCustomObject]@{ Valid = $false; Message = "Published runtime validation failed: $_" }
+    }
+}
+
+
 function Test-PostRebootSetupAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
@@ -39,8 +90,143 @@ function Invoke-PostRebootSetupEntryPoint {
         return
     }
 
+    $payloadValidation = Test-PublishedRuntimePayloadBootstrap -RuntimeRoot $PSScriptRoot
+    if (-not $payloadValidation.Valid) {
+        Write-Host "  CRITICAL: $($payloadValidation.Message)" -ForegroundColor Red
+        Write-Host "  No Phase 3 system changes were attempted." -ForegroundColor Yellow
+        Write-Host "  Re-run Phase 1 to publish a complete runtime payload, then launch Phase 3 again." -ForegroundColor Cyan
+        return
+    }
     Assert-PostRebootSetupAdministrator
     Invoke-PostRebootSetup
+}
+
+function Remove-GpuAppxPackages {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][ValidateSet("1", "2", "3", "4")][string]$GpuInput)
+
+    $gpuAppxVendor = switch ($GpuInput) {
+        { $_ -in @("1", "2") } { "NVIDIA" }
+        "3"                      { "AMD" }
+        default                  { $null }
+    }
+    if (-not $gpuAppxVendor) {
+        return [PSCustomObject]@{ Status = 'NotApplicable'; CanCompleteStep = $true; RemovedCount = 0; Message = 'No GPU AppX cleanup is required.' }
+    }
+
+    if ($SCRIPT:DryRun) {
+        Write-Host "  [DRY-RUN] Would remove leftover $gpuAppxVendor AppX and provisioned packages." -ForegroundColor Magenta
+        return [PSCustomObject]@{ Status = 'DryRun'; CanCompleteStep = $false; RemovedCount = 0; Message = 'GPU AppX cleanup was previewed.' }
+    }
+    if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) -or
+        -not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        return [PSCustomObject]@{ Status = 'Failed'; CanCompleteStep = $false; RemovedCount = 0; Message = 'Required AppX inventory cmdlets are unavailable.' }
+    }
+
+    $removedCount = 0
+    $failures = [Collections.Generic.List[string]]::new()
+    $notProcessed = 0
+    $selectInstalled = {
+        $_.Name -match $gpuAppxVendor -and
+        -not ($gpuAppxVendor -eq 'NVIDIA' -and
+            ($_.Name -match 'ControlPanel' -or $_.PackageFullName -match 'ControlPanel'))
+    }
+    $selectProvisioned = {
+        ($_.DisplayName -match $gpuAppxVendor -or $_.PackageName -match $gpuAppxVendor) -and
+        -not ($gpuAppxVendor -eq 'NVIDIA' -and
+            ($_.DisplayName -match 'ControlPanel' -or $_.PackageName -match 'ControlPanel'))
+    }
+    try {
+        $gpuAppx = @(Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object $selectInstalled)
+        $gpuProv = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | Where-Object $selectProvisioned)
+    } catch {
+        return [PSCustomObject]@{ Status = 'Failed'; CanCompleteStep = $false; RemovedCount = 0; Message = "GPU AppX inventory failed: $($_.Exception.Message)" }
+    }
+
+    foreach ($pkg in $gpuAppx) {
+        if (-not $PSCmdlet.ShouldProcess($pkg.PackageFullName, 'Remove leftover GPU AppX package')) {
+            $notProcessed++
+            continue
+        }
+        try {
+            Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
+            Write-OK "Removed leftover AppX: $($pkg.Name)"
+            $removedCount++
+        } catch {
+            $failures.Add("Installed package '$($pkg.Name)' could not be removed: $($_.Exception.Message)")
+        }
+    }
+
+    foreach ($pkg in $gpuProv) {
+        if (-not $PSCmdlet.ShouldProcess($pkg.PackageName, 'Remove provisioned GPU AppX package')) {
+            $notProcessed++
+            continue
+        }
+        try {
+            Remove-AppxProvisionedPackage -Online -PackageName $pkg.PackageName -ErrorAction Stop | Out-Null
+            Write-OK "Removed provisioned: $($pkg.DisplayName)"
+            $removedCount++
+        } catch {
+            $failures.Add("Provisioned package '$($pkg.DisplayName)' could not be removed: $($_.Exception.Message)")
+        }
+    }
+
+    if ($notProcessed -gt 0) {
+        return [PSCustomObject]@{ Status = 'DryRun'; CanCompleteStep = $false; RemovedCount = $removedCount; Message = "$notProcessed GPU AppX removal(s) were not processed." }
+    }
+
+    try {
+        $remainingInstalled = @(Get-AppxPackage -AllUsers -ErrorAction Stop | Where-Object $selectInstalled)
+        $remainingProvisioned = @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | Where-Object $selectProvisioned)
+    } catch {
+        $failures.Add("Post-cleanup GPU AppX inventory failed: $($_.Exception.Message)")
+        $remainingInstalled = @()
+        $remainingProvisioned = @()
+    }
+    foreach ($pkg in $remainingInstalled) {
+        $failures.Add("Installed GPU AppX package remains: $($pkg.PackageFullName)")
+    }
+    foreach ($pkg in $remainingProvisioned) {
+        $failures.Add("Provisioned GPU AppX package remains: $($pkg.PackageName)")
+    }
+
+    if ($failures.Count -gt 0) {
+        foreach ($failure in $failures) { Write-Debug "AppX cleanup: $failure" }
+        return [PSCustomObject]@{
+            Status = 'Failed'; CanCompleteStep = $false; RemovedCount = $removedCount
+            Message = ($failures -join '; ')
+        }
+    }
+
+    return [PSCustomObject]@{ Status = 'Success'; CanCompleteStep = $true; RemovedCount = $removedCount; Message = 'GPU AppX cleanup completed and was verified.' }
+}
+
+function Get-VbsDetectionResult {
+    <#
+    .SYNOPSIS
+        Returns the authoritative VBS detection outcome used by Phase 3 Step 7.
+    .DESCRIPTION
+        A missing DeviceGuard instance or failed CIM query is a failed detection,
+        not evidence that VBS is inactive.
+    #>
+    try {
+        $dg = Get-CimInstance -ClassName Win32_DeviceGuard `
+            -Namespace root/Microsoft/Windows/DeviceGuard -ErrorAction Stop
+        if (-not $dg) {
+            return [PSCustomObject]@{ Status = "Failed"; CanCompleteStep = $false; IsActive = $null; Message = "VBS detection returned no Win32_DeviceGuard instance." }
+        }
+        if ($null -eq $dg.VirtualizationBasedSecurityStatus) {
+            return [PSCustomObject]@{ Status = "Failed"; CanCompleteStep = $false; IsActive = $null; Message = "VBS detection returned no VirtualizationBasedSecurityStatus." }
+        }
+        return [PSCustomObject]@{
+            Status          = "Success"
+            CanCompleteStep = $true
+            IsActive        = ([int]$dg.VirtualizationBasedSecurityStatus -ge 2)
+            Message         = "Win32_DeviceGuard query completed."
+        }
+    } catch {
+        return [PSCustomObject]@{ Status = "Failed"; CanCompleteStep = $false; IsActive = $null; Message = "VBS detection query failed: $($_.Exception.Message)" }
+    }
 }
 
 function Invoke-PostRebootSetup {
@@ -129,7 +315,7 @@ if ($env:SAFEBOOT_OPTION) {
     Write-Host "  Clearing Safe Mode flag now..." -ForegroundColor White
     $safeBootResult = Clear-SafeBootVerified
     if ($safeBootResult.Verified) {
-        $runOnceResult = Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1" -PassThru
+        $runOnceResult = Set-RunOnce "CS2_Phase3" "$ScriptRoot\PostReboot-Setup.ps1" -PassThru
         if ($runOnceResult.Applied) {
             Write-Host "  $([char]0x2714) Safe Mode disabled and Phase 3 handoff applied." -ForegroundColor Green
             Write-Host "    Restarting into Normal Mode; Phase 3 will run automatically." -ForegroundColor White
@@ -163,7 +349,22 @@ Initialize-Log
 Write-Banner 3 3 "Normal Boot  ·  Driver · MSI · CS2"
 
 $startStep = Show-ResumePrompt $PHASE 13
-if ($startStep -gt 13) { Write-Info "Phase 3 already completed."; Remove-PhaseHandoff -Name "CS2_Phase3"; Remove-BackupLock; if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter]" }; exit 0 }
+if (-not (Test-StepCompleted $PHASE 1)) {
+    Write-Warn "The required driver installation was deferred or left incomplete; resuming at Step 1."
+    $startStep = 1
+} elseif ($startStep -gt 13 -and -not (Test-StepCompleted $PHASE 13)) {
+    Write-Warn "The final benchmark was previously skipped or left incomplete; resuming at Step 13."
+    $startStep = 13
+} elseif ($startStep -gt 13) {
+    Write-Info "Phase 3 already completed."
+    $handoffRemoval = Remove-PhaseHandoff -Name "CS2_Phase3" -PassThru
+    if (-not $handoffRemoval.Applied) {
+        Write-Warn "Phase 3 is complete, but its automatic handoff could not be removed: $($handoffRemoval.Message)"
+    }
+    Remove-BackupLock
+    if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter]" }
+    exit 0
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STEP 1 — INSTALL DRIVER  [T1]
@@ -172,44 +373,15 @@ if ($startStep -le 1) {
     Write-Section "Step 1 — Install Driver"
     Write-TierBadge 1 "Clean driver installation after GPU driver removal"
 
-    # ── Remove leftover GPU AppX/MSIX packages ──────────────────────────────
-    # Phase 2 runs in Safe Mode where AppXSVC cannot start, so AppX removal
-    # is skipped there. Clean them up now in Normal Mode before the fresh install.
-    $gpuAppxVendor = switch ($gpuInput) {
-        { $_ -in @("1","2") } { "NVIDIA" }
-        "3"                    { "AMD" }
-        default                { $null }
-    }
-    if ($gpuAppxVendor -and (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) {
-        try {
-            $gpuAppx = Get-AppxPackage -AllUsers -ErrorAction Stop |
-                Where-Object { $_.Name -match $gpuAppxVendor }
-            foreach ($pkg in $gpuAppx) {
-                try {
-                    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
-                    Write-OK "Removed leftover AppX: $($pkg.Name)"
-                } catch {
-                    Write-Debug "AppX removal: $($pkg.Name) — $_"
-                }
-            }
-            # Also remove provisioned packages to prevent reinstall on feature updates
-            $gpuProv = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-                Where-Object { $_.DisplayName -match $gpuAppxVendor }
-            foreach ($pkg in $gpuProv) {
-                try {
-                    $pkg | Remove-AppxProvisionedPackage -Online -ErrorAction Stop | Out-Null
-                    Write-OK "Removed provisioned: $($pkg.DisplayName)"
-                } catch {
-                    Write-Debug "Provisioned removal: $($pkg.DisplayName) — $_"
-                }
-            }
-        } catch {
-            Write-Debug "AppX cleanup: $_"
-        }
+    # Phase 2 runs in Safe Mode where AppXSVC cannot start, so AppX removal is
+    # deferred to Normal Mode. The helper owns the DRY-RUN boundary.
+    $gpuAppxCleanup = Remove-GpuAppxPackages -GpuInput $gpuInput
+    if (-not $SCRIPT:DryRun -and -not $gpuAppxCleanup.CanCompleteStep) {
+        throw "Normal-Mode GPU AppX cleanup did not complete: $($gpuAppxCleanup.Message)"
     }
 
     # Check if Phase 2 driver removal actually completed
-    $p2DriverDone = Test-StepDone 2 2
+    $p2DriverDone = Test-StepCompleted 2 2
     if (-not $p2DriverDone) {
         Write-Host ""
         Write-Host "  ╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
@@ -338,8 +510,7 @@ if ($startStep -le 1) {
                     Write-Host "    This step will re-run on resume if needed." -ForegroundColor DarkGray
                 }
             } else {
-                Write-Info "Skipped driver install."
-                Skip-Step $PHASE 1 "Driver"
+                Write-Warn "Driver installation deferred. Step 1 remains pending and will run again on resume."
             }
         } else {
             Write-Err "No valid driver file (.exe) found."
@@ -348,7 +519,7 @@ if ($startStep -le 1) {
             Write-Info "Download: https://www.nvidia.com/en-us/drivers/"
             $skipConfirm = if ($SCRIPT:DryRun -or (Test-YoloProfile)) { "y" } else { Read-Host "  Skip driver install and continue to Step 2? [y/N]" }
             if ($skipConfirm -match "^[jJyY]$") {
-                Skip-Step $PHASE 1 "Driver"
+                Write-Warn "Driver installation deferred. Step 1 remains pending and will run again on resume."
             } else {
                 Write-Info "Restart Phase 3 when ready."
             }
@@ -360,8 +531,15 @@ if ($startStep -le 1) {
     } else {
         Write-Info "$(if($gpuInput -eq '3'){'AMD: https://www.amd.com/support'}else{'Intel Arc: https://www.intel.com/content/www/us/en/download-center/home.html'})"
         Write-Info "Custom Install -> driver only, no overlay / link."
-        if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  After driver installation [Enter]" }
-        Complete-Step $PHASE 1 "Driver"
+        if (Test-YoloProfile) {
+            Write-Warn "Manual driver installation is required for AMD/Intel. YOLO mode cannot verify it, so Step 1 remains pending."
+            Write-Info "Install the driver manually, then rerun Phase 3 interactively to acknowledge completion."
+        } elseif ($SCRIPT:DryRun) {
+            Write-Info "DRY-RUN: manual AMD/Intel driver installation previewed; no completion recorded."
+        } else {
+            Read-Host "  After driver installation [Enter]"
+            Complete-Step $PHASE 1 "Driver"
+        }
     }
 }
 
@@ -379,8 +557,14 @@ if ($startStep -le 2) {
         -SideEffects "Rare: device instability if MSI not supported (errors are ignored safely)" `
         -Undo "Delete MSISupported values from device Interrupt Management registry keys" `
         -Action {
-            Enable-DeviceMSI
-            Complete-Step $PHASE 2 "MSI"
+            $msiResult = Enable-DeviceMSI
+            if ($msiResult.Status -eq "Skipped") {
+                Skip-Step $PHASE 2 "MSI"
+            } elseif (-not $msiResult.CanCompleteStep) {
+                throw "MSI interrupt configuration did not complete: $($msiResult.Message)"
+            } else {
+                Complete-Step $PHASE 2 "MSI"
+            }
         } `
         -SkipAction { Skip-Step $PHASE 2 "MSI" }
 }
@@ -399,8 +583,14 @@ if ($startStep -le 3) {
         -SideEffects "Wrong affinity can increase latency. Only useful after LatencyMon diagnosis." `
         -Undo "Delete DevicePolicy + AssignmentSetOverride from NIC Affinity Policy key" `
         -Action {
-            Set-NicInterruptAffinity
-            Complete-Step $PHASE 3 "NicAffinity"
+            $affinityResult = Set-NicInterruptAffinity
+            if ($affinityResult.Status -eq "Skipped") {
+                Skip-Step $PHASE 3 "NicAffinity"
+            } elseif (-not $affinityResult.CanCompleteStep) {
+                throw "NIC interrupt affinity did not complete: $($affinityResult.Message)"
+            } else {
+                Complete-Step $PHASE 3 "NicAffinity"
+            }
         } `
         -SkipAction { Skip-Step $PHASE 3 "NicAffinity" }
 }
@@ -506,16 +696,13 @@ if ($startStep -le 7) {
         -SideEffects "Reduces credential theft protection (LSASS). May break FACEIT AC / Vanguard." `
         -Undo "Windows Security -> Device Security -> Core Isolation -> Memory Integrity: ON" `
         -Action {
-            # Detect current VBS status + check if already pending disable via registry
-            $vbsActive = $false
+            # DeviceGuard is the authoritative VBS state source for this step.
+            # A failed or incomplete query must not be treated as "inactive".
+            $vbsDetection = Get-VbsDetectionResult
             $hvciPendingOff = $false
-            try {
-                $dg = Get-CimInstance -ClassName Win32_DeviceGuard `
-                    -Namespace root/Microsoft/Windows/DeviceGuard -ErrorAction SilentlyContinue
-                if ($dg -and $dg.VirtualizationBasedSecurityStatus -ge 2) {
-                    $vbsActive = $true
-                }
-            } catch { Write-Debug "VBS detection: $_" }
+            if ($vbsDetection.Status -ne "Success") {
+                throw "VBS detection did not complete: $($vbsDetection.Message)"
+            }
             try {
                 $hvciVal = Get-ItemProperty `
                     "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
@@ -525,7 +712,7 @@ if ($startStep -le 7) {
                 Write-DebugLog "HVCI registry pending-off probe failed: $($_.Exception.Message)"
             }
 
-            if (-not $vbsActive) {
+            if (-not $vbsDetection.IsActive) {
                 Write-OK "VBS/Core Isolation: not active — no overhead to remove."
                 Complete-Step $PHASE 7 "VBS"
                 return
@@ -547,14 +734,23 @@ if ($startStep -le 7) {
             Write-Blank
 
             # Disable Memory Integrity (HVCI) via registry
-            Set-RegistryValue `
+            $hvciWriteResult = Set-RegistryValue `
                 "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity" `
-                "Enabled" 0 "DWord" "Disable Memory Integrity (HVCI)"
+                "Enabled" 0 "DWord" "Disable Memory Integrity (HVCI)" -PassThru
 
-            if (-not $SCRIPT:DryRun) {
-                Write-OK "Memory Integrity (HVCI) disabled. Reboot required for full effect."
-                Write-Info "Verify after reboot: msinfo32 -> Virtualization-based security -> 'Not Enabled'"
+            if (-not $hvciWriteResult) {
+                throw "VBS/HVCI disable did not return a registry-write result."
             }
+            if ($hvciWriteResult.Status -eq "DryRun") {
+                Write-Info "VBS/HVCI disable previewed; no completion recorded."
+                return
+            }
+            if ($hvciWriteResult.Status -ne "Success") {
+                throw "VBS/HVCI disable did not complete: $($hvciWriteResult.Message)"
+            }
+
+            Write-OK "Memory Integrity (HVCI) disabled. Reboot required for full effect."
+            Write-Info "Verify after reboot: msinfo32 -> Virtualization-based security -> 'Not Enabled'"
             Complete-Step $PHASE 7 "VBS"
         } `
         -SkipAction { Skip-Step $PHASE 7 "VBS" }
@@ -607,8 +803,16 @@ if ($startStep -le 8) {
                 Write-Host "  │  -> Custom Install -> Driver only (minimal Adrenalin)       │" -ForegroundColor White
                 Write-Host "  │  -> Check 'Factory Reset' for clean install                 │" -ForegroundColor White
                 Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Red
-                if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter] when done" }
-                Complete-Step $PHASE 8 "AMDSettings"
+                if (Test-YoloProfile) {
+                    Write-Warn "Manual AMD Adrenalin settings are required. YOLO mode cannot verify them, so this step is recorded as skipped."
+                    Write-Info "Apply the listed settings, then rerun Phase 3 interactively to acknowledge completion."
+                    Skip-Step $PHASE 8 "AMDSettings (manual action required)"
+                } elseif ($SCRIPT:DryRun) {
+                    Write-Info "DRY-RUN: AMD Adrenalin settings previewed; no completion recorded."
+                } else {
+                    Read-Host "  [Enter] when done"
+                    Complete-Step $PHASE 8 "AMDSettings"
+                }
             } `
             -SkipAction { Skip-Step $PHASE 8 "AMDSettings" }
     } else {
@@ -740,21 +944,32 @@ if ($startStep -le 9) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 10 — PROCESS PRIORITY / CCD AFFINITY  [T3]
+# STEP 10 — PROCESS PRIORITY / X3D TOPOLOGY  [T3]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 10) {
-    Write-Section "Step 10 — Process Priority / CCD Affinity (native IFEO)"
+    Write-Section "Step 10 — Process Priority / X3D Topology (native IFEO)"
     Invoke-TieredStep -Tier 3 -Title "Set persistent CS2 process priority (native IFEO)" `
-        -Why "High CPU priority gives CS2 scheduler preference. CCD pinning for dual-CCD X3D." `
-        -Evidence "T3: No isolated benchmark for priority class. CCD pinning measurable on dual-CCD X3D." `
+        -Why "High CPU priority gives CS2 scheduler preference. Dual-CCD X3D systems receive manual topology guidance; aggregate WMI counts are never treated as an affinity map." `
+        -Evidence "T3: No isolated benchmark for priority class. Automatic CCD pinning is disabled until Windows exposes an authoritative logical-processor-to-CCD map." `
         -Caveat "High priority is safe for games. Realtime would be dangerous — we never use it." `
         -Risk "SAFE" -Depth "REGISTRY" `
         -Improvement "CPU priority for CS2 — persistent via IFEO (no background service needed)" `
         -SideEffects "None — High priority is standard for games. Easily reversible." `
-        -Undo "Remove IFEO PerfOptions key + unregister CCD affinity task (if created)" `
+        -Undo "Remove the cs2.exe IFEO PerfOptions key" `
         -Action {
-            Set-CS2ProcessPriority
-            Complete-Step $PHASE 10 "ProcessPriority"
+            $priorityResult = Set-CS2ProcessPriority
+            if (-not $priorityResult) {
+                throw "Process-priority configuration did not return a result."
+            }
+            if ($priorityResult.Status -eq "DryRun") {
+                Write-Info "Process-priority configuration previewed; no completion recorded."
+            } elseif ($priorityResult.Status -eq "Skipped") {
+                Skip-Step $PHASE 10 "ProcessPriority"
+            } elseif (-not $priorityResult.CanCompleteStep) {
+                throw "Process-priority configuration did not complete: $($priorityResult.Message)"
+            } else {
+                Complete-Step $PHASE 10 "ProcessPriority"
+            }
         } `
         -SkipAction { Skip-Step $PHASE 10 "ProcessPriority" }
 }
@@ -990,7 +1205,9 @@ if ($startStep -le 13) {
         Write-Info "Set FPS cap in: NVIDIA CP -> CS2 -> Max Frame Rate -> $($bmResult.Cap)"
         Write-Info "You can run this benchmark again anytime via START.bat -> [3] FPS Cap Calculator."
         Write-Info "All results are tracked in: $CFG_BenchmarkFile"
-
+        Complete-Step $PHASE 13 "FinalBenchmark"
+    } elseif (-not $SCRIPT:DryRun) {
+        Write-Warn "Final benchmark step remains incomplete until a result is captured and saved."
     }
 
     # Show full history if multiple results exist
@@ -1000,19 +1217,30 @@ if ($startStep -le 13) {
         Show-BenchmarkComparison
     }
 
-    Complete-Step $PHASE 13 "FinalBenchmark"
 }
 
 Write-Blank
 if ($SCRIPT:DryRun) {
     Write-PhaseSummary -PhaseLabel "PHASE 3" -DryRun
 } else {
-    Remove-PhaseHandoff -Name "CS2_Phase3"
-    Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -NextAction "Good luck, have fun! GG"
-
-    $r = if (Test-YoloProfile) { "y" } else { Read-Host "  Final restart recommended (MSI changes). Now? [y/N]" }
-    if ($r -match "^[jJyY]$") {
-        Restart-Computer -Force
+    if (-not (Test-StepCompleted $PHASE 1)) {
+        Write-Warn "Phase 3 remains incomplete; the automatic handoff is retained until the required driver installation is completed."
+        Write-PhaseSummary -PhaseLabel "PHASE 3 INCOMPLETE" -NextAction "Run Phase 3 again and complete Step 1 (Driver)."
+    } elseif (-not (Test-StepCompleted $PHASE 13)) {
+        Write-Warn "Phase 3 remains incomplete; the automatic handoff is retained until the final benchmark is saved."
+        Write-PhaseSummary -PhaseLabel "PHASE 3 INCOMPLETE" -NextAction "Run Phase 3 again to capture the final benchmark."
+    } else {
+        $handoffRemoval = Remove-PhaseHandoff -Name "CS2_Phase3" -PassThru
+        if (-not $handoffRemoval.Applied) {
+            Write-Err "Phase 3 completed, but its automatic handoff could not be removed: $($handoffRemoval.Message)"
+            Write-PhaseSummary -PhaseLabel "PHASE 3 HANDOFF PENDING" -NextAction "Remove the Phase 3 handoff before restarting."
+        } else {
+            Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -NextAction "Good luck, have fun! GG"
+            $r = if (Test-YoloProfile) { "y" } else { Read-Host "  Final restart recommended (MSI changes). Now? [y/N]" }
+            if ($r -match "^[jJyY]$") {
+                Restart-Computer -Force
+            }
+        }
     }
 }
 } catch {

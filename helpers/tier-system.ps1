@@ -324,16 +324,26 @@ function Invoke-TieredStep {
 
     # ── Execute or skip ─────────────────────────────────────────────
     $actionOk = $true
+    $actionOutcome = $null
     if ($run) {
         Write-DebugLog "Executing: '$Title'"
+        $SCRIPT:CurrentTierStepOutcome = $null
         try { & $Action } catch {
             Write-Err "Step '$Title' failed: $_"
-            Write-ConsoleLine "  $([char]0x2139) What to do: This step was skipped safely. Your system is not affected." -ForegroundColor Cyan
-            Write-ConsoleLine "  $([char]0x2139) You can retry later via START.bat, or continue $([char]0x2014) remaining steps still work." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) What to do: This step did not complete; some earlier changes in it may already be applied." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) Backups were retained. Retry the step or use START.bat -> Restore/Rollback before continuing." -ForegroundColor Cyan
             $actionOk = $false
         }
+        $actionOutcome = $SCRIPT:CurrentTierStepOutcome
+        $SCRIPT:CurrentTierStepOutcome = $null
         # Update phase counters
-        if ($actionOk) { Add-PhaseApplied } else { Add-PhaseFailed }
+        if (-not $actionOk) {
+            Add-PhaseFailed
+        } elseif ($actionOutcome -eq 'Skipped') {
+            Add-PhaseSkipped
+        } else {
+            Add-PhaseApplied
+        }
     } else {
         Write-DebugLog "Skipped: '$Title'"
         Add-PhaseSkipped
@@ -346,7 +356,7 @@ function Invoke-TieredStep {
     try { Flush-BackupBuffer } catch { Write-Warn "Backup entries could not be saved to disk after '$Title': $_  (entries retained in memory for next flush)" }
 
     $SCRIPT:CurrentStepTitle = $null
-    return ($run -and $actionOk)
+    return ($run -and $actionOk -and $actionOutcome -ne 'Skipped')
 }
 
 # Backward-compatible wrapper

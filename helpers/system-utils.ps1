@@ -74,6 +74,40 @@ function Invoke-Download {
     }
 }
 
+function Invoke-AtomicJsonFileCommit {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TemporaryPath,
+        [Parameter(Mandatory)][string]$DestinationPath
+    )
+
+    if ([IO.File]::Exists($DestinationPath)) {
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            # Windows PowerShell 5.1 requires File.Replace for an atomic
+            # existing-file swap. A real same-directory backup path is required
+            # by all supported runtimes; if the process dies after replacement,
+            # both the new destination and recoverable old backup still exist.
+            $replacementBackup = "$DestinationPath.replace-backup-$([Guid]::NewGuid().ToString('N'))"
+            try {
+                [IO.File]::Replace($TemporaryPath, $DestinationPath, $replacementBackup)
+            } finally {
+                if ([IO.File]::Exists($replacementBackup)) {
+                    try { [IO.File]::Delete($replacementBackup) } catch {
+                        Write-Warn "Atomic JSON replacement committed, but its backup could not be removed: $replacementBackup"
+                    }
+                }
+            }
+        } else {
+            # .NET on Unix maps overwrite=true to the same-filesystem atomic
+            # rename(2) replacement primitive.
+            [IO.File]::Move($TemporaryPath, $DestinationPath, $true)
+        }
+    } else {
+        # Both paths are in the same directory, so this is one metadata rename.
+        [IO.File]::Move($TemporaryPath, $DestinationPath)
+    }
+}
+
 function Save-JsonAtomic {
     <#  Writes JSON to a file atomically (write-to-temp-then-rename).
         Prevents corruption if interrupted by crash or power loss.
@@ -88,20 +122,30 @@ function Save-JsonAtomic {
     )
     # Ensure parent directory exists — callers usually call Ensure-Dir early,
     # but defensive creation here prevents silent failures from edge-case paths.
-    $parentDir = Split-Path $Path -Parent
+    $nativePath = $Path -replace '\\', [IO.Path]::DirectorySeparatorChar
+    $parentDir = [IO.Path]::GetDirectoryName($nativePath)
     if ($parentDir -and -not (Test-Path $parentDir)) {
         New-Item -ItemType Directory -Path $parentDir -Force -ErrorAction Stop | Out-Null
     }
-    $leafName = Split-Path -Path $Path -Leaf
+    $leafName = [IO.Path]::GetFileName($nativePath)
     $tmpName = "{0}.{1}.{2}.tmp" -f $leafName, $PID, ([System.IO.Path]::GetRandomFileName())
     $tmp = if ($parentDir) { Join-Path $parentDir $tmpName } else { $tmpName }
     try {
         $json = $Data | ConvertTo-Json -Depth $Depth
-        [System.IO.File]::WriteAllText($tmp, $json, [System.Text.UTF8Encoding]::new($false))
-        # Move-Item is atomic on NTFS when source and destination are on the same volume
-        # (it performs a metadata-only rename operation). This guarantees that $Path is
-        # either the old complete file or the new complete file — never a partial write.
-        Move-Item $tmp $Path -Force -ErrorAction Stop
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $stream = [IO.File]::Open(
+            $tmp,
+            [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write,
+            [IO.FileShare]::None
+        )
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+        Invoke-AtomicJsonFileCommit -TemporaryPath $tmp -DestinationPath $nativePath
     } catch {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         throw "Save-JsonAtomic failed for '$Path': $_"
@@ -118,7 +162,7 @@ function Set-SecureAcl {
         [switch]$Required
     )
 
-    if (-not (Test-Path $Path)) { return }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
     if (-not (Test-HostIsWindows)) { return }
 
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -162,7 +206,7 @@ function Set-SecureAcl {
         $acl.SetAccessRule($adminRule)
         $acl.SetAccessRule($systemRule)
         if (-not $PSCmdlet.ShouldProcess($Path, "Apply restricted Administrators/SYSTEM ACL")) { return }
-        Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
     }
 
     try {
@@ -218,73 +262,466 @@ function Test-TrustedSuiteScriptPath {
     )
 }
 
-function Copy-PhaseRuntimePayload {
+function Get-PhaseRuntimePayloadRelativePaths {
     [CmdletBinding()]
+    param()
+
+    # This is intentionally explicit. Adding a runtime dependency requires a
+    # reviewed manifest change rather than silently broadening privileged code.
+    return @(
+        "SafeMode-DriverClean.ps1",
+        "PostReboot-Setup.ps1",
+        "Guide-VideoSettings.ps1",
+        "helpers.ps1",
+        "config.env.ps1",
+        "helpers/backup-restore.ps1",
+        "helpers/benchmark-history.ps1",
+        "helpers/debloat.ps1",
+        "helpers/gpu-driver-clean.ps1",
+        "helpers/hardware-detect.ps1",
+        "helpers/logging.ps1",
+        "helpers/msi-interrupts.ps1",
+        "helpers/network-diagnostics.ps1",
+        "helpers/nvidia-driver.ps1",
+        "helpers/nvidia-drs.ps1",
+        "helpers/nvidia-profile.ps1",
+        "helpers/power-plan.ps1",
+        "helpers/process-priority.ps1",
+        "helpers/step-state.ps1",
+        "helpers/storage-health.ps1",
+        "helpers/system-utils.ps1",
+        "helpers/tier-system.ps1",
+        "cfgs/audio_lowlatency_001.cfg",
+        "cfgs/audio_lowlatency_025.cfg",
+        "cfgs/audio_stable.cfg",
+        "cfgs/autoexec.cfg.example",
+        "cfgs/debug_hud.cfg",
+        "cfgs/debug_hud_off.cfg",
+        "cfgs/net_bad.cfg",
+        "cfgs/net_highping.cfg",
+        "cfgs/net_stable.cfg",
+        "cfgs/net_unstable.cfg",
+        "cfgs/valve-latency-targets.json",
+        "docs/video.txt",
+        "docs/nvidia-drs-settings.md"
+    )
+}
+
+function Get-PhaseRuntimeRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DestinationRoot)
+
+    $pointerPath = Join-Path $DestinationRoot "runtime-current.json"
+    if (-not (Test-Path -LiteralPath $pointerPath -PathType Leaf)) {
+        # Backward-compatible fallback for payloads published before immutable
+        # runtime generations were introduced.
+        return (Join-Path $DestinationRoot "runtime")
+    }
+
+    try {
+        $pointerItem = Get-Item -LiteralPath $pointerPath -Force -ErrorAction Stop
+        if (($pointerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "runtime pointer is a reparse point"
+        }
+        $pointer = Get-Content -LiteralPath $pointerPath -Raw -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+        if ($pointer.schemaVersion -ne 1) { throw "unsupported pointer schema" }
+        $relativePath = [string]$pointer.relativePath
+        if ($relativePath -notmatch '^runtime-generations/[a-f0-9]{32}$') {
+            throw "invalid generation path"
+        }
+
+        $destinationFullPath = [IO.Path]::GetFullPath($DestinationRoot).TrimEnd([char[]]@('\', '/'))
+        $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $DestinationRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)))
+        if (-not $runtimeRoot.StartsWith("$destinationFullPath$([IO.Path]::DirectorySeparatorChar)", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "generation path escapes the work directory"
+        }
+        if (Test-Path -LiteralPath $runtimeRoot) {
+            $runtimeItem = Get-Item -LiteralPath $runtimeRoot -Force -ErrorAction Stop
+            if (($runtimeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "runtime generation is a reparse point"
+            }
+        }
+        return $runtimeRoot
+    } catch {
+        throw "Phase runtime pointer is invalid: $_"
+    }
+}
+
+function Get-PhaseRuntimePayloadContractId {
+    [CmdletBinding()]
+    param()
+
+    $contractText = (@(Get-PhaseRuntimePayloadRelativePaths | Sort-Object) -join "`n")
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return (([BitConverter]::ToString($sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($contractText))) -replace '-', '').ToLowerInvariant())
+    } finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-PhaseRuntimeRelativePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not $fullPath.StartsWith($rootPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Runtime path escapes the payload root: $Path"
+    }
+    return (($fullPath.Substring($rootPath.Length) -replace '^[\\/]+', '') -replace '\\', '/')
+}
+
+function Test-PhaseRuntimePayload {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RuntimeRoot)
+
+    $manifestPath = Join-Path $RuntimeRoot "runtime-manifest.json"
+    try {
+        if (-not (Test-Path -LiteralPath $RuntimeRoot -PathType Container)) { throw "Runtime directory is missing." }
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Runtime manifest is missing." }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($manifest.schemaVersion -ne 1) { throw "Unsupported runtime manifest schema." }
+        if ($manifest.payloadContract -ne (Get-PhaseRuntimePayloadContractId)) { throw "Runtime manifest payload contract is invalid." }
+
+        $expectedPaths = @(Get-PhaseRuntimePayloadRelativePaths | Sort-Object)
+        $manifestFiles = @($manifest.files)
+        $manifestPaths = @($manifestFiles | ForEach-Object { [string]$_.path } | Sort-Object)
+        if (@($manifestPaths | Group-Object | Where-Object Count -gt 1).Count -gt 0) { throw "Runtime manifest contains duplicate paths." }
+        if (@(Compare-Object -ReferenceObject $expectedPaths -DifferenceObject $manifestPaths).Count -gt 0) {
+            throw "Runtime manifest does not match the fixed payload file set."
+        }
+
+        $actualPaths = @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop |
+            Where-Object { $_.FullName -ne $manifestPath } |
+            ForEach-Object { Get-PhaseRuntimeRelativePath -Root $RuntimeRoot -Path $_.FullName } |
+            Sort-Object)
+        if (@(Compare-Object -ReferenceObject $expectedPaths -DifferenceObject $actualPaths).Count -gt 0) {
+            throw "Published runtime contains missing or extra files."
+        }
+
+        foreach ($entry in $manifestFiles) {
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "Invalid hash in runtime manifest: $relativePath" }
+            $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($actualHash -ne $expectedHash) { throw "Runtime hash mismatch: $relativePath" }
+        }
+        return [PSCustomObject]@{ Valid = $true; Status = "Success"; Message = "Runtime payload manifest verified." }
+    } catch {
+        return [PSCustomObject]@{ Valid = $false; Status = "Failed"; Message = "Runtime payload validation failed: $_" }
+    }
+}
+
+function Write-PhaseRuntimePublishLockRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][IO.Stream]$Stream,
+        [Parameter(Mandatory)][string]$Record
+    )
+
+    $recordBytes = [Text.Encoding]::UTF8.GetBytes($Record)
+    $Stream.SetLength(0)
+    $Stream.Position = 0
+    $Stream.Write($recordBytes, 0, $recordBytes.Length)
+    $Stream.Flush()
+}
+
+function Initialize-PhaseRuntimePublishLockOwner {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][IO.Stream]$Stream,
+        [Parameter(Mandatory)][string]$OwnerRecord
+    )
+
+    Write-PhaseRuntimePublishLockRecord -Stream $Stream -Record $OwnerRecord
+}
+
+function Remove-FailedPhaseRuntimePublishLockInitialization {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$LockPath,
+        [Parameter(Mandatory)][string]$ExpectedOwnerRecord,
+        [Parameter(Mandatory)][string]$ExpectedCreationUtc,
+        [Parameter(Mandatory)][string]$OwnerStartUtc,
+        [Parameter(Mandatory)][string]$OwnerProcessName
+    )
+
+    $cleanupToken = [Guid]::NewGuid().ToString("N")
+    $probe = $null
+    try {
+        $probe = [IO.File]::Open($LockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        $actualCreationUtc = [IO.File]::GetCreationTimeUtc($LockPath).ToString("o")
+        $reader = New-Object IO.StreamReader($probe, [Text.Encoding]::UTF8, $false, 1024, $true)
+        try { $partialRecord = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if ($actualCreationUtc -ne $ExpectedCreationUtc -or
+            -not $ExpectedOwnerRecord.StartsWith($partialRecord, [StringComparison]::Ordinal)) {
+            return $false
+        }
+
+        $cleanupRecord = [PSCustomObject]@{
+            token = $cleanupToken
+            state = "cleanup"
+            pid = $PID
+            processStartUtc = $OwnerStartUtc
+            processName = $OwnerProcessName
+        } | ConvertTo-Json -Compress
+        Write-PhaseRuntimePublishLockRecord -Stream $probe -Record $cleanupRecord
+    } catch {
+        return $false
+    } finally {
+        if ($probe) { $probe.Dispose() }
+    }
+
+    try {
+        $claimedData = Get-Content -LiteralPath $LockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($claimedData.token -ne $cleanupToken -or $claimedData.state -ne "cleanup") { return $false }
+        if (-not $PSCmdlet.ShouldProcess($LockPath, "Remove failed runtime publication lock")) {
+            return $false
+        }
+        Remove-Item -LiteralPath $LockPath -Force -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Enter-PhaseRuntimePublishLock {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DestinationRoot)
+
+    $lockPath = Join-Path $DestinationRoot ".runtime-publish.lock"
+    $ownerToken = [Guid]::NewGuid().ToString("N")
+    $ownerProcess = Get-Process -Id $PID -ErrorAction Stop
+    $ownerStartUtc = $ownerProcess.StartTime.ToUniversalTime().ToString("o")
+    $ownerProcessName = $ownerProcess.ProcessName
+    $ownerRecord = [PSCustomObject]@{
+        token = $ownerToken
+        state = "owned"
+        pid = $PID
+        processStartUtc = $ownerStartUtc
+        processName = $ownerProcessName
+    } | ConvertTo-Json -Compress
+
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        $stream = $null
+        try {
+            $stream = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        } catch [IO.IOException] {
+            # An active publisher holds FileShare.None, so this probe succeeds
+            # only after a crashed owner released its OS handle.
+            $cleanupToken = $null
+            try {
+                $probe = [IO.File]::Open($lockPath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                try {
+                    $reader = New-Object IO.StreamReader($probe, [Text.Encoding]::UTF8, $false, 1024, $true)
+                    try { $rawLockData = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                    $lockData = $null
+                    try { $lockData = $rawLockData | ConvertFrom-Json -ErrorAction Stop } catch { $lockData = $null }
+                    $lockPid = 0
+                    $liveOwner = $false
+                    if ($lockData -and $lockData.state -eq "owned" -and [int]::TryParse([string]$lockData.pid, [ref]$lockPid)) {
+                        $process = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
+                        if ($process -and $process.ProcessName -match '^(?:powershell|pwsh|powershell_ise)$' -and
+                            $lockData.processName -eq $process.ProcessName -and $lockData.processStartUtc) {
+                            try {
+                                $actualStartUtc = $process.StartTime.ToUniversalTime().ToString("o")
+                                $expectedStartUtc = ([DateTime]::Parse([string]$lockData.processStartUtc)).ToUniversalTime().ToString("o")
+                                $liveOwner = $actualStartUtc -eq $expectedStartUtc
+                            } catch {
+                                $liveOwner = $false
+                            }
+                        }
+                    }
+                    if ($liveOwner) { throw "Phase runtime publication is already in progress (owner PID $lockPid)." }
+
+                    # Claim either a valid stale record or a corrupt unlocked
+                    # record while its path is exclusively open.
+                    $cleanupToken = [Guid]::NewGuid().ToString("N")
+                    $cleanupRecord = [PSCustomObject]@{
+                        token = $cleanupToken
+                        state = "cleanup"
+                        pid = $PID
+                        processStartUtc = $ownerStartUtc
+                        processName = $ownerProcessName
+                    } | ConvertTo-Json -Compress
+                    Write-PhaseRuntimePublishLockRecord -Stream $probe -Record $cleanupRecord
+                } finally {
+                    $probe.Dispose()
+                }
+                $claimedData = Get-Content -LiteralPath $lockPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+                if ($claimedData.token -ne $cleanupToken -or $claimedData.state -ne "cleanup") {
+                    throw "Stale publication lock ownership changed during cleanup."
+                }
+                Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+            } catch {
+                throw "Phase runtime publication is already in progress or its lock cannot be recovered: $_"
+            }
+        }
+
+        if ($stream) {
+            $createdUtc = $null
+            try {
+                $createdUtc = [IO.File]::GetCreationTimeUtc($lockPath).ToString("o")
+                Initialize-PhaseRuntimePublishLockOwner -Stream $stream -OwnerRecord $ownerRecord
+                return [PSCustomObject]@{ Path = $lockPath; Token = $ownerToken; Stream = $stream }
+            } catch {
+                $initializationError = $_
+                $stream.Dispose()
+                $stream = $null
+                $removed = $false
+                if ($createdUtc) {
+                    $removed = Remove-FailedPhaseRuntimePublishLockInitialization `
+                        -LockPath $lockPath `
+                        -ExpectedOwnerRecord $ownerRecord `
+                        -ExpectedCreationUtc $createdUtc `
+                        -OwnerStartUtc $ownerStartUtc `
+                        -OwnerProcessName $ownerProcessName
+                }
+                $cleanupMessage = if ($removed) { "The exact failed lock was removed." } else { "The failed lock could not be proven safe to remove." }
+                throw "Could not initialize the Phase runtime publication lock: $initializationError $cleanupMessage"
+            }
+        }
+    }
+    throw "Could not acquire the Phase runtime publication lock."
+}
+
+function Exit-PhaseRuntimePublishLock {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Lock)
+
+    if ($Lock.Stream) { $Lock.Stream.Dispose() }
+    try {
+        if (Test-Path -LiteralPath $Lock.Path -PathType Leaf) {
+            $lockData = Get-Content -LiteralPath $Lock.Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            if ($lockData.token -eq $Lock.Token -and $lockData.pid -eq $PID -and $lockData.state -eq "owned") {
+                Remove-Item -LiteralPath $Lock.Path -Force -ErrorAction Stop
+            }
+        }
+    } catch {
+        Write-Warn "Could not release Phase runtime publication lock '$($Lock.Path)': $_"
+    }
+}
+
+function Remove-LegacyPhaseRuntimePayload {
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$SourceRoot,
         [Parameter(Mandatory)][string]$DestinationRoot
     )
 
-    # Phase 2 and Phase 3 run after reboot from C:\CS2_OPTIMIZE via RunOnce.
-    # Copy only the runtime payload they need so the handoff is stable even if
-    # the original checkout is moved, while avoiding broad repo copies.
-    $requiredFiles = @(
-        "SafeMode-DriverClean.ps1",
-        "PostReboot-Setup.ps1",
-        "Guide-VideoSettings.ps1",
-        "helpers.ps1",
-        "config.env.ps1"
+    if ([IO.Path]::GetFullPath($SourceRoot) -eq [IO.Path]::GetFullPath($DestinationRoot)) { return }
+    foreach ($legacyPath in @(
+        "SafeMode-DriverClean.ps1", "PostReboot-Setup.ps1", "Guide-VideoSettings.ps1",
+        "helpers.ps1", "config.env.ps1", "helpers", "cfgs", "docs"
+    )) {
+        $legacyFullPath = Join-Path $DestinationRoot $legacyPath
+        if ((Test-Path -LiteralPath $legacyFullPath) -and
+            $PSCmdlet.ShouldProcess($legacyFullPath, "Remove legacy Phase runtime payload")) {
+            Remove-Item -LiteralPath $legacyFullPath -Recurse -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Copy-PhaseRuntimePayload {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$DestinationRoot
     )
-    $requiredDirectories = @(
-        "helpers",
-        "cfgs"
-    )
-    $requiredDocs = @(
-        "docs/video.txt",
-        "docs/nvidia-drs-settings.md"
-    )
+
+    if ($SCRIPT:DryRun) { return $null }
+    if (-not $PSCmdlet.ShouldProcess($DestinationRoot, "Publish immutable Phase 2/3 runtime generation")) {
+        return $null
+    }
 
     Ensure-SecureWorkDir -Path $DestinationRoot
+    $publishLock = Enter-PhaseRuntimePublishLock -DestinationRoot $DestinationRoot
+    $generationId = [Guid]::NewGuid().ToString("N")
+    $generationsRoot = Join-Path $DestinationRoot "runtime-generations"
+    $stageRoot = Join-Path $DestinationRoot (".runtime-staging-{0}" -f $generationId)
+    $runtimeRoot = Join-Path $generationsRoot $generationId
+    $pointerPath = Join-Path $DestinationRoot "runtime-current.json"
+    $generationPublished = $false
+    $pointerCommitted = $false
 
-    foreach ($file in $requiredFiles) {
-        $src = Join-Path $SourceRoot $file
-        if (-not (Test-Path $src)) {
-            throw "Required file missing: $file"
+    try {
+        Ensure-Dir $generationsRoot
+        Set-SecureAcl -Path $generationsRoot -Required
+        Ensure-Dir $stageRoot
+        $manifestFiles = @()
+        foreach ($relativePath in (Get-PhaseRuntimePayloadRelativePaths)) {
+            $sourcePath = Join-Path $SourceRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Required runtime file missing: $relativePath" }
+            $stagePath = Join-Path $stageRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            Ensure-Dir (Split-Path -Path $stagePath -Parent)
+            Copy-Item -LiteralPath $sourcePath -Destination $stagePath -Force -ErrorAction Stop
+            Set-SecureAcl -Path $stagePath -Required
+            $manifestFiles += [PSCustomObject]@{
+                path = $relativePath
+                sha256 = (Get-FileHash -LiteralPath $stagePath -Algorithm SHA256 -ErrorAction Stop).Hash
+            }
         }
-        $dest = Join-Path $DestinationRoot $file
-        Copy-Item $src $dest -Force -ErrorAction Stop
-        Set-SecureAcl -Path $dest -Required
-        Write-OK "Copied: $file"
-    }
+        $manifest = [PSCustomObject]@{
+            schemaVersion = 1
+            payloadContract = Get-PhaseRuntimePayloadContractId
+            createdUtc = [DateTime]::UtcNow.ToString("o")
+            files = @($manifestFiles)
+        }
+        Save-JsonAtomic -Data $manifest -Path (Join-Path $stageRoot "runtime-manifest.json")
+        Set-SecureAcl -Path $stageRoot -Required
 
-    foreach ($dir in $requiredDirectories) {
-        $src = Join-Path $SourceRoot $dir
-        if (-not (Test-Path $src)) {
-            throw "Required directory missing: $dir"
-        }
-        $dest = Join-Path $DestinationRoot $dir
-        Ensure-Dir $dest
-        Copy-Item (Join-Path $src '*') $dest -Force -Recurse -ErrorAction Stop
-        Set-SecureAcl -Path $dest -Required
-        Get-ChildItem $dest -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            Set-SecureAcl -Path $_.FullName -Required
-        }
-        Write-OK "Copied: $dir/"
-    }
+        $stageValidation = Test-PhaseRuntimePayload -RuntimeRoot $stageRoot
+        if (-not $stageValidation.Valid) { throw $stageValidation.Message }
 
-    foreach ($doc in $requiredDocs) {
-        $src = Join-Path $SourceRoot $doc
-        if (-not (Test-Path $src)) {
-            throw "Required file missing: $doc"
+        # A generation is renamed only into a new, never-before-used path. Any
+        # RunOnce value already armed against an older generation remains valid
+        # across crashes, retries, and later publications.
+        Move-Item -LiteralPath $stageRoot -Destination $runtimeRoot -ErrorAction Stop
+        $generationPublished = $true
+        $publishedValidation = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+        if (-not $publishedValidation.Valid) { throw $publishedValidation.Message }
+
+        # Save-JsonAtomic is the publication commit point. Before it, readers use
+        # the previous complete pointer; after it, they use this verified immutable
+        # generation. There is no interval where the armed target is absent.
+        $pointer = [PSCustomObject]@{
+            schemaVersion = 1
+            relativePath = "runtime-generations/$generationId"
+            publishedUtc = [DateTime]::UtcNow.ToString("o")
         }
-        $dest = Join-Path $DestinationRoot $doc
-        $destDir = Split-Path -Path $dest -Parent
-        if ($destDir) {
-            Ensure-Dir $destDir
+        Save-JsonAtomic -Data $pointer -Path $pointerPath
+        $pointerCommitted = $true
+        Set-SecureAcl -Path $pointerPath -Required
+
+        try {
+            Remove-LegacyPhaseRuntimePayload -SourceRoot $SourceRoot -DestinationRoot $DestinationRoot
+        } catch {
+            Write-Warn "Verified runtime published, but legacy payload cleanup was incomplete: $_"
         }
-        Copy-Item $src $dest -Force -ErrorAction Stop
-        Set-SecureAcl -Path $dest -Required
-        Write-OK "Copied: $doc"
+        Write-OK "Published and verified Phase 2/3 runtime payload: $runtimeRoot"
+        return $runtimeRoot
+    } catch {
+        $publicationError = $_
+        if (-not $pointerCommitted) {
+            foreach ($uncommittedPath in @($stageRoot, $(if ($generationPublished) { $runtimeRoot }))) {
+                if ($uncommittedPath -and (Test-Path -LiteralPath $uncommittedPath)) {
+                    try {
+                        Remove-Item -LiteralPath $uncommittedPath -Recurse -Force -ErrorAction Stop
+                    } catch {
+                        throw "Phase runtime publication failed: $($publicationError.Exception.Message) Uncommitted generation cleanup also failed for '$uncommittedPath': $($_.Exception.Message)"
+                    }
+                }
+            }
+        }
+        throw $publicationError
+    } finally {
+        Exit-PhaseRuntimePublishLock -Lock $publishLock
     }
 }
 
@@ -477,7 +914,7 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    if ($normalizedPath -notmatch '^C:\\CS2_OPTIMIZE\\[a-zA-Z0-9_.-]+\.ps1$') {
+    if ($normalizedPath -notmatch '^C:\\CS2_OPTIMIZE\\(?:(?:runtime\\)|(?:runtime-generations\\[a-fA-F0-9]{32}\\))?[a-zA-Z0-9_.-]+\.ps1$') {
         $message = "Set-RunOnce: phase handoff path contains unsupported characters: $scriptPath"
         Write-Warn $message
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
@@ -491,7 +928,6 @@ function Set-RunOnce {
     }
     # Validate target script exists before registering — a RunOnce pointing to a missing
     # file would silently fail on next boot, leaving Phase 3 unexecuted with no error.
-    Ensure-SecureWorkDir -Path $CFG_WorkDir
     if (-not (Test-Path $scriptPath)) {
         $message = "RunOnce target does not exist: $scriptPath"
         Write-Warn $message
@@ -500,7 +936,6 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
         return
     }
-    Set-SecureAcl -Path $scriptPath -Required
     $allowedPolicies = @("Bypass", "RemoteSigned", "AllSigned")
     $executionPolicy = [string]$CFG_RunOnceExecutionPolicy
     if ($executionPolicy -eq "Undefined") {
@@ -530,6 +965,8 @@ function Set-RunOnce {
         return
     }
     try {
+        Ensure-SecureWorkDir -Path $CFG_WorkDir
+        Set-SecureAcl -Path $scriptPath -Required
         if ($SafeMode) {
             Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name $registrationName -Value $directCommand -ErrorAction Stop
         } else {
@@ -550,13 +987,191 @@ function Set-RunOnce {
 
 function Remove-PhaseHandoff {
     [CmdletBinding(SupportsShouldProcess)]
-    param([Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9_]+$')][string]$Name)
+    param(
+        [Parameter(Mandatory)][ValidatePattern('^[a-zA-Z0-9_]+$')][string]$Name,
+        [switch]$SafeMode,
+        [switch]$PassThru
+    )
 
-    $registrationName = "CS2_OPTIMIZE_$Name"
-    $runKey = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-    if ($SCRIPT:DryRun -or -not $PSCmdlet.ShouldProcess($registrationName, "Remove completed phase handoff")) { return }
-    Remove-ItemProperty -Path $runKey -Name $registrationName -Force -ErrorAction SilentlyContinue
-    Write-DebugLog "Removed completed phase handoff '$registrationName'."
+    # Safe Mode handoffs are stored in HKLM RunOnce with a '*' prefix.  Normal
+    # Phase 3 handoffs remain in HKCU Run until completion explicitly removes them.
+    $registrationName = if ($SafeMode) { "*$Name" } else { "CS2_OPTIMIZE_$Name" }
+    $runKey = if ($SafeMode) {
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
+    } else {
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+    }
+    if ($SCRIPT:DryRun) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "Phase handoff removal previewed: $registrationName") }
+        return
+    }
+    if (-not $PSCmdlet.ShouldProcess($registrationName, "Remove phase handoff")) {
+        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Phase handoff removal skipped: $registrationName") }
+        return
+    }
+    try {
+        $keyExists = Test-Path -LiteralPath $runKey -ErrorAction Stop
+        if (-not $keyExists) {
+            Write-DebugLog "Phase handoff '$registrationName' is already absent (registry key missing)."
+            if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Phase handoff already absent: $registrationName") }
+            return
+        }
+
+        $keyProperties = Get-ItemProperty -LiteralPath $runKey -ErrorAction Stop
+        if ($null -eq $keyProperties) { throw "Registry query returned no result for '$runKey'." }
+        $valueExists = $null -ne $keyProperties.PSObject.Properties[$registrationName]
+        if (-not $valueExists) {
+            Write-DebugLog "Phase handoff '$registrationName' is already absent."
+            if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Phase handoff already absent: $registrationName") }
+            return
+        }
+
+        Remove-ItemProperty -LiteralPath $runKey -Name $registrationName -Force -ErrorAction Stop
+
+        $keyExistsAfterRemoval = Test-Path -LiteralPath $runKey -ErrorAction Stop
+        if ($keyExistsAfterRemoval) {
+            $postRemovalProperties = Get-ItemProperty -LiteralPath $runKey -ErrorAction Stop
+            if ($null -eq $postRemovalProperties) { throw "Post-delete registry query returned no result for '$runKey'." }
+            if ($null -ne $postRemovalProperties.PSObject.Properties[$registrationName]) {
+                throw "Phase handoff remains present after deletion."
+            }
+        }
+
+        Write-DebugLog "Removed phase handoff '$registrationName' and verified its absence."
+        if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Phase handoff removed and verified absent: $registrationName") }
+    } catch {
+        $message = "Failed to remove phase handoff '$registrationName' or verify its absence: $_"
+        Write-Err $message
+        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
+    }
+}
+
+function Enable-Phase2SafeModeTransaction {
+    <#
+    .SYNOPSIS
+    Prepares the only valid Phase 2 reboot handoff as one ordered transaction.
+
+    Payload and RunOnce must exist before BCD is changed. After a failed BCD
+    write or verification, SafeBoot is cleared and verified before RunOnce is
+    disarmed. If clearance cannot be proved, the recovery handoff is retained
+    and re-armed. The readiness marker is persisted only after live BCD
+    verification succeeds.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$SourceRoot,
+        [Parameter(Mandatory)][string]$DestinationRoot,
+        [Parameter(Mandatory)][string]$StatePath,
+        [string]$Why = "Safe Mode for GPU driver clean"
+    )
+
+    $phase2Name = "CS2_Phase2"
+    if ($SCRIPT:DryRun) {
+        return [PSCustomObject]@{
+            Status = "DryRun"; Applied = $false; Verified = $false
+            Message = "Phase 2 Safe Mode transaction previewed; no reboot handoff was armed."
+        }
+    }
+    if (-not $PSCmdlet.ShouldProcess($DestinationRoot, "Publish payload and arm verified Phase 2 Safe Mode transaction")) {
+        return [PSCustomObject]@{
+            Status = "Skipped"; Applied = $false; Verified = $false
+            Message = "Phase 2 Safe Mode transaction skipped; no reboot handoff was armed."
+        }
+    }
+
+    $runtimeRoot = $null
+    try {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $SourceRoot -DestinationRoot $DestinationRoot
+        if ([string]::IsNullOrWhiteSpace([string]$runtimeRoot)) {
+            throw "Runtime publisher did not return a committed generation."
+        }
+    } catch {
+        return [PSCustomObject]@{
+            Status = "Failed"; Applied = $false; Verified = $false
+            Message = "Phase 2 payload preparation failed; Safe Mode was not armed: $_"
+        }
+    }
+    $phase2Script = Join-Path $runtimeRoot "SafeMode-DriverClean.ps1"
+
+    $handoffResult = Set-RunOnce $phase2Name $phase2Script -SafeMode -PassThru
+    if (-not $handoffResult.Applied) {
+        return [PSCustomObject]@{
+            Status = "Failed"; Applied = $false; Verified = $false
+            Message = "Phase 2 RunOnce registration failed; Safe Mode was not armed. $($handoffResult.Message)"
+        }
+    }
+
+    $bootResult = $null
+    $bootVerified = $false
+    $bootFailureDetail = ""
+    try {
+        $bootResult = Set-BootConfig "safeboot" "minimal" $Why -PassThru
+        $bootVerified = $bootResult.Applied -and (Test-BootConfigSet "safeboot")
+        $bootFailureDetail = $bootResult.Message
+    } catch {
+        $bootFailureDetail = "Safe Mode setup or live verification raised an error: $_"
+    }
+    if (-not $bootVerified) {
+        return (Undo-Phase2SafeModeTransaction -Phase2Script $phase2Script -FailureMessage "Safe Mode boot flag could not be set and verified. $bootFailureDetail")
+    }
+
+    try {
+        Set-Phase1SafeModeReadyFlag -Path $StatePath | Out-Null
+    } catch {
+        return (Undo-Phase2SafeModeTransaction -Phase2Script $phase2Script -FailureMessage "Safe Mode was verified but the Phase 1 readiness marker could not be saved; reboot is blocked. $_")
+    }
+
+    return [PSCustomObject]@{
+        Status = "Success"; Applied = $true; Verified = $true
+        Message = "Phase 2 Safe Mode transaction is ready and verified."
+    }
+}
+
+function Undo-Phase2SafeModeTransaction {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Phase2Script,
+        [Parameter(Mandatory)][string]$FailureMessage
+    )
+
+    # A bcdedit /set command can partially succeed even when its exit status or
+    # subsequent verification fails. Prove SafeBoot is clear before disarming
+    # the recovery RunOnce; otherwise retain/re-arm it for an accidental reboot.
+    try {
+        $clearResult = Clear-SafeBootVerified
+    } catch {
+        $clearResult = [PSCustomObject]@{ Verified = $false; Message = "Safe Mode rollback raised an error: $_" }
+    }
+    if ($clearResult.Verified) {
+        $disarmResult = Remove-PhaseHandoff -Name "CS2_Phase2" -SafeMode -PassThru
+        $cleanupMessage = if ($disarmResult.Applied) {
+            "Safe Mode was cleared and verified before the Phase 2 handoff was disarmed."
+        } else {
+            'Safe Mode was cleared, but Phase 2 handoff removal failed. Remove it manually: reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "*CS2_Phase2" /f'
+        }
+        return [PSCustomObject]@{
+            Status = "Failed"; Applied = $false; Verified = $false; SafeBootCleared = $true
+            RecoveryHandoffApplied = (-not $disarmResult.Applied)
+            Message = "$FailureMessage $cleanupMessage"
+        }
+    }
+
+    try {
+        $rearmResult = Set-RunOnce "CS2_Phase2" $Phase2Script -SafeMode -PassThru
+        if ($null -eq $rearmResult) { throw "Phase 2 handoff registration returned no result." }
+    } catch {
+        $rearmResult = [PSCustomObject]@{ Applied = $false; Message = "Phase 2 handoff re-arm raised an error: $_" }
+    }
+    $handoffMessage = if ($rearmResult.Applied) {
+        "The Phase 2 recovery handoff remains armed for an accidental reboot."
+    } else {
+        "The Phase 2 recovery handoff could not be re-armed: $($rearmResult.Message)"
+    }
+    return [PSCustomObject]@{
+        Status = "Failed"; Applied = $false; Verified = $false; SafeBootCleared = $false
+        RecoveryHandoffApplied = $rearmResult.Applied
+        Message = "$FailureMessage CRITICAL: Safe Mode could not be verified cleared. $handoffMessage Manual recovery from elevated cmd.exe: bcdedit /deletevalue safeboot ; bcdedit /enum {current} /v"
+    }
 }
 
 function Set-BootConfig {
@@ -578,10 +1193,6 @@ function Set-BootConfig {
         return $false
     }
 
-    # Auto-backup before modification
-    if ((Get-Variable -Name CurrentStepTitle -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentStepTitle) {
-        Backup-BootConfig -Key $key -StepTitle $SCRIPT:CurrentStepTitle
-    }
     if ($SCRIPT:DryRun) {
         Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: bcdedit /set $key $val  ($why)" -ForegroundColor Magenta
         if ($PassThru) { return (New-WriteOperationResult -Status "DryRun" -Message "Boot config previewed: $key = $val") }
@@ -591,6 +1202,11 @@ function Set-BootConfig {
     if (-not $PSCmdlet.ShouldProcess($key, "Set boot configuration value to $val")) {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Boot config skipped: $key = $val") }
         return $false
+    }
+    # Backups are part of the approved mutation. They must not be queued by
+    # -WhatIf or dry-run calls.
+    if ((Get-Variable -Name CurrentStepTitle -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentStepTitle) {
+        Backup-BootConfig -Key $key -StepTitle $SCRIPT:CurrentStepTitle
     }
     $output = bcdedit /set $key $val 2>&1
     $bcdeditExit = $LASTEXITCODE
@@ -739,10 +1355,6 @@ function Set-RegistryValue {
         return
     }
 
-    # Auto-backup before modification
-    if ((Get-Variable -Name CurrentStepTitle -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentStepTitle) {
-        Backup-RegistryValue -Path $path -Name $name -StepTitle $SCRIPT:CurrentStepTitle
-    }
     if ($SCRIPT:DryRun) {
         Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would set: $name = $value [$type]  ($why)" -ForegroundColor Magenta
         Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)    Path: $path" -ForegroundColor DarkMagenta
@@ -753,6 +1365,11 @@ function Set-RegistryValue {
     if (-not $PSCmdlet.ShouldProcess("$path\$name", "Set registry value to $value [$type]")) {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Registry skipped: $path | $name") }
         return
+    }
+    # Backups are part of the approved mutation. They must not be queued by
+    # -WhatIf or dry-run calls.
+    if ((Get-Variable -Name CurrentStepTitle -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentStepTitle) {
+        Backup-RegistryValue -Path $path -Name $name -StepTitle $SCRIPT:CurrentStepTitle
     }
     try {
         if (-not (Test-Path $path)) { New-Item -Path $path -Force -ErrorAction Stop | Out-Null }

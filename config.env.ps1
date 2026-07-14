@@ -5,14 +5,15 @@
 #  SECURITY: This file is dot-sourced by every entry point (Run-Optimize, PostReboot-Setup,
 #  SafeMode-DriverClean, Cleanup, FpsCap-Calculator, Verify-Settings, GUI). Dot-sourcing
 #  executes all code in the caller's scope — if this file is tampered, arbitrary code runs
-#  as Administrator. In Phase 2/3, this file is dot-sourced from C:\CS2_OPTIMIZE\config.env.ps1
-#  (copied by Step 38).
+#  as Administrator. In Phase 2/3, this file is dot-sourced from the published
+#  immutable C:\CS2_OPTIMIZE\runtime-generations\<id> payload created by Step 38.
 #
 #  Mitigations:
-#    - C:\CS2_OPTIMIZE\ is created by an admin process, inheriting C:\ ACLs (Users: Read+Execute)
+#    - C:\CS2_OPTIMIZE\ is hardened to an Administrators/SYSTEM-only ACL before use
 #    - Source repo directory requires write access to modify (standard Git checkout)
-#    - No runtime integrity check is performed (accepted risk — if attacker has admin write
-#      access to C:\CS2_OPTIMIZE\, the system is already compromised at that privilege level)
+#    - A fixed payload file set is staged uniquely, SHA-256-manifest validated, and
+#      published only after an exact-set verification; Phase 2/3 validate that manifest
+#      before administrator checks or helper loading
 #
 
 $CFG_Version        = "v2.3-dev"

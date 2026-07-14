@@ -108,7 +108,7 @@ Describe "Get-X3DCcdInfo" {
         }
     }
 
-    Context "Dual-CCD X3D (pinning required)" {
+    Context "Dual-CCD X3D (manual topology required)" {
 
         It "detects 7950X3D as dual CCD" {
             Mock Get-CimInstance -ParameterFilter { $ClassName -eq "Win32_Processor" } {
@@ -122,9 +122,10 @@ Describe "Get-X3DCcdInfo" {
             $result | Should -Not -BeNullOrEmpty
             $result.IsX3D | Should -Be $true
             $result.DualCCD | Should -Be $true
-            $result.Ccd0Cores | Should -Be 8
-            $result.TotalCores | Should -Be 16
-            $result.SmtEnabled | Should -Be $true
+            $result.HasAuthoritativeTopology | Should -Be $false
+            $result.Reason | Should -Match "automatic affinity is disabled"
+            $result.ContainsKey("AffinityMask") | Should -Be $false
+            $result.ContainsKey("AffinityHex") | Should -Be $false
         }
 
         It "detects 7900X3D as dual CCD" {
@@ -137,7 +138,6 @@ Describe "Get-X3DCcdInfo" {
             }
             $result = Get-X3DCcdInfo
             $result.DualCCD | Should -Be $true
-            $result.Ccd0Cores | Should -Be 6
         }
 
         It "detects 9950X3D as dual CCD" {
@@ -162,62 +162,6 @@ Describe "Get-X3DCcdInfo" {
             }
             $result = Get-X3DCcdInfo
             $result.DualCCD | Should -Be $true
-            $result.Ccd0Cores | Should -Be 8
-            $result.TotalCores | Should -Be 12
-        }
-
-        It "calculates correct affinity mask for 9900X3D with SMT (8+4 asymmetric)" {
-            Mock Get-CimInstance -ParameterFilter { $ClassName -eq "Win32_Processor" } {
-                [PSCustomObject]@{
-                    Name = "AMD Ryzen 9 9900X3D"
-                    NumberOfCores = 12
-                    NumberOfLogicalProcessors = 24
-                }
-            }
-            $result = Get-X3DCcdInfo
-            # CCD0 cores 0-7 = bits 0-7, SMT partners = bits 12-19
-            # Mask = 0xFF + (0xFF << 12) = 0xFF0FF
-            $result.AffinityMask | Should -Be 0xFF0FF
-        }
-
-        It "calculates correct affinity mask for 7950X3D with SMT" {
-            Mock Get-CimInstance -ParameterFilter { $ClassName -eq "Win32_Processor" } {
-                [PSCustomObject]@{
-                    Name = "AMD Ryzen 9 7950X3D"
-                    NumberOfCores = 16
-                    NumberOfLogicalProcessors = 32
-                }
-            }
-            $result = Get-X3DCcdInfo
-            # CCD0 cores 0-7 = bits 0-7, SMT partners = bits 16-23
-            # Mask = 0xFF + (0xFF << 16) = 0x00FF00FF
-            $result.AffinityMask | Should -Be 0x00FF00FF
-        }
-
-        It "calculates correct affinity mask for 7900X3D with SMT" {
-            Mock Get-CimInstance -ParameterFilter { $ClassName -eq "Win32_Processor" } {
-                [PSCustomObject]@{
-                    Name = "AMD Ryzen 9 7900X3D"
-                    NumberOfCores = 12
-                    NumberOfLogicalProcessors = 24
-                }
-            }
-            $result = Get-X3DCcdInfo
-            # CCD0 cores 0-5 = bits 0-5, SMT partners = bits 12-17
-            # Mask = 0x3F + (0x3F << 12) = 0x3F03F
-            $result.AffinityMask | Should -Be 0x3F03F
-        }
-
-        It "includes hex representation" {
-            Mock Get-CimInstance -ParameterFilter { $ClassName -eq "Win32_Processor" } {
-                [PSCustomObject]@{
-                    Name = "AMD Ryzen 9 7950X3D"
-                    NumberOfCores = 16
-                    NumberOfLogicalProcessors = 32
-                }
-            }
-            $result = Get-X3DCcdInfo
-            $result.AffinityHex | Should -Match '^0x[0-9A-F]+$'
         }
     }
 
@@ -248,6 +192,7 @@ Describe "Set-CS2ProcessPriority" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Path = $path; Name = $name; Value = $value })
+            [PSCustomObject]@{ Status = "Success"; Message = "written" }
         }
         Mock Get-Process { $null }
         Mock Get-X3DCcdInfo { $null }
@@ -266,6 +211,7 @@ Describe "Set-CS2ProcessPriority" {
         $script:capturedRegCalls = [System.Collections.Generic.List[hashtable]]::new()
         Mock Set-RegistryValue {
             $script:capturedRegCalls.Add(@{ Path = $path; Name = $name; Value = $value })
+            [PSCustomObject]@{ Status = "Success"; Message = "written" }
         }
         Mock Get-Process { $null }
         Mock Get-X3DCcdInfo { $null }
@@ -283,7 +229,7 @@ Describe "Set-CS2ProcessPriority" {
 
         It "does not modify running process in DRY-RUN" {
             $SCRIPT:DryRun = $true
-            Mock Set-RegistryValue {}
+            Mock Set-RegistryValue { [PSCustomObject]@{ Status = "DryRun"; Message = "previewed" } }
             Mock Get-Process {
                 [PSCustomObject]@{ PriorityClass = 'Normal' }
             }
@@ -292,9 +238,45 @@ Describe "Set-CS2ProcessPriority" {
             Mock Write-OK {}
             Mock Write-ConsoleLine {}
 
-            Set-CS2ProcessPriority
+            $result = Set-CS2ProcessPriority
+
+            $result.Status | Should -Be "DryRun"
+            $result.CanCompleteStep | Should -Be $false
             # Should not throw; DRY-RUN prints message instead of modifying
         }
+    }
+
+    It "does not report completion when the mandatory IFEO write fails" {
+        $SCRIPT:DryRun = $false
+        Mock Set-RegistryValue { [PSCustomObject]@{ Status = "Failed"; Message = "access denied" } }
+        Mock Get-Process { throw "live process updates must not run after IFEO failure" }
+
+        $result = Set-CS2ProcessPriority
+
+        $result.Status | Should -Be "Failed"
+        $result.CanCompleteStep | Should -Be $false
+        $result.Message | Should -Match "IFEO"
+    }
+
+    It "does not auto-pin or register a task for a dual-CCD model without authoritative topology" {
+        $SCRIPT:DryRun = $false
+        Mock Set-RegistryValue { [PSCustomObject]@{ Status = "Success"; Message = "written" } }
+        Mock Get-Process { [PSCustomObject]@{ PriorityClass = "Normal"; ProcessorAffinity = [IntPtr]::Zero } }
+        Mock Get-X3DCcdInfo {
+            @{ IsX3D = $true; DualCCD = $true; CpuName = "AMD Ryzen 9 7950X3D"; HasAuthoritativeTopology = $false; Reason = "manual topology required" }
+        }
+        Mock Install-CS2AffinityTask { throw "must not register a task without an authoritative topology" }
+        Mock Write-Blank {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-ConsoleLine {}
+
+        $result = Set-CS2ProcessPriority
+
+        $result.Status | Should -Be "Success"
+        $result.CanCompleteStep | Should -Be $true
+        Should -Invoke Install-CS2AffinityTask -Exactly 0
+        $result.AffinityTaskResult | Should -BeNullOrEmpty
     }
 }
 

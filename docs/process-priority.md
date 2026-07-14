@@ -2,7 +2,7 @@
 
 > Covers Phase 3 Step 10 and `helpers/process-priority.ps1`.
 
-Two mechanisms work together here. IFEO PerfOptions handles CPU priority for every system. The CCD affinity scheduled task only applies to dual-CCD Ryzen X3D processors.
+IFEO PerfOptions handles CPU priority for every system. The suite does not automatically pin a dual-CCD Ryzen X3D processor because the Windows data it reads does not authoritatively map logical processors to CCDs.
 
 ---
 
@@ -56,7 +56,7 @@ High priority gives CS2 threads scheduler preference over Normal-priority proces
 
 ---
 
-## X3D CCD Affinity — Dual-CCD Only
+## X3D CCD Topology — Manual Verification Required
 
 ### The V-Cache topology problem
 
@@ -67,76 +67,11 @@ The problem: not all X3D chips have V-Cache on all cores.
 | Processor | CCDs | V-Cache |
 |-----------|------|---------|
 | 5700X3D, 5800X3D, 7800X3D, 9800X3D | 1 | All cores — no pinning needed |
-| 7900X3D, 7950X3D, 9900X3D, 9950X3D | 2 | **CCD0 only** — CCD1 is plain cache |
+| 7900X3D, 7950X3D, 9900X3D, 9950X3D | 2 | V-Cache CCD only, but only after machine-specific topology verification |
 
-**9900X3D asymmetric CCD fix:** The 9900X3D has an 8+4 core layout (8 cores on CCD0 with V-Cache, 4 cores on CCD1). Earlier code assumed all dual-CCD X3D chips had symmetric CCDs (e.g., 8+8 or 6+6). The suite now detects the 9900X3D specifically and uses `ccd0Cores = 8` for the correct affinity mask, instead of `Floor(totalCores / 2) = 6`.
+Model identity and aggregate `Win32_Processor` core/logical-processor counts are not an LP-to-CCD map. Windows processor numbering, processor groups, firmware, and scheduler behavior mean that deriving a mask such as `0x00FF00FF` from those counts can pin CS2 to the wrong CPUs.
 
-On a 7950X3D, cores 0–7 (CCD0) have 96 MB of L3 cache per CCD. Cores 8–15 (CCD1) have 32 MB of standard L3. If CS2's game thread runs on CCD1, it has one-third the cache capacity, leading to significantly more cache misses during game state lookups.
-
-AMD's own game detection heuristic in AGESA firmware is supposed to route CS2 to CCD0 automatically. In practice, as of early 2026, this heuristic is unreliable — it can route CS2 to CCD1 during the initial seconds of a match, and Windows thread migration can move threads between CCDs during gameplay.
-
-### The affinity mask
-
-For a 16-core/32-thread 7950X3D with SMT enabled:
-
-- Physical cores 0–7: CCD0 (V-Cache)
-- Physical cores 8–15: CCD1 (plain)
-- Logical processors 0–15: first SMT thread of each core
-- Logical processors 16–31: second SMT thread (SMT partners)
-
-CCD0 affinity mask covers logical processors 0–7 (first threads) and 16–23 (SMT partners):
-
-```
-LP 0  = CCD0 Core 0, Thread 0  → bit 0
-LP 1  = CCD0 Core 1, Thread 0  → bit 1
-...
-LP 7  = CCD0 Core 7, Thread 0  → bit 7
-LP 16 = CCD0 Core 0, Thread 1  → bit 16
-...
-LP 23 = CCD0 Core 7, Thread 1  → bit 23
-```
-
-Mask = `0x00FF00FF` for 7950X3D (hex), computed by the helper:
-
-```powershell
-$ccd0Cores = 8  # half of 16 total cores
-[long]$mask = 0
-for ($i = 0; $i -lt 8; $i++) {
-    $mask = $mask -bor (1L -shl $i)          # First thread
-    $mask = $mask -bor (1L -shl (16 + $i))   # SMT partner
-}
-# $mask = 0x00FF00FF
-```
-
-### Why a scheduled task, not a registry key
-
-Process affinity cannot be set persistently via registry — Windows does not have an IFEO equivalent for affinity. The only way to enforce it is to set `Process.ProcessorAffinity` on the running process.
-
-The scheduled task runs `cs2_affinity.ps1` every 2 minutes after logon:
-
-```powershell
-$procs = Get-Process cs2 -ErrorAction SilentlyContinue
-if ($procs) {
-    foreach ($p in $procs) {
-        if ($p.ProcessorAffinity -ne [IntPtr]$mask) {
-            $p.ProcessorAffinity = [IntPtr]$mask
-        }
-    }
-}
-```
-
-Each execution takes ~50ms and only modifies affinity if it has drifted. The task is hidden and runs at `HighestAvailable` privilege under the logged-on user.
-
-### Verifying affinity
-
-With CS2 running, open Task Manager → Details tab → right-click `cs2.exe` → Set affinity. The checked cores should match CCD0 (cores 0–7 on a 16-core X3D). If all cores are checked, the task has not run yet or failed.
-
-Manual check in PowerShell:
-
-```powershell
-(Get-Process cs2).ProcessorAffinity.ToInt64().ToString("X")
-# Should output: FF00FF (7950X3D example)
-```
+The suite therefore keeps only the persistent IFEO priority change. For dual-CCD X3D systems it reports that topology must be verified manually and creates no affinity task or live-process affinity assignment. Do not apply a mask unless it comes from a trustworthy, machine-specific LP-to-CCD source and has been verified for the current firmware and Windows configuration.
 
 ---
 
@@ -144,6 +79,4 @@ Manual check in PowerShell:
 
 IFEO key: delete `HKLM:\...\Image File Execution Options\cs2.exe\PerfOptions` (or the entire `cs2.exe` subkey if empty).
 
-Affinity task: `Unregister-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -Confirm:$false`. The affinity script at `C:\CS2_OPTIMIZE\cs2_affinity.ps1` can also be deleted.
-
-Both are handled automatically by `Restore-Interactive` (START.bat option 7).
+The suite no longer creates an affinity task. If an older suite run created `CS2_Optimize_CCD_Affinity`, remove it with `Unregister-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -Confirm:$false` and delete its affinity script after confirming that it is no longer needed. `Restore-Interactive` also handles recorded older tasks.

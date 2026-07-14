@@ -159,7 +159,7 @@ Phase 2 runs automatically from `RunOnce`. **No profile interaction — all step
 | 7 | VBS / Core Isolation disable | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | Disables HVCI; skip if FACEIT/Vanguard |
 | 8 | AMD GPU settings guide | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | AMD GPU only |
 | 9 | DNS server configuration | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Not for corporate/managed networks |
-| 10 | Process priority / CCD affinity | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | IFEO PerfOptions + scheduled task for X3D CCD |
+| 10 | Process priority / CCD topology | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | IFEO PerfOptions; no automatic X3D affinity without authoritative topology |
 | 11 | VRAM leak awareness | — | — | `info` | `info` | `info` | `info` | CS2-specific VRAM leak warning |
 | 12 | Final checklist + summary | — | — | `info` | `info` | `info` | `info` | — |
 | 13 | Final benchmark + FPS cap calc | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Compares against Phase 1 Step 17 baseline |

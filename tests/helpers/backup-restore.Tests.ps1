@@ -95,6 +95,18 @@ Describe "Initialize-Backup" {
         $script:InitOrder[0] | Should -Be "lock"
         ($script:InitOrder -join ',') | Should -Be 'lock,acl'
     }
+
+    It "releases its lock when backup initialization fails after acquisition" {
+        Mock Test-BackupLock { $false }
+        Mock Set-BackupLock {}
+        Mock New-BackupFile { throw "disk full" }
+        Mock Remove-BackupLock {}
+
+        { Initialize-Backup } | Should -Throw "*disk full*"
+
+        Should -Invoke Set-BackupLock -Exactly 1
+        Should -Invoke Remove-BackupLock -Exactly 1
+    }
 }
 
 # ── Backup-RegistryValue (in-memory buffering) ──────────────────────────────
@@ -666,24 +678,34 @@ Describe "Service restore failure retention" {
 # ── Backup lock system ───────────────────────────────────────────────────────
 Describe "Backup lock system" {
 
-    BeforeEach { Reset-TestState }
+    BeforeEach {
+        Remove-BackupLock | Out-Null
+        Reset-TestState
+        $SCRIPT:_backupLockToken = $null
+        if ($SCRIPT:_backupLockStream) { $SCRIPT:_backupLockStream.Dispose() }
+        $SCRIPT:_backupLockStream = $null
+    }
 
     It "Set-BackupLock creates lock file with PID" {
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Test-Path $CFG_BackupLockFile | Should -Be $true
         $lockData = Get-Content $CFG_BackupLockFile -Raw | ConvertFrom-Json
         $lockData.pid | Should -Be $PID
+        $lockData.token | Should -Match '^[a-f0-9]{32}$'
+        $lockData.processStartUtc | Should -Not -BeNullOrEmpty
+        Remove-BackupLock | Out-Null
     }
 
     It "Set-BackupLock secures the lock file" {
         Mock Set-SecureAcl {}
 
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter {
             $Path -eq $CFG_BackupLockFile -and $Required
         }
+        Remove-BackupLock | Out-Null
     }
 
     It "Remove-BackupLock removes lock file" {
@@ -694,9 +716,63 @@ Describe "Backup lock system" {
     }
 
     It "Test-BackupLock returns true for live process" {
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Test-BackupLock | Should -Be $true
+        Remove-BackupLock | Out-Null
+    }
+
+    It "uses CreateNew so a second contender cannot overwrite the owner's lock" {
+        $ownerToken = Set-BackupLock -PassThru
+        $before = Get-Content $CFG_BackupLockFile -Raw
+
+        { Set-BackupLock } | Should -Throw
+
+        (Get-Content $CFG_BackupLockFile -Raw) | Should -BeExactly $before
+        ((Get-Content $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $ownerToken
+        Remove-BackupLock | Out-Null
+    }
+
+    It "rejects release with a non-owner token" {
+        $ownerToken = Set-BackupLock -PassThru
+
+        Remove-BackupLock -Token ([guid]::NewGuid().ToString('N'))
+
+        Test-Path -LiteralPath $CFG_BackupLockFile | Should -Be $true
+        ((Get-Content -LiteralPath $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $ownerToken
+        Remove-BackupLock | Out-Null
+    }
+
+    It "preserves script-scoped ownership when the helper is dot-sourced again" {
+        $ownerToken = Set-BackupLock -PassThru
+        $ownerStream = $SCRIPT:_backupLockStream
+
+        . "$PSScriptRoot/../../helpers/backup-restore.ps1"
+
+        $SCRIPT:_backupLockToken | Should -Be $ownerToken
+        [object]::ReferenceEquals($SCRIPT:_backupLockStream, $ownerStream) | Should -Be $true
+        Remove-BackupLock | Out-Null
+    }
+
+    It "does not release another contender's lock after initialization loses the race" {
+        $foreignToken = [guid]::NewGuid().ToString('N')
+        $foreignData = @{
+            pid = $PID
+            started = (Get-Date).ToUniversalTime().ToString('o')
+            processStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+            token = $foreignToken
+            state = 'owned'
+        } | ConvertTo-Json -Compress
+        Set-Content -LiteralPath $CFG_BackupLockFile -Value $foreignData -Encoding UTF8
+        Mock Test-BackupLock { $false }
+        Mock Write-Warn {}
+        $SCRIPT:_backupLockToken = $null
+
+        { Initialize-Backup } | Should -Throw
+        Remove-BackupLock
+
+        Test-Path -LiteralPath $CFG_BackupLockFile | Should -Be $true
+        ((Get-Content -LiteralPath $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $foreignToken
     }
 
     It "Test-BackupLock returns false when no lock exists" {

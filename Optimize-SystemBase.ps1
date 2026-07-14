@@ -361,14 +361,19 @@ if ($startStep -le 6) {
         -SideEffects "Higher idle power (~5-15W on T1/T2). T3 adds +5-15°C CPU idle temp. DC/battery settings untouched." `
         -Undo "powercfg /setactive <original GUID> (auto-backed up) or START.bat [7] Restore/Rollback" `
         -Action {
+            # Backup-PowerPlan flushes and verifies the original scheme before
+            # this action is allowed to create or activate any replacement.
             Backup-PowerPlan -StepTitle "CS2 Optimized Power Plan"
-            try {
-                $guid   = New-CS2PowerPlan
-                Apply-PowerPlan -PlanGuid $guid
-
-                if (-not $SCRIPT:DryRun) {
-                    powercfg /setactive $guid 2>&1 | Out-Null
-                } else {
+            $powerPlanResult = Invoke-CS2PowerPlanWithFallback
+            if ($powerPlanResult.Status -eq 'Failed') {
+                throw $powerPlanResult.Message
+            }
+            if ($powerPlanResult.Status -eq 'Fallback') {
+                Write-Warn $powerPlanResult.Message
+                Skip-Step $PHASE 6 "PowerPlan (fallback active)"
+            } else {
+                $guid = $powerPlanResult.Guid
+                if ($SCRIPT:DryRun) {
                     Write-Host "  [DRY-RUN] Would activate: CS2 Optimized" -ForegroundColor Magenta
                 }
 
@@ -405,28 +410,10 @@ if ($startStep -le 6) {
                 Write-Blank
                 Write-Info "Undo: Control Panel -> Power Options -> select original plan"
                 Write-Info "      or START.bat [7] Restore/Rollback -> Power Plan"
-            } catch {
-                Write-Warn "Power plan creation failed: $_"
-                Write-Info "Fallback: activating Windows High Performance..."
-                if (-not $SCRIPT:DryRun) {
-                    powercfg /setactive SCHEME_MIN 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) {
-                        Write-Warn "High Performance not available — falling back to Balanced."
-                        powercfg /setactive SCHEME_BALANCED 2>&1 | Out-Null
-                        if ($LASTEXITCODE -ne 0) {
-                            Write-Warn "Balanced plan also unavailable. Current power plan unchanged."
-                            Write-Info "Manually set power plan: Control Panel -> Power Options"
-                        } else {
-                            Write-OK "Balanced power plan active (fallback)."
-                        }
-                    } else {
-                        Write-OK "Windows High Performance active (fallback)."
-                    }
-                } else {
-                    Write-Host "  [DRY-RUN] Would fallback to High Performance plan" -ForegroundColor Magenta
+                if ($powerPlanResult.CanCompleteStep) {
+                    Complete-Step $PHASE 6 "PowerPlan"
                 }
             }
-            Complete-Step $PHASE 6 "PowerPlan"
         } `
         -SkipAction { Skip-Step $PHASE 6 "PowerPlan" }
 }

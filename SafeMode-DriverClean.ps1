@@ -18,11 +18,11 @@
           Microsoft Basic Display Adapter (MSBDA). Resolution limited to 1024x768 but
           the system is usable. User can install GPU driver normally.
         - The RunOnce for Phase 3 was NOT yet registered (Step 3), so Phase 3 won't
-          auto-start. User runs PostReboot-Setup.ps1 manually from START.bat -> [P].
+          auto-start. START.bat -> [P] launches the manifest-verified published runtime.
 
     Crash during Step 3 (RunOnce registration):
         Steps 1+2 completed. Next boot = Normal Mode, GPU driver removed.
-        - Phase 3 won't auto-start. User runs PostReboot-Setup.ps1 from START.bat -> [P].
+        - Phase 3 won't auto-start. START.bat -> [P] launches the verified runtime.
         - This is the lowest-risk crash point — system boots fine, just needs manual Phase 3.
 
     Power failure during Restart-Computer:
@@ -30,6 +30,57 @@
         - This is equivalent to a normal power cycle — no data loss risk.
 #>
 param([switch]$SmokeTest)
+
+function Test-PublishedRuntimePayloadBootstrap {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RuntimeRoot)
+
+    try {
+        $manifestPath = Join-Path $RuntimeRoot "runtime-manifest.json"
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "runtime-manifest.json is missing" }
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($manifest.schemaVersion -ne 1) { throw "unsupported runtime manifest schema" }
+        $expectedContract = "bba9d71061a9cd0b7897c97c5792aab42f29d6cd3f89f2bcd80883cd5f2c75c4"
+        $entries = @($manifest.files)
+        if ($entries.Count -eq 0) { throw "runtime manifest has no files" }
+        $manifestPaths = @($entries | ForEach-Object { [string]$_.path })
+        if (@($manifestPaths | Group-Object | Where-Object Count -gt 1).Count -gt 0) { throw "runtime manifest contains duplicate paths" }
+        $contractText = (@($manifestPaths | Sort-Object) -join "`n")
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $actualContract = (([BitConverter]::ToString($sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($contractText))) -replace '-', '').ToLowerInvariant())
+        } finally {
+            $sha256.Dispose()
+        }
+        if ($manifest.payloadContract -ne $expectedContract -or $actualContract -ne $expectedContract) { throw "runtime payload contract mismatch" }
+        foreach ($relativePath in $manifestPaths) {
+            if ($relativePath -notmatch '^[a-zA-Z0-9_.-]+(?:/[a-zA-Z0-9_.-]+)*$' -or $relativePath -match '(^|/)\.\.(/|$)') {
+                throw "runtime manifest contains an unsafe path"
+            }
+        }
+        $rootPath = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        $actualPaths = @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop |
+            Where-Object { $_.FullName -ne $manifestPath } |
+            ForEach-Object {
+                (([IO.Path]::GetFullPath($_.FullName).Substring($rootPath.Length) -replace '^[\\/]+', '') -replace '\\', '/')
+            })
+        if (@(Compare-Object -ReferenceObject @($manifestPaths | Sort-Object) -DifferenceObject @($actualPaths | Sort-Object)).Count -gt 0) {
+            throw "runtime contains missing or extra files"
+        }
+        foreach ($entry in $entries) {
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "invalid manifest hash for $relativePath" }
+            $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($actualHash -ne $expectedHash) { throw "runtime hash mismatch: $relativePath" }
+        }
+        return [PSCustomObject]@{ Valid = $true; Message = "Published runtime payload verified." }
+    } catch {
+        return [PSCustomObject]@{ Valid = $false; Message = "Published runtime validation failed: $_" }
+    }
+}
+
 
 function Test-SafeModeDriverCleanAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -51,6 +102,16 @@ function Invoke-SafeModeDriverCleanEntryPoint {
         return
     }
 
+    $payloadValidation = Test-PublishedRuntimePayloadBootstrap -RuntimeRoot $PSScriptRoot
+    if (-not $payloadValidation.Valid) {
+        Write-Host "  CRITICAL: $($payloadValidation.Message)" -ForegroundColor Red
+        Write-Host "  No boot-state or driver changes were attempted." -ForegroundColor Yellow
+        Write-Host "  Re-run Phase 1 to publish a complete runtime payload." -ForegroundColor Cyan
+        Write-Host "  If currently in Safe Mode, recover from elevated cmd.exe:" -ForegroundColor Cyan
+        Write-Host "    bcdedit /deletevalue safeboot" -ForegroundColor White
+        Write-Host "    bcdedit /enum {current} /v" -ForegroundColor White
+        return
+    }
     Assert-SafeModeDriverCleanAdministrator
     Invoke-SafeModeDriverClean
 }
@@ -98,7 +159,7 @@ function Register-Phase3RunOnce {
     [CmdletBinding()]
     param()
 
-    $runOnceResult = Set-RunOnce "CS2_Phase3" "$CFG_WorkDir\PostReboot-Setup.ps1" -PassThru
+    $runOnceResult = Set-RunOnce "CS2_Phase3" "$ScriptRoot\PostReboot-Setup.ps1" -PassThru
     if (-not $runOnceResult.Applied) {
         Write-Err "Phase 3 automatic handoff registration failed."
         Write-Host "  $([char]0x2139) What to do: after rebooting into Normal Mode, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
@@ -126,11 +187,8 @@ try {
         Write-Host "  $([char]0x2139) Why it matters: Your GPU driver files are in use right now and cannot" -ForegroundColor Cyan
         Write-Host "    be cleanly removed. This could cause a black screen after restart." -ForegroundColor Cyan
         Write-Host "  $([char]0x2139) Recommended: Go back to START.bat and let it boot into Safe Mode." -ForegroundColor Cyan
-        $confirm = if (Test-YoloProfile) { "y" } else { Read-Host "  Continue anyway? [y/N]" }
-        if ($confirm -notmatch "^[jJyY]$") {
-            Write-Info "Aborted. Boot into Safe Mode first (START.bat -> [1])."
-            exit 0
-        }
+        Write-Info "Aborted. No boot-state changes or GPU driver removal were performed. Boot into Safe Mode first (START.bat -> [1])."
+        return
     }
 
     Write-Section "Step 1 — Disable Safe Mode"
@@ -176,7 +234,7 @@ try {
 
     Write-Info "Detected GPU vendor: $gpuName"
     Write-Info "This performs a complete driver removal using native PowerShell."
-    Write-Info "Equivalent to DDU — stops services, removes drivers, cleans registry."
+    Write-Info "Uses Windows CIM + pnputil and proceeds to vendor cleanup only after verified package removal."
 
     # Check if rollback was requested
     if ($state.PSObject.Properties['rollbackDriver'] -and $state.rollbackDriver) {
@@ -225,7 +283,7 @@ try {
         } else {
             Write-Err "GPU driver clean removal did not complete: $($driverCleanResult.Message)"
             Write-Host "  $([char]0x2139) What to do: review the warnings above, install or remove the driver manually if needed," -ForegroundColor Cyan
-            Write-Host "    then run PostReboot-Setup.ps1 manually from START.bat -> [P]." -ForegroundColor Cyan
+            Write-Host "    then use START.bat -> [P] to launch the manifest-verified published Phase 3 runtime." -ForegroundColor Cyan
         }
     }
 
@@ -252,7 +310,7 @@ try {
     # and once cleanup has actually begun. Initialize-Backup failures therefore
     # cannot create a Phase 3 handoff.
     try {
-        if ($safeBootVerified -and $driverCleanupAttempted -and -not $phase3Registered -and -not (Test-StepDone $PHASE 3)) {
+        if ($safeBootVerified -and $driverCleanupAttempted -and -not $phase3Registered -and -not (Test-StepCompleted $PHASE 3)) {
             if (Register-Phase3RunOnce) {
                 $phase3Registered = $true
                 Write-Host "" -ForegroundColor Green
@@ -274,7 +332,7 @@ try {
     Write-Host "  If GPU driver was partially removed, Windows will load Basic Display" -ForegroundColor White
     Write-Host "  Adapter on next boot. Phase 3 will handle clean driver installation." -ForegroundColor White
     Write-Host "  If Phase 3 does not start automatically, run it from" -ForegroundColor White
-    Write-Host "  START.bat -> [P] Post-Reboot Setup (Phase 3)." -ForegroundColor White
+    Write-Host "  START.bat -> [P] (manifest-verified published Phase 3 runtime)." -ForegroundColor White
     Write-Host "" -ForegroundColor White
     if (-not (Test-YoloProfile)) { Read-Host "  Press Enter to exit" }
 } finally {

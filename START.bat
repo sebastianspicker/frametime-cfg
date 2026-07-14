@@ -118,6 +118,6 @@ pause
 goto :menu
 
 :phase3
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0PostReboot-Setup.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& { try { Set-StrictMode -Version Latest; $ErrorActionPreference='Stop'; $ScriptRoot='%~dp0'.TrimEnd('\'); . '%~dp0config.env.ps1'; . '%~dp0helpers.ps1'; $runtimeRoot=Get-PhaseRuntimeRoot -DestinationRoot $CFG_WorkDir; $phase3Runtime=Join-Path $runtimeRoot 'PostReboot-Setup.ps1'; if (-not (Test-Path -LiteralPath $phase3Runtime -PathType Leaf)) { throw 'Phase 3 entrypoint is missing from the selected runtime generation.' }; $validation=Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot; if (-not $validation.Valid) { throw $validation.Message }; & $phase3Runtime } catch { Write-Host ''; Write-Host ('  Phase 3 runtime payload is unavailable or invalid: ' + $_) -ForegroundColor Red; Write-Host '  Re-run Phase 1 to publish and verify a fresh runtime generation.' -ForegroundColor Cyan; exit 1 } }"
 pause
 goto :menu

@@ -260,6 +260,25 @@ Describe "Path format validation" {
     }
 }
 
+Describe "Published runtime documentation contract" {
+
+    It "documents the canonical validated runtime handoff and rejects the obsolete integrity claim" {
+        $config = Get-Content (Join-Path $script:ProjectRoot "config.env.ps1") -Raw
+        $architecture = Get-Content (Join-Path $script:ProjectRoot "docs/architecture.md") -Raw
+        $gui = Get-Content (Join-Path $script:ProjectRoot "docs/gui.md") -Raw
+
+        $config | Should -Not -Match "No runtime integrity check is performed"
+        $config | Should -Match "C:\\CS2_OPTIMIZE\\runtime"
+        $config | Should -Match "SHA-256-manifest validated"
+        $architecture | Should -Match "C:\\CS2_OPTIMIZE\\runtime"
+        $architecture | Should -Match "exact file set and hashes"
+        $architecture | Should -Match "before administrator validation or helper loading"
+        $architecture | Should -Match "RunOnce handoff is retained when the final benchmark"
+        $gui | Should -Match "validated published payload"
+        $gui | Should -Match "fails integrity validation"
+    }
+}
+
 # ── DNS configuration ────────────────────────────────────────────────────────
 Describe "DNS configuration" {
 

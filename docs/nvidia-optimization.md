@@ -46,17 +46,17 @@ Over multiple driver updates, this accumulation can cause:
 
 ### Phase 2 — What the native removal does
 
-The suite's GPU driver removal in Safe Mode is a five-phase process implemented in `helpers/gpu-driver-clean.ps1`:
+The suite's GPU driver removal in Safe Mode is implemented in `helpers/gpu-driver-clean.ps1`:
 
-1. **Stop GPU services** — `nvlddmkm`, `nvSCPAPISvr`, `nvvsvc`, `NVDisplay.ContainerLocalSystem`, and related services are stopped
-2. **Remove driver package** — `pnputil /delete-driver {oemXX.inf} /uninstall /force` removes the INF-based driver registration
-3. **Remove driver files** — NVIDIA-specific binaries in `System32`, `System32\DriverStore\FileRepository`, and driver-specific directories under `Windows\System32\drivers`
-4. **Clean registry** — NVIDIA driver keys under `HKLM:\SYSTEM\CurrentControlSet\Services\nvlddmkm` and device-specific keys in `HKLM:\SYSTEM\CurrentControlSet\Enum\*\VideoController`
-5. **Wipe shader caches** — `AppData\Local\Temp\NVIDIA\GLCache`, `DXCache`, `D3DSCache`, and the CS2-specific shader cache
+1. **Discover packages authoritatively** — locale-independent CIM data identifies NVIDIA display packages and supplies only validated `oemNN.inf` names.
+2. **Remove driver packages** — `pnputil /delete-driver {oemNN.inf} /uninstall /force` lets Windows update package and DriverStore references. Any discovery or removal failure stops the workflow before vendor cleanup.
+3. **Clean vendor software after verified removal** — related services, applications, scheduled tasks, and vendor-specific registry state are removed only when every identified package was removed successfully.
+4. **Leave shared Windows state alone** — the suite does not directly delete `DriverStore\FileRepository` folders or broad display-class registry keys.
+5. **Wipe rebuildable shader caches** — NVIDIA `GLCache`/`DXCache` and the shared `D3DSCache` are cleared so the replacement driver can rebuild them.
 
 ### Why Safe Mode
 
-GPU driver removal must happen in Safe Mode because Windows prevents deletion of the currently active display driver while the desktop session is running. DDU uses the same approach. The only difference is that DDU is a closed-source executable making the same kernel calls that our native PowerShell implementation makes — with the advantage that ours is fully auditable.
+GPU driver removal runs in Safe Mode so the active desktop session is not holding display-driver files and services open. The suite uses documented Windows inventory and package-removal interfaces and fails closed when package ownership or removal cannot be verified.
 
 ### Phase 3 Step 1 — NVCleanstall replacement
 

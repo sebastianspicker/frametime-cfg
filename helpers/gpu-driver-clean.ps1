@@ -2,16 +2,283 @@
 #  helpers/gpu-driver-clean.ps1  —  Safe Mode GPU Driver Removal (DDU replacement)
 # ==============================================================================
 
+function Get-GpuCacheCleanupTargets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("NVIDIA", "AMD", "Intel")]
+        [string]$GpuVendor
+    )
+
+    # Resolve roots through the platform known-folder API. Environment
+    # variables are mutable process input and must not select recursive-delete
+    # targets in this elevated cleanup path.
+    $localRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    $commonRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+    $relativeTargets = switch ($GpuVendor) {
+        "NVIDIA" { @(
+            @{ Root = $localRoot; Relative = "NVIDIA\DXCache" },
+            @{ Root = $localRoot; Relative = "NVIDIA\GLCache" },
+            @{ Root = $localRoot; Relative = "NVIDIA Corporation\NV_Cache" },
+            @{ Root = $commonRoot; Relative = "NVIDIA Corporation\NV_Cache" }
+        ) }
+        "AMD" { @(
+            @{ Root = $localRoot; Relative = "AMD\DxCache" },
+            @{ Root = $localRoot; Relative = "AMD\GLCache" },
+            @{ Root = $localRoot; Relative = "AMD\DxcCache" }
+        ) }
+        "Intel" { @(
+            @{ Root = $localRoot; Relative = "Intel\ShaderCache" },
+            @{ Root = $localRoot; Relative = "Intel\GPUCache" }
+        ) }
+    }
+    $relativeTargets += @{ Root = $localRoot; Relative = "D3DSCache" }
+
+    foreach ($target in $relativeTargets) {
+        if ([string]::IsNullOrWhiteSpace([string]$target.Root)) { continue }
+        [PSCustomObject]@{
+            Root = [IO.Path]::GetFullPath([string]$target.Root)
+            Path = [IO.Path]::GetFullPath((Join-Path ([string]$target.Root) ([string]$target.Relative)))
+        }
+    }
+}
+
+function Get-GpuVendorApplicationCleanupTargets {
+    <#
+    .SYNOPSIS
+        Returns fixed vendor application descendants rooted at OS-known folders.
+    .DESCRIPTION
+        Do not derive elevated recursive-delete targets from mutable environment
+        variables.  Each result is a specific vendor-owned descendant which is
+        validated immediately before deletion.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("NVIDIA", "AMD", "Intel")]
+        [string]$GpuVendor
+    )
+
+    $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    $programFilesX86 = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)
+    $commonRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonApplicationData)
+    $localRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    $relativeTargets = switch ($GpuVendor) {
+        'NVIDIA' { @(
+            @{ Root = $programFiles; Relative = 'NVIDIA Corporation' },
+            @{ Root = $programFilesX86; Relative = 'NVIDIA Corporation' },
+            @{ Root = $commonRoot; Relative = 'NVIDIA Corporation' },
+            @{ Root = $commonRoot; Relative = 'NVIDIA' },
+            @{ Root = $localRoot; Relative = 'NVIDIA Corporation' },
+            @{ Root = $localRoot; Relative = 'NVIDIA' }
+        ) }
+        'AMD' { @(
+            @{ Root = $programFiles; Relative = 'AMD' },
+            @{ Root = $programFilesX86; Relative = 'AMD' },
+            @{ Root = $commonRoot; Relative = 'AMD' },
+            @{ Root = $localRoot; Relative = 'AMD' }
+        ) }
+        default { @() }
+    }
+
+    foreach ($target in $relativeTargets) {
+        if ([string]::IsNullOrWhiteSpace([string]$target.Root)) { continue }
+        [PSCustomObject]@{
+            Root = [IO.Path]::GetFullPath([string]$target.Root)
+            Path = [IO.Path]::GetFullPath((Join-Path ([string]$target.Root) ([string]$target.Relative)))
+        }
+    }
+}
+
+function Test-GpuCacheCleanupTarget {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    try {
+        $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([char[]]@('\', '/'))
+        $targetPath = [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@('\', '/'))
+        if ($rootPath -match '[*?\[]' -or $targetPath -match '[*?\[]') { return $false }
+        if ($rootPath -match '^(?:\\\\|//)' -or $targetPath -match '^(?:\\\\|//)') { return $false }
+        $rootPrefix = $rootPath + [IO.Path]::DirectorySeparatorChar
+        if (-not $targetPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+        $rootItem = Get-Item -LiteralPath $rootPath -Force -ErrorAction Stop
+        if (-not $rootItem.PSIsContainer -or
+            ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+
+        if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            $rootAncestor = $rootItem.Parent
+            while ($rootAncestor) {
+                if (($rootAncestor.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+                $rootAncestor = $rootAncestor.Parent
+            }
+
+            $volumeRoot = [IO.Path]::GetPathRoot($rootPath)
+            if ($volumeRoot -notmatch '^[A-Za-z]:\\$' -or
+                [IO.DriveInfo]::new($volumeRoot).DriveType -ne [IO.DriveType]::Fixed) {
+                return $false
+            }
+
+            # LocalApplicationData is user-configurable. For elevated deletion,
+            # require it to remain beneath the current SID's machine-owned
+            # ProfileList path rather than trusting the known-folder value alone.
+            $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+            if ([string]::Equals($rootPath, [IO.Path]::GetFullPath($localAppData).TrimEnd([char[]]@('\', '/')),
+                    [StringComparison]::OrdinalIgnoreCase)) {
+                $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+                $profileKey = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid"
+                $profileValue = (Get-ItemProperty -LiteralPath $profileKey -Name ProfileImagePath -ErrorAction Stop).ProfileImagePath
+                $profilePath = [IO.Path]::GetFullPath(
+                    [Environment]::ExpandEnvironmentVariables([string]$profileValue)
+                ).TrimEnd([char[]]@('\', '/'))
+                $profilePrefix = $profilePath + [IO.Path]::DirectorySeparatorChar
+                if (-not $rootPath.StartsWith($profilePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    return $false
+                }
+            }
+        }
+
+        # Reject a cache directory, or any child directory below the known
+        # folder, when it is a junction/symlink. Recursive deletion must never
+        # escape through a reparse point.
+        $item = Get-Item -LiteralPath $targetPath -Force -ErrorAction Stop
+        while (-not [string]::Equals(
+            [IO.Path]::GetFullPath($item.FullName).TrimEnd([char[]]@('\', '/')),
+            $rootPath,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+            $item = $item.Parent
+            if ($null -eq $item) { return $false }
+        }
+
+        # Inspect every descendant without following reparse points. A trusted
+        # target can still contain a nested junction that would redirect a
+        # recursive elevated delete outside the approved root.
+        $pending = New-Object 'System.Collections.Generic.Queue[string]'
+        $pending.Enqueue($targetPath)
+        while ($pending.Count -gt 0) {
+            $directory = $pending.Dequeue()
+            foreach ($child in @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop)) {
+                if (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+                if ($child.PSIsContainer) { $pending.Enqueue($child.FullName) }
+            }
+        }
+        return $true
+    } catch {
+        Write-DebugLog "GPU cache path validation failed for '$Path': $_"
+        return $false
+    }
+}
+
+function Get-GpuPnpUtilPath {
+    <# Resolves the trusted inbox pnputil executable without PATH lookup. #>
+    [CmdletBinding()]
+    param()
+
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
+        # Unit tests run cross-platform; production callers are Windows-only.
+        return 'pnputil'
+    }
+
+    $systemDirectory = [Environment]::SystemDirectory
+    if ([string]::IsNullOrWhiteSpace($systemDirectory)) {
+        throw 'Windows did not provide a System directory for pnputil.exe.'
+    }
+    $path = Join-Path $systemDirectory 'pnputil.exe'
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    $canonicalSystem = [IO.Path]::GetFullPath($systemDirectory).TrimEnd([char[]]@('\', '/'))
+    if ($item.PSIsContainer -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        -not [string]::Equals($item.Directory.FullName, $canonicalSystem, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "The inbox pnputil path is not a trusted regular file: $path"
+    }
+    $volumeRoot = [IO.Path]::GetPathRoot($item.FullName)
+    if ($item.FullName -match '^\\\\' -or $volumeRoot -notmatch '^[A-Za-z]:\\$' -or
+        [IO.DriveInfo]::new($volumeRoot).DriveType -ne [IO.DriveType]::Fixed) {
+        throw "The inbox pnputil path is not on a local fixed volume: $($item.FullName)"
+    }
+    return $item.FullName
+}
+
+function Invoke-GpuPnpUtilDelete {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$PnpUtilPath,
+        [Parameter(Mandatory)][ValidatePattern('^oem\d+\.inf$')][string]$InfName
+    )
+
+    $output = & $PnpUtilPath /delete-driver $InfName /uninstall /force 2>&1
+    [PSCustomObject]@{
+        ExitCode = $LASTEXITCODE
+        Output = @($output)
+    }
+}
+
+function Get-GpuDriverCleanResult {
+    <#
+    .SYNOPSIS
+        Creates the stable result contract for GPU cleanup callers.
+    .DESCRIPTION
+        `DriverRemovalVerified` is deliberately distinct from pnputil's exit
+        code.  Only a second, locale-independent CIM query can prove that an
+        INF package is no longer installed.  Cleanup failures and Safe Mode
+        skips are likewise exposed separately so Phase 2 never promotes a
+        best-effort cleanup to a successful handoff.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Status,
+        [Parameter(Mandatory)][bool]$Applied,
+        [Parameter(Mandatory)][bool]$CanCompleteStep,
+        [int]$FoundDriverPackages = 0,
+        [int]$RemovedDriverPackages = 0,
+        [int]$FailedDriverPackages = 0,
+        [int]$UnknownDriverPackages = 0,
+        [bool]$DriverRemovalVerified = $false,
+        [bool]$AlreadyAbsent = $false,
+        [int]$SoftwareRemoved = 0,
+        [int]$FoldersCleaned = 0,
+        [int]$LockedFolders = 0,
+        [int]$CleanupFailures = 0,
+        [int]$CleanupSkipped = 0,
+        [int]$CleanupDeferred = 0,
+        [string]$Message = ''
+    )
+
+    [PSCustomObject]@{
+        Status = $Status
+        Applied = $Applied
+        CanCompleteStep = $CanCompleteStep
+        FoundDriverPackages = $FoundDriverPackages
+        RemovedDriverPackages = $RemovedDriverPackages
+        FailedDriverPackages = $FailedDriverPackages
+        UnknownDriverPackages = $UnknownDriverPackages
+        DriverRemovalVerified = $DriverRemovalVerified
+        AlreadyAbsent = $AlreadyAbsent
+        SoftwareRemoved = $SoftwareRemoved
+        FoldersCleaned = $FoldersCleaned
+        LockedFolders = $LockedFolders
+        CleanupFailures = $CleanupFailures
+        CleanupSkipped = $CleanupSkipped
+        CleanupDeferred = $CleanupDeferred
+        Message = $Message
+    }
+}
+
 function Remove-GpuDriverClean {
     <#
     .SYNOPSIS  Removes GPU drivers cleanly in Safe Mode. Pure PowerShell replacement
                for Display Driver Uninstaller (DDU).
     .DESCRIPTION
-        1. Stops and disables GPU-related services
-        2. Removes GPU driver packages (CIM primary, pnputil text-parsing fallback)
-        3. Cleans GPU registry entries
-        4. Removes DriverStore orphans
-        5. Cleans shader caches and temp folders
+        1. Discovers display-driver packages through locale-independent CIM data
+        2. Removes only validated oem<N>.inf packages through pnputil
+        3. After verified package removal, cleans vendor services/software/registry
+        4. Leaves display-class keys and DriverStore ownership to Windows
+        5. Cleans rebuildable shader caches and temp folders
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param(
@@ -25,48 +292,185 @@ function Remove-GpuDriverClean {
 
     if ($SCRIPT:DryRun) {
         Write-ConsoleLine "  [DRY-RUN] Would perform complete GPU driver removal for $GpuVendor" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   1. Stop + disable GPU services" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   1.5 Remove GPU software (AppX, program files, tasks, registry)" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   2. Remove driver packages via pnputil" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   3. Clean GPU class registry keys" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   4. Remove DriverStore orphan folders" -ForegroundColor Magenta
-        Write-ConsoleLine "  [DRY-RUN]   5. Clean shader caches" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   1. Discover vendor display packages through CIM" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   2. Remove validated oem<N>.inf packages via pnputil" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   3. After verified removal, clean vendor services/software/registry" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   4. Leave display-class keys and DriverStore ownership to Windows" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN]   5. Clean rebuildable shader caches" -ForegroundColor Magenta
         Write-ConsoleLine "  [DRY-RUN] No files or registry entries will be modified." -ForegroundColor Magenta
         if ($PassThru) {
-            return [PSCustomObject]@{
-                Status = "DryRun"
-                Applied = $false
-                CanCompleteStep = $false
-                FoundDriverPackages = 0
-                RemovedDriverPackages = 0
-                FailedDriverPackages = 0
-                AlreadyAbsent = $false
-                SoftwareRemoved = 0
-                FoldersCleaned = 0
-                Message = "GPU driver cleanup previewed for $GpuVendor"
-            }
+            return Get-GpuDriverCleanResult -Status 'DryRun' -Applied $false -CanCompleteStep $false -Message "GPU driver cleanup previewed for $GpuVendor"
         }
         return
     }
     if (-not $PSCmdlet.ShouldProcess($GpuVendor, "Remove GPU driver packages, software, services, registry entries, and caches")) {
         if ($PassThru) {
-            return [PSCustomObject]@{
-                Status = "DryRun"
-                Applied = $false
-                CanCompleteStep = $false
-                FoundDriverPackages = 0
-                RemovedDriverPackages = 0
-                FailedDriverPackages = 0
-                AlreadyAbsent = $false
-                SoftwareRemoved = 0
-                FoldersCleaned = 0
-                Message = "GPU driver cleanup previewed for $GpuVendor"
-            }
+            return Get-GpuDriverCleanResult -Status 'DryRun' -Applied $false -CanCompleteStep $false -Message "GPU driver cleanup previewed for $GpuVendor"
         }
         return
     }
 
-    # ── 1. Stop and Disable GPU Services ─────────────────────────────────────
+    # ── 1. Prove and remove the vendor driver package before any cleanup ─────
+    # CIM is the authoritative, locale-independent source here.  Do not use the
+    # pnputil text output as proof: its labels are localized and a parse failure
+    # must never turn into permission to delete vendor state.
+    Write-Step "Enumerating GPU driver packages..."
+    $vendorMatch = switch ($GpuVendor) {
+        "NVIDIA" { "nvidia" }
+        "AMD"    { "advanced\s+micro\s+devices|\bamd\b|\bati\b|radeon" }
+        "Intel"  { "intel" }
+    }
+    $driverPackages = @()
+    $invalidDriverRows = @()
+    $cimEnumerationSucceeded = $false
+    try {
+        $displayGuid = $CFG_GUID_Display
+        $cimDrivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
+            Where-Object { $_.ClassGuid -eq $displayGuid -and $_.DriverProviderName -match $vendorMatch })
+        $cimEnumerationSucceeded = $true
+        foreach ($drv in $cimDrivers) {
+            if ($drv.InfName -match '^oem\d+\.inf$') {
+                if ($drv.InfName -notin $driverPackages) {
+                    $driverPackages += $drv.InfName
+                }
+            } else {
+                $invalidDriverRows += $drv
+            }
+        }
+    } catch {
+        Write-DebugLog "CIM enumeration failed: $_"
+    }
+
+    if (-not $cimEnumerationSucceeded) {
+        # Do not parse `pnputil /enum-drivers` as a destructive fallback. Its
+        # text is localized, so it cannot establish either package ownership or
+        # authoritative absence. Keep the command name in the diagnostic for
+        # operators who need to investigate manually.
+        Write-Warn "Could not authoritatively enumerate $GpuVendor display drivers. Run 'pnputil /enum-drivers' manually to investigate."
+        if ($PassThru) {
+            return Get-GpuDriverCleanResult -Status 'Failed' -Applied $false -CanCompleteStep $false -Message 'Driver package discovery was not verified; no cleanup was performed.'
+        }
+        return
+    }
+
+    $foundDriverPackages = $driverPackages.Count + $invalidDriverRows.Count
+    if ($invalidDriverRows.Count -gt 0) {
+        $invalidNames = @($invalidDriverRows | ForEach-Object {
+            if ([string]::IsNullOrWhiteSpace([string]$_.InfName)) { '<missing>' } else { [string]$_.InfName }
+        }) -join ', '
+        Write-Warn "CIM returned $($invalidDriverRows.Count) matching $GpuVendor display row(s) with unsafe or unusable INF names: $invalidNames"
+        if ($PassThru) {
+            return Get-GpuDriverCleanResult -Status 'Failed' -Applied $false -CanCompleteStep $false `
+                -FoundDriverPackages $foundDriverPackages -FailedDriverPackages $invalidDriverRows.Count `
+                -UnknownDriverPackages $driverPackages.Count -Message 'Matching display-driver rows could not be mapped safely to OEM INF packages; no cleanup was performed.'
+        }
+        return
+    }
+
+    $removedDrivers = 0
+    $failedDrivers = 0
+    $unknownDrivers = 0
+    $pnputilSucceeded = @()
+    $pnputilFailed = @()
+    $removedApps = 0
+    $alreadyAbsent = ($driverPackages.Count -eq 0)
+    # A zero pnputil exit code is not proof of removal.  This remains false
+    # until the original CIM query can no longer find every targeted INF.
+    $driverRemovalVerified = $alreadyAbsent
+    if (-not $alreadyAbsent) {
+        Write-OK "CIM enumeration found $($driverPackages.Count) $GpuVendor display driver(s)."
+        try {
+            $pnpUtilPath = Get-GpuPnpUtilPath
+            foreach ($inf in $driverPackages) {
+                # SECURITY: only CIM-published oem<N>.inf names may reach the
+                # absolute inbox pnputil path.
+                Write-Step "Removing driver package: $inf"
+                try {
+                    $nativeResult = Invoke-GpuPnpUtilDelete -PnpUtilPath $pnpUtilPath -InfName $inf
+                    if ($nativeResult.ExitCode -eq 0) {
+                        $pnputilSucceeded += $inf
+                    } else {
+                        Write-Warn "Could not remove $inf (exit $($nativeResult.ExitCode)): $($nativeResult.Output -join ' ')"
+                        $pnputilFailed += $inf
+                    }
+                } catch {
+                    Write-Warn "Error removing ${inf}: $_"
+                    $pnputilFailed += $inf
+                }
+            }
+        } catch {
+            Write-Warn "Could not resolve the trusted inbox pnputil executable: $_"
+            $pnputilFailed = @($driverPackages)
+        }
+    } else {
+        Write-Info "No $GpuVendor display driver packages found by CIM. Driver package state is already absent."
+    }
+
+    if ($pnputilSucceeded.Count -gt 0) {
+        try {
+            # Re-query CIM rather than parsing pnputil output.  DriverProviderName
+            # and ClassGuid remain locale independent. A clean-install handoff
+            # requires the complete matching vendor package set to be empty, not
+            # merely the originally selected INF names to disappear.
+            $postRemovalDrivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
+                Where-Object { $_.ClassGuid -eq $displayGuid -and $_.DriverProviderName -match $vendorMatch })
+            $remainingPackages = @(
+                $postRemovalDrivers |
+                Where-Object { $_.InfName -match '^oem\d+\.inf$' } |
+                ForEach-Object { $_.InfName }
+            )
+            $postInvalidRows = @($postRemovalDrivers | Where-Object { $_.InfName -notmatch '^oem\d+\.inf$' })
+            foreach ($inf in $driverPackages) {
+                if ($inf -in $remainingPackages) {
+                    Write-Warn "CIM still reports installed driver package: $inf"
+                    $failedDrivers++
+                } else {
+                    Write-OK "Removed and verified absent: $inf"
+                    $removedDrivers++
+                }
+            }
+            if ($postInvalidRows.Count -gt 0) {
+                Write-Warn "Post-removal CIM returned matching display rows with unusable INF names; cleanup cannot be verified."
+            }
+            $unexpectedPackages = @($remainingPackages | Where-Object { $_ -notin $driverPackages })
+            if ($unexpectedPackages.Count -gt 0) {
+                Write-Warn "Post-removal CIM reports additional matching vendor package(s): $($unexpectedPackages -join ', ')"
+            }
+            $driverRemovalVerified = ($failedDrivers -eq 0 -and $removedDrivers -eq $driverPackages.Count -and
+                $remainingPackages.Count -eq 0 -and $postInvalidRows.Count -eq 0)
+        } catch {
+            # Without a post-removal authoritative query, the package may still
+            # be present.  Do not clean related state or report a safe handoff.
+            Write-Warn "Could not verify $GpuVendor driver package removal through CIM: $_"
+            $failedDrivers = $pnputilFailed.Count
+            $unknownDrivers = $pnputilSucceeded.Count
+            $driverRemovalVerified = $false
+        }
+    } elseif (-not $alreadyAbsent) {
+        $failedDrivers = $driverPackages.Count
+    }
+
+    # A failed or partial pnputil operation leaves the installed driver intact.
+    # Fail closed before stopping services or deleting any vendor-owned state.
+    if (-not $driverRemovalVerified) {
+        $status = if ($removedDrivers -gt 0) { "Partial" } else { "Failed" }
+        if ($PassThru) {
+            return Get-GpuDriverCleanResult -Status $status -Applied ($removedDrivers -gt 0) -CanCompleteStep $false `
+                -FoundDriverPackages $foundDriverPackages -RemovedDriverPackages $removedDrivers -FailedDriverPackages $failedDrivers `
+                -UnknownDriverPackages $unknownDrivers `
+                -DriverRemovalVerified $driverRemovalVerified -Message 'Driver package removal was not fully successful or could not be verified; no cleanup was performed.'
+        }
+        return
+    }
+
+    $cleanupFailures = 0
+    $cleanupSkipped = 0
+    $cleanupDeferred = 0
+    $serviceMutations = 0
+    $taskMutations = 0
+    $registryMutations = 0
+
+    # ── 2. Stop and Disable GPU Services ─────────────────────────────────────
     Write-Step "Stopping $GpuVendor services..."
 
     $servicePatterns = switch ($GpuVendor) {
@@ -90,110 +494,108 @@ function Remove-GpuDriverClean {
         )}
     }
 
-    foreach ($pattern in $servicePatterns) {
-        $services = Get-Service -Name $pattern -ErrorAction SilentlyContinue
+    try {
+        # Enumerate once. A successful empty enumeration is authoritative
+        # absence; provider failure is not.
+        $allServices = @(Get-Service -ErrorAction Stop)
+        $services = @($allServices | Where-Object {
+            $serviceName = $_.Name
+            @($servicePatterns | Where-Object { $serviceName -like $_ }).Count -gt 0
+        })
         foreach ($svc in $services) {
             try {
                 # Backup service state before disabling so it can be restored
                 Backup-ServiceState -ServiceName $svc.Name -StepTitle "GPU Driver Clean ($GpuVendor)"
-                Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue
-                Set-Service $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
+                Stop-Service $svc.Name -Force -ErrorAction Stop
+                Set-Service $svc.Name -StartupType Disabled -ErrorAction Stop
                 Write-OK "Stopped + disabled: $($svc.Name)"
+                $serviceMutations++
             } catch {
-                Write-DebugLog "Service $($svc.Name): $_"
+                $cleanupFailures++
+                Write-Warn "Could not stop and disable service $($svc.Name): $_"
             }
         }
+    } catch {
+        $cleanupFailures++
+        Write-Warn "Could not enumerate $GpuVendor services authoritatively: $_"
     }
 
     # ── 1.5. Remove GPU Software / Applications ────────────────────────────
-    # Remove vendor applications (NVIDIA App, Control Panel, GFE, PhysX, etc.)
-    # that persist separately from the display driver package.
+    # Remove vendor companion applications (NVIDIA App, GFE, PhysX, etc.) that
+    # persist separately from the display driver package. The Store-delivered
+    # NVIDIA Control Panel is intentionally preserved.
     # In Safe Mode, MSI service may not run — use direct file/registry removal.
     Write-Step "Removing $GpuVendor software and applications..."
 
     $removedApps = 0
 
     if ($GpuVendor -eq "NVIDIA") {
-        # ── AppX / MSIX packages (NVIDIA App, NVIDIA Control Panel from Store) ──
-        if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
-            # NOTE: Get-AppxPackage / Get-AppxProvisionedPackage throw terminating
-            # errors in Safe Mode because AppXSVC cannot start. -ErrorAction
-            # SilentlyContinue only suppresses non-terminating errors, so we must
-            # wrap these calls in try/catch.
-            try {
-                $nvAppx = Get-AppxPackage -AllUsers -ErrorAction Stop |
-                    Where-Object { $_.Name -match "NVIDIA" }
-            } catch {
-                Write-DebugLog "AppX enumeration unavailable (expected in Safe Mode): $_"
-                $nvAppx = @()
-            }
-            foreach ($pkg in $nvAppx) {
-                try {
-                    Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
-                    Write-OK "Removed AppX: $($pkg.Name)"
-                    $removedApps++
-                } catch {
-                    Write-DebugLog "AppX removal (expected in Safe Mode): $($pkg.Name) — $_"
-                }
-            }
-            # Remove provisioned packages to prevent reinstall on feature updates
-            try {
-                $nvProvisioned = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
-                    Where-Object { $_.DisplayName -match "NVIDIA" }
-                foreach ($pkg in $nvProvisioned) {
-                    try {
-                        $pkg | Remove-AppxProvisionedPackage -Online -ErrorAction Stop | Out-Null
-                        Write-OK "Removed provisioned: $($pkg.DisplayName)"
-                    } catch {
-                        Write-DebugLog "Provisioned removal: $($pkg.DisplayName) — $_"
-                    }
-                }
-            } catch { Write-DebugLog "Provisioned package enumeration: $_" }
-        } else {
-            Write-DebugLog "AppX cmdlets not available — skipping AppX removal."
-        }
+        # AppXSVC is unavailable in Safe Mode. Phase 3 owns verified AppX and
+        # provisioned-package cleanup before installing the replacement driver.
+        $cleanupDeferred++
+        Write-Info "NVIDIA AppX cleanup deferred to Phase 3 Normal Mode."
 
         # ── NVIDIA scheduled tasks ──────────────────────────────────────────
         $nvTaskPatterns = @("NvDriverUpdateCheckDaily*", "NVIDIA GeForce*", "NvNodeLauncher*",
                             "NvBackend*", "NvTmRep*", "NvProfileUpdater*", "NvTelemetry*")
-        foreach ($pattern in $nvTaskPatterns) {
-            $tasks = Get-ScheduledTask -TaskName $pattern -ErrorAction SilentlyContinue
-            foreach ($t in $tasks) {
-                try {
-                    Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false -ErrorAction Stop
-                    Write-OK "Removed task: $($t.TaskName)"
-                } catch { Write-DebugLog "Task removal: $($t.TaskName) — $_" }
-            }
+        try {
+            $allTasks = @(Get-ScheduledTask -ErrorAction Stop)
+            $nvTasks = @($allTasks | Where-Object {
+                $taskName = $_.TaskName
+                $taskPath = [string]$_.TaskPath
+                $taskPath -like '\NVIDIA\*' -or
+                    @($nvTaskPatterns | Where-Object { $taskName -like $_ }).Count -gt 0
+            })
+        } catch {
+            # Task Scheduler commonly cannot be queried in Safe Mode. Keep the
+            # handoff usable, but expose the exact Normal-Mode obligation.
+            Write-DebugLog "NVIDIA scheduled-task cleanup deferred to Phase 3: $_"
+            $cleanupDeferred++
+            $nvTasks = @()
         }
-        # Also check \NVIDIA\ task folder
-        $nvFolderTasks = Get-ScheduledTask -TaskPath "\NVIDIA\*" -ErrorAction SilentlyContinue
-        foreach ($t in $nvFolderTasks) {
+        foreach ($t in $nvTasks) {
             try {
                 Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction Stop
                 Write-OK "Removed task: $($t.TaskPath)$($t.TaskName)"
-            } catch { Write-DebugLog "Task removal: $($t.TaskName) — $_" }
+                $taskMutations++
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not remove scheduled task $($t.TaskName): $_"
+            }
         }
 
         # ── NVIDIA program directories ──────────────────────────────────────
-        # Remove all NVIDIA application files. In Safe Mode, files are unlocked.
-        $nvDirs = @(
-            "$env:ProgramFiles\NVIDIA Corporation",
-            "${env:ProgramFiles(x86)}\NVIDIA Corporation",
-            "$env:ProgramData\NVIDIA Corporation",
-            "$env:ProgramData\NVIDIA",
-            "$env:LOCALAPPDATA\NVIDIA Corporation",
-            "$env:LOCALAPPDATA\NVIDIA"
-        )
-        foreach ($dir in $nvDirs) {
-            if (Test-Path $dir) {
+        # Fixed vendor descendants only; canonical containment and reparse
+        # checks are required before recursive removal.
+        foreach ($target in (Get-GpuVendorApplicationCleanupTargets -GpuVendor $GpuVendor)) {
+            $dir = $target.Path
+            try {
+                $dirExists = Test-Path -LiteralPath $dir -ErrorAction Stop
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not inspect application directory ${dir}: $_"
+                continue
+            }
+            if ($dirExists) {
+                if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $dir)) {
+                    Write-Warn "Refusing untrusted or redirected application path: $dir"
+                    $cleanupFailures++
+                    continue
+                }
                 try {
-                    Remove-Item $dir -Recurse -Force -ErrorAction Stop
+                    if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $dir)) {
+                        throw 'Cleanup path trust changed before deletion.'
+                    }
+                    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+                    if (Test-Path -LiteralPath $dir -ErrorAction Stop) {
+                        throw 'Application directory still exists after removal.'
+                    }
                     Write-OK "Removed: $dir"
                     $removedApps++
                 } catch {
                     # Some files may be locked even in Safe Mode (system-owned)
-                    Write-Warn "Partial removal: $dir — some files locked"
-                    $removedApps++
+                    $cleanupFailures++
+                    Write-Warn "Could not remove application directory: $dir — $_"
                 }
             }
         }
@@ -207,10 +609,22 @@ function Remove-GpuDriverClean {
         )
         $cleanedEntries = 0
         foreach ($regPath in $uninstallPaths) {
-            if (-not (Test-Path $regPath)) { continue }
-            Get-ChildItem $regPath -ErrorAction SilentlyContinue | ForEach-Object {
-                $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-                if (-not $props) { return }  # skip keys that can't be read
+            try {
+                if (-not (Test-Path -Path $regPath -ErrorAction Stop)) { continue }
+                $uninstallEntries = @(Get-ChildItem $regPath -ErrorAction Stop)
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not enumerate uninstall registry path ${regPath}: $_"
+                continue
+            }
+            $uninstallEntries | ForEach-Object {
+                try {
+                    $props = Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
+                } catch {
+                    $cleanupFailures++
+                    Write-Warn "Could not read uninstall registry entry $($_.PSPath): $_"
+                    return
+                }
                 $pub = if ($props.PSObject.Properties['Publisher'])  { $props.Publisher }  else { "" }
                 $dn  = if ($props.PSObject.Properties['DisplayName']){ $props.DisplayName } else { "" }
                 if ($pub -match "NVIDIA" -or $dn -match "^NVIDIA ") {
@@ -218,8 +632,10 @@ function Remove-GpuDriverClean {
                         Remove-Item $_.PSPath -Recurse -Force -ErrorAction Stop
                         Write-DebugLog "Cleaned uninstall entry: $dn"
                         $cleanedEntries++
+                        $registryMutations++
                     } catch {
-                        Write-DebugLog "Failed to clean uninstall entry: $dn — $_"
+                        $cleanupFailures++
+                        Write-Warn "Could not clean uninstall registry entry ${dn}: $_"
                     }
                 }
             }
@@ -229,205 +645,64 @@ function Remove-GpuDriverClean {
         }
 
     } elseif ($GpuVendor -eq "AMD") {
-        # AMD software directories
-        $amdDirs = @(
-            "$env:ProgramFiles\AMD",
-            "${env:ProgramFiles(x86)}\AMD",
-            "$env:LOCALAPPDATA\AMD",
-            "$env:ProgramData\AMD"
-        )
-        foreach ($dir in $amdDirs) {
-            if (Test-Path $dir) {
+        # AMD software directories use the same fixed-root trust boundary.
+        foreach ($target in (Get-GpuVendorApplicationCleanupTargets -GpuVendor $GpuVendor)) {
+            $dir = $target.Path
+            try {
+                $dirExists = Test-Path -LiteralPath $dir -ErrorAction Stop
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not inspect application directory ${dir}: $_"
+                continue
+            }
+            if ($dirExists) {
+                if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $dir)) {
+                    Write-Warn "Refusing untrusted or redirected application path: $dir"
+                    $cleanupFailures++
+                    continue
+                }
                 try {
-                    Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+                    if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $dir)) {
+                        throw 'Cleanup path trust changed before deletion.'
+                    }
+                    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+                    if (Test-Path -LiteralPath $dir -ErrorAction Stop) {
+                        throw 'Application directory still exists after removal.'
+                    }
                     Write-OK "Removed: $dir"
                     $removedApps++
                 } catch {
-                    Write-Warn "Partial removal: $dir"
-                    $removedApps++
+                    $cleanupFailures++
+                    Write-Warn "Could not remove application directory: $dir — $_"
                 }
             }
         }
     }
     Write-Info "$removedApps $GpuVendor software items removed."
 
-    # ── 2. Remove GPU Driver Packages via pnputil ────────────────────────────
-    Write-Step "Enumerating GPU driver packages..."
+    # Intentionally do not delete display-class keys. Their entries are shared
+    # device configuration, and a broad provider/description match cannot prove
+    # that an entry belongs only to the INF packages removed above.
 
-    $vendorMatch = switch ($GpuVendor) {
-        "NVIDIA" { "nvidia" }
-        "AMD"    { "amd|ati|radeon" }
-        "Intel"  { "intel" }
-    }
-
-    $driverPackages = @()
-    $cimEnumerationSucceeded = $false
-
-    # Primary method: CIM/WMI query — works on all Windows editions.
-    # Get-CimInstance requires PS 3.0+ (Windows 10/11 always have it).
-    # NOTE: Win32_PnPSignedDriver.DeviceClass is the localized class description (e.g.,
-    # "Display adapters" in English, "Grafikkarten" in German). Use ClassGuid instead —
-    # it's the device setup class GUID which is always {4d36e968-...} for display adapters.
-    try {
-        $displayGuid = $CFG_GUID_Display  # {4d36e968-e325-11ce-bfc1-08002be10318}
-        $cimDrivers = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
-            Where-Object { $_.ClassGuid -eq $displayGuid -and $_.DriverProviderName -match $vendorMatch }
-        )
-        $cimEnumerationSucceeded = $true
-
-        foreach ($drv in $cimDrivers) {
-            if ($drv.InfName -match "^oem\d+\.inf$") {
-                $driverPackages += $drv.InfName
-            }
-        }
-
-        if ($driverPackages.Count -gt 0) {
-            Write-OK "CIM enumeration found $($driverPackages.Count) $GpuVendor display driver(s)."
-        } else {
-            Write-DebugLog "CIM query returned no matching display drivers."
-        }
-    } catch {
-        Write-DebugLog "CIM enumeration failed: $_ — falling back to pnputil parsing"
-    }
-
-    # Fallback: parse pnputil text output. Field labels are English-only
-    # ("Published Name", "Class Name", "Driver Package Provider") so this method
-    # will not find drivers on non-English Windows installations. The CIM method
-    # above is locale-independent and should be preferred.
-    if ($driverPackages.Count -eq 0) {
-        Write-DebugLog "Trying pnputil text parsing fallback..."
-        $pnpOutput = pnputil /enum-drivers 2>&1
-        $currentInf = $null
-        $currentClass = $null
-        $currentProvider = $null
-
-        foreach ($line in $pnpOutput) {
-            if ($line -match "Published Name\s*:\s*(oem\d+\.inf)") {
-                $currentInf = $Matches[1]
-            }
-            if ($line -match "Class Name\s*:\s*(.+)") {
-                $currentClass = $Matches[1].Trim()
-            }
-            if ($line -match "Driver Package Provider\s*:\s*(.+)") {
-                $currentProvider = $Matches[1].Trim()
-            }
-            if (($line.Trim() -eq "" -or $line -match "^$") -and $currentInf) {
-                if ($currentClass -match "Display" -and $currentProvider -match $vendorMatch) {
-                    if ($currentInf -notin $driverPackages) {
-                        $driverPackages += $currentInf
-                    }
-                }
-                $currentInf = $null
-                $currentClass = $null
-                $currentProvider = $null
-            }
-        }
-        # Check last entry (pnputil may not end with blank line)
-        if ($currentInf -and $currentClass -match "Display" -and $currentProvider -match $vendorMatch) {
-            if ($currentInf -notin $driverPackages) {
-                $driverPackages += $currentInf
-            }
-        }
-
-        if ($driverPackages.Count -gt 0) {
-            Write-OK "pnputil fallback found $($driverPackages.Count) $GpuVendor display driver(s)."
-        } else {
-            Write-DebugLog "pnputil parsing found no matching drivers (expected on non-English Windows)."
-        }
-    }
-
-    if ($driverPackages.Count -eq 0) {
-        if ($cimEnumerationSucceeded) {
-            Write-Info "No $GpuVendor display driver packages found by CIM. Driver package state is already absent."
-        } else {
-            Write-Warn "No $GpuVendor display driver packages found. Driver removal is not verified."
-            Write-Warn "If on non-English Windows, pnputil text parsing may have failed due to locale. Run 'pnputil /enum-drivers' manually to verify."
-            Write-Warn "Continuing with registry and cache cleanup."
-        }
-    }
-
-    $removedDrivers = 0
-    $failedDrivers = 0
-    foreach ($inf in $driverPackages) {
-        # SECURITY: Validate inf filename format — must be oem<digits>.inf only.
-        # The $inf values come from CIM query or pnputil text parsing. If either source
-        # is compromised or the regex is tricked, an attacker could inject arbitrary
-        # pnputil arguments. Strict validation prevents command injection.
-        if ($inf -notmatch '^oem\d+\.inf$') {
-            Write-Warn "Skipping invalid driver package name: $inf (expected oem<N>.inf format)"
-            $failedDrivers++
-            continue
-        }
-        Write-Step "Removing driver package: $inf"
-        try {
-            $result = pnputil /delete-driver $inf /uninstall /force 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-OK "Removed: $inf"
-                $removedDrivers++
-            } else {
-                Write-Warn "Could not remove $inf (exit $LASTEXITCODE): $result"
-                $failedDrivers++
-            }
-        } catch {
-            Write-Warn "Error removing ${inf}: $_"
-            $failedDrivers++
-        }
-    }
-    Write-Info "$removedDrivers driver package(s) removed$(if($failedDrivers){", $failedDrivers failed"})."
-    if ($failedDrivers -gt 0) {
-        Write-Warn "Some drivers could not be removed. If in Normal Mode, try rebooting into Safe Mode."
-        Write-Warn "Locked driver files are the most common cause — Safe Mode unlocks them."
-    }
-
-    # ── 3. Clean GPU Class Registry ──────────────────────────────────────────
-    Write-Step "Cleaning GPU registry entries..."
-
-    $classPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$CFG_GUID_Display"
-
-    if (Test-Path $classPath) {
-        $subkeys = Get-ChildItem $classPath -ErrorAction SilentlyContinue |
-            Where-Object { $_.PSChildName -match "^\d{4}$" }
-
-        foreach ($key in $subkeys) {
-            try {
-                $props = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
-                if (-not $props) { continue }
-                $prov = if ($props.PSObject.Properties['ProviderName']) { $props.ProviderName } else { "" }
-                $desc = if ($props.PSObject.Properties['DriverDesc'])   { $props.DriverDesc }   else { "" }
-                $match = switch ($GpuVendor) {
-                    "NVIDIA" { $prov -match "NVIDIA" -or $desc -match "NVIDIA" }
-                    "AMD"    { $prov -match "AMD|ATI" -or $desc -match "AMD|Radeon" }
-                    "Intel"  { $prov -match "Intel"   -or $desc -match "Intel.*Graphics" }
-                }
-                if ($match) {
-                    Remove-Item $key.PSPath -Recurse -Force -ErrorAction SilentlyContinue
-                    Write-OK "Registry cleaned: $($key.PSChildName) ($desc)"
-                }
-            } catch {
-                Write-DebugLog "Registry key $($key.PSChildName): $_"
-            }
-        }
-    }
-
-    # Clean vendor registry paths only if at least one driver was actually removed.
-    # If all removals failed, the driver is still loaded and deleting its registry
-    # config would leave it in an inconsistent state.
-    if ($driverPackages.Count -eq 0) {
-        Write-Warn "Skipping vendor registry cleanup — no driver package removal was verified."
-    } elseif ($failedDrivers -gt 0 -and $removedDrivers -eq 0) {
-        Write-Warn "Skipping vendor registry cleanup — no drivers were successfully removed."
-    } elseif ($failedDrivers -gt 0) {
-        Write-Warn "Partial removal ($removedDrivers removed, $failedDrivers failed) — skipping vendor registry cleanup to avoid inconsistent state."
-    } elseif ($GpuVendor -eq "NVIDIA") {
+    # Driver absence is now authoritative, whether established by this run or
+    # already present at entry. Inspect and remove vendor residue in both cases.
+    if ($GpuVendor -eq "NVIDIA") {
         $nvRegPaths = @(
             "HKLM:\SOFTWARE\NVIDIA Corporation",
             "HKCU:\SOFTWARE\NVIDIA Corporation",
             "HKLM:\SOFTWARE\WOW6432Node\NVIDIA Corporation"
         )
         foreach ($p in $nvRegPaths) {
-            if (Test-Path $p) {
-                Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
-                Write-OK "Registry cleaned: $p"
+            try {
+                if (Test-Path -Path $p -ErrorAction Stop) {
+                    Remove-Item $p -Recurse -Force -ErrorAction Stop
+                    if (Test-Path -Path $p -ErrorAction Stop) { throw 'Registry path still exists after removal.' }
+                    Write-OK "Registry cleaned: $p"
+                    $registryMutations++
+                }
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not inspect or clean registry path ${p}: $_"
             }
         }
     } elseif ($GpuVendor -eq "AMD") {
@@ -437,81 +712,63 @@ function Remove-GpuDriverClean {
             "HKCU:\SOFTWARE\AMD"
         )
         foreach ($p in $amdRegPaths) {
-            if (Test-Path $p) {
-                Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
-                Write-OK "Registry cleaned: $p"
+            try {
+                if (Test-Path -Path $p -ErrorAction Stop) {
+                    Remove-Item $p -Recurse -Force -ErrorAction Stop
+                    if (Test-Path -Path $p -ErrorAction Stop) { throw 'Registry path still exists after removal.' }
+                    Write-OK "Registry cleaned: $p"
+                    $registryMutations++
+                }
+            } catch {
+                $cleanupFailures++
+                Write-Warn "Could not inspect or clean registry path ${p}: $_"
             }
         }
     }
 
-    # ── 4. Clean DriverStore Orphans ─────────────────────────────────────────
-    Write-Step "Cleaning DriverStore orphan folders..."
-
-    $driverStore = "$env:SystemRoot\System32\DriverStore\FileRepository"
-    # Use precise patterns to avoid matching non-GPU drivers (e.g., nvdimm, amdppm)
-    $patterns = switch ($GpuVendor) {
-        "NVIDIA" { @("nv_dispi*","nvdsp*","nvlddmkm*","nview*","nvhdc*","nvmdi*") }
-        "AMD"    { @("atiilhag*","atiumdag*","amdkmdap*","amdxe*","atihdw*","radeon*") }
-        "Intel"  { @("iigd_dch*","igfx*","igd10*","igd11*","igd12*") }
-    }
-
+    # pnputil owns FileRepository reference accounting. Never remove its raw
+    # folders manually; that can corrupt a package which failed to uninstall.
     $cleanedFolders = 0
     $lockedFolders = 0
-    if (Test-Path $driverStore) {
-        foreach ($p in $patterns) {
-            $folders = Get-ChildItem $driverStore -Directory -Filter $p -ErrorAction SilentlyContinue
-            foreach ($f in $folders) {
-                try {
-                    Remove-Item $f.FullName -Recurse -Force -ErrorAction Stop
-                    Write-OK "DriverStore cleaned: $($f.Name)"
-                    $cleanedFolders++
-                } catch {
-                    Write-Warn "Could not remove $($f.Name) (locked): $_"
-                    $lockedFolders++
-                }
-            }
-        }
-    }
-    Write-Info "$cleanedFolders DriverStore folders cleaned$(if($lockedFolders){", $lockedFolders locked (will be removed on next reboot)"})."
 
-    # ── 5. Clean Shader Caches ───────────────────────────────────────────────
+    # ── 3. Clean rebuildable shader caches ───────────────────────────────────
     Write-Step "Cleaning shader caches..."
 
-    $cachePaths = switch ($GpuVendor) {
-        "NVIDIA" { @(
-            "$env:LOCALAPPDATA\NVIDIA\DXCache",
-            "$env:LOCALAPPDATA\NVIDIA\GLCache",
-            "$env:TEMP\NVIDIA Corporation",
-            "$env:ProgramData\NVIDIA Corporation"
-        )}
-        "AMD" { @(
-            "$env:LOCALAPPDATA\AMD\DxCache",
-            "$env:LOCALAPPDATA\AMD\GLCache",
-            "$env:TEMP\AMDRSServ"
-        )}
-        "Intel" { @(
-            "$env:LOCALAPPDATA\Intel"
-        )}
-    }
-
-    # Common shader caches
-    $cachePaths += "$env:LOCALAPPDATA\D3DSCache"
-
-    foreach ($cp in $cachePaths) {
-        if (Test-Path $cp) {
-            $items = @(Get-ChildItem $cp -Recurse -File -ErrorAction SilentlyContinue)
-            $count = $items.Count
+    foreach ($target in (Get-GpuCacheCleanupTargets -GpuVendor $GpuVendor)) {
+        $cp = $target.Path
+        try {
+            $cacheExists = Test-Path -LiteralPath $cp -ErrorAction Stop
+        } catch {
+            $lockedFolders++
+            $cleanupFailures++
+            Write-Warn "Could not inspect cache path ${cp}: $_"
+            continue
+        }
+        if ($cacheExists) {
+            if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $cp)) {
+                Write-Warn "Refusing untrusted or redirected cache path: $cp"
+                $lockedFolders++
+                $cleanupFailures++
+                continue
+            }
             try {
-                Remove-Item $cp -Recurse -Force -ErrorAction Stop
-                Write-OK "Cache cleaned: $cp ($count items)"
+                if (-not (Test-GpuCacheCleanupTarget -Root $target.Root -Path $cp)) {
+                    throw 'Cleanup path trust changed before deletion.'
+                }
+                Remove-Item -LiteralPath $cp -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $cp -ErrorAction Stop) { throw 'Cache path still exists after removal.' }
+                Write-OK "Cache cleaned: $cp"
+                $cleanedFolders++
             } catch {
                 Write-Warn "Partial cache clean: $cp — some files locked: $_"
+                $lockedFolders++
+                $cleanupFailures++
             }
         }
     }
 
     # ── Summary ──────────────────────────────────────────────────────────────
-    $alreadyAbsent = ($driverPackages.Count -eq 0 -and $cimEnumerationSucceeded)
+    $alreadyAbsent = ($foundDriverPackages -eq 0 -and $cimEnumerationSucceeded)
     $cleanupStatus = if ($alreadyAbsent) {
         "AlreadyAbsent"
     } elseif ($driverPackages.Count -eq 0) {
@@ -523,10 +780,19 @@ function Remove-GpuDriverClean {
     } else {
         "Failed"
     }
+    # A package removal alone is insufficient for a clean-install handoff. Any
+    # discovered target that could not be removed is explicitly partial. Work
+    # that fundamentally requires Normal Mode is separately exposed as deferred.
+    if (($cleanupStatus -eq 'Success' -or $cleanupStatus -eq 'AlreadyAbsent') -and
+        ($cleanupFailures -gt 0 -or $cleanupSkipped -gt 0)) {
+        $cleanupStatus = 'Partial'
+    }
     $cleanupMessage = switch ($cleanupStatus) {
-        "Success" { "Driver cleanup removed $removedDrivers package(s)." }
-        "AlreadyAbsent" { "No $GpuVendor display driver packages are present." }
-        "Partial" { "Driver cleanup removed $removedDrivers package(s), but $failedDrivers package(s) failed." }
+        "Success" { "Driver cleanup removed $removedDrivers package(s); $cleanupDeferred Normal-Mode cleanup obligation(s) deferred." }
+        "AlreadyAbsent" { "No $GpuVendor display driver packages are present; Safe Mode residue cleanup completed and $cleanupDeferred Normal-Mode obligation(s) were deferred." }
+        "Partial" {
+            "Driver cleanup is incomplete: $failedDrivers failed driver package(s), $unknownDrivers unknown package(s), $cleanupFailures cleanup failure(s), $cleanupSkipped unclassified skip(s)."
+        }
         default {
             if ($driverPackages.Count -eq 0) {
                 "No display driver packages were found; removal was not verified."
@@ -537,7 +803,8 @@ function Remove-GpuDriverClean {
     }
 
     Write-Blank
-    $canCompleteStep = ($cleanupStatus -eq "Success" -or $cleanupStatus -eq "AlreadyAbsent")
+    $canCompleteStep = (($cleanupStatus -eq "Success" -or $cleanupStatus -eq "AlreadyAbsent") -and
+        $driverRemovalVerified -and $cleanupFailures -eq 0 -and $cleanupSkipped -eq 0)
     $summaryColor = if ($canCompleteStep) { "Green" } elseif ($cleanupStatus -eq "Partial") { "Yellow" } else { "Red" }
     $summaryTitle = if ($cleanupStatus -eq "Success") { "GPU DRIVER CLEAN REMOVAL COMPLETE" } elseif ($cleanupStatus -eq "AlreadyAbsent") { "GPU DRIVER CLEAN ALREADY ABSENT" } elseif ($cleanupStatus -eq "Partial") { "GPU DRIVER CLEAN REMOVAL PARTIAL" } else { "GPU DRIVER CLEAN REMOVAL NOT VERIFIED" }
     Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $summaryColor
@@ -556,18 +823,14 @@ function Remove-GpuDriverClean {
     Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $summaryColor
 
     if ($PassThru) {
-        return [PSCustomObject]@{
-            Status = $cleanupStatus
-            Applied = ($cleanupStatus -eq "Success")
-            CanCompleteStep = $canCompleteStep
-            FoundDriverPackages = $driverPackages.Count
-            RemovedDriverPackages = $removedDrivers
-            FailedDriverPackages = $failedDrivers
-            AlreadyAbsent = $alreadyAbsent
-            SoftwareRemoved = $removedApps
-            FoldersCleaned = $cleanedFolders
-            LockedFolders = $lockedFolders
-            Message = $cleanupMessage
-        }
+        $anyMutation = ($removedDrivers + $removedApps + $cleanedFolders + $serviceMutations +
+            $taskMutations + $registryMutations) -gt 0
+        return Get-GpuDriverCleanResult -Status $cleanupStatus -Applied $anyMutation -CanCompleteStep $canCompleteStep `
+            -FoundDriverPackages $foundDriverPackages -RemovedDriverPackages $removedDrivers -FailedDriverPackages $failedDrivers `
+            -UnknownDriverPackages $unknownDrivers `
+            -DriverRemovalVerified $driverRemovalVerified -AlreadyAbsent $alreadyAbsent -SoftwareRemoved $removedApps `
+            -FoldersCleaned $cleanedFolders -LockedFolders $lockedFolders -CleanupFailures $cleanupFailures -CleanupSkipped $cleanupSkipped `
+            -CleanupDeferred $cleanupDeferred `
+            -Message $cleanupMessage
     }
 }
