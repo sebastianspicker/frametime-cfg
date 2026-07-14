@@ -191,7 +191,7 @@ CS2-Optimize-Suite/
 │   ├── nvidia-drs.ps1         C# P/Invoke to nvapi64.dll for DRS
 │   ├── nvidia-profile.ps1     Native NVIDIA profile (replaces Profile Inspector)
 │   ├── power-plan.ps1         Native tiered power plan (replaces FPSHeaven .pow)
-│   ├── process-priority.ps1   IFEO priority + CCD affinity (replaces Process Lasso)
+│   ├── process-priority.ps1   IFEO priority + manual CCD topology guidance
 │   ├── storage-health.ps1     TRIM health + ReTrim maintenance helpers
 │   ├── step-state.ps1         Progress tracking (state.json / progress.json)
 │   ├── step-catalog.ps1       Step metadata for GUI
@@ -312,7 +312,7 @@ For script changes, also run PSScriptAnalyzer with [`PSScriptAnalyzerSettings.ps
 Runs automatically from `RunOnce`. No manual start needed.
 
 1. Remove Safe Mode boot flag (`bcdedit /deletevalue safeboot`)
-2. Native GPU driver removal — stops services, `pnputil /delete-driver`, registry cleanup, shader cache wipe (equivalent to DDU, fully auditable)
+2. Native GPU driver removal — CIM identifies vendor display packages; `pnputil` removes only validated INF packages; vendor cleanup runs only after verified removal; Windows retains ownership of display-class and DriverStore state
 3. Register Phase 3 via RunOnce
 
 ### Phase 3 — Final Setup (13 Steps)
@@ -330,7 +330,7 @@ Runs automatically on the first normal boot after driver removal.
 | 7 | VBS / Core Isolation disable | T2 | MODERATE | Disables Memory Integrity (HVCI) — removes 5–15% CPU overhead on OEM Win11. Skip if FACEIT/Vanguard. |
 | 8 | AMD GPU settings (AMD only) | T2 | SAFE | Manual Radeon Software guide |
 | 9 | DNS server configuration | T3 | SAFE | Configurable in `config.env.ps1` |
-| 10 | Process priority / CCD affinity | T3 | SAFE | IFEO `CpuPriorityClass=3` (High) + X3D CCD scheduled task (dual-CCD only) |
+| 10 | Process priority / CCD topology | T3 | SAFE | IFEO `CpuPriorityClass=3` (High); dual-CCD topology is manual-only |
 | 11 | VRAM leak awareness | — | — | CS2-specific VRAM leak warning |
 | 12 | Final checklist | — | — | Summary of applied optimizations |
 | 13 | Final benchmark + FPS cap | T1 | SAFE | Compares against Step 17 baseline; stores in `benchmark_history.json` |
@@ -392,14 +392,14 @@ Every external tool was replaced with native PowerShell. Only the NVIDIA driver 
 
 | Previously | Replaced By | Module |
 |---|---|---|
-| DDU (Wagnardsoft) | 5-phase PowerShell driver removal (`pnputil`, registry, shader cache) | `gpu-driver-clean.ps1` |
+| DDU (Wagnardsoft) | Auditable native package removal (`CIM`, `pnputil`) plus guarded vendor/cache cleanup | `gpu-driver-clean.ps1` |
 | NVCleanstall (TechPowerUp) | Native driver extract + 15-component bloat removal + silent install | `nvidia-driver.ps1` |
 | NVIDIA Profile Inspector | C# P/Invoke to `nvapi64.dll` — 52 DRS DWORD writes to binary database | `nvidia-drs.ps1` + `nvidia-profile.ps1` |
 | MSI Utility v3 (Sathango) | Native `MSISupported=1` registry writes per device class | `msi-interrupts.ps1` |
 | GoInterruptPolicy (spddl) | Native `DevicePolicy=4` + `AssignmentSetOverride` registry writes | `msi-interrupts.ps1` |
 | Win11Debloat (Raphire) | Repo-owned AppX allowlist + telemetry service/task handling | `debloat.ps1` |
 | FPSHeaven `.pow` binary | Native `powercfg /setacvalueindex` (4 bugs fixed, vendor-aware) | `power-plan.ps1` |
-| Process Lasso (Bitsum) | IFEO `CpuPriorityClass=3` + scheduled task for X3D CCD affinity | `process-priority.ps1` |
+| Process Lasso (Bitsum) | IFEO `CpuPriorityClass=3`; no guessed X3D CCD affinity | `process-priority.ps1` |
 
 ---
 
@@ -488,7 +488,7 @@ The README covers the *what*. These docs cover the *why* — architecture decisi
 | [`docs/nic-latency-stack.md`](docs/nic-latency-stack.md) | 6-layer NIC stack: PHY wake latency, interrupt coalescing empirical results, RSS core assignment, URO (Win11 24H2+), QoS DSCP + NLA trap, IPv6 reversal |
 | [`docs/msi-interrupts.md`](docs/msi-interrupts.md) | Line-based vs MSI/MSI-X delivery, why cold boot is required, NIC Core 0 contention, RSS queue distribution |
 | [`docs/windows-scheduler.md`](docs/windows-scheduler.md) | MMCSS, narrower Game Mode rationale, `Win32PrioritySeparation` (Variable→Fixed, Blur Busters 2025), FTH heap slowdown, Automatic Maintenance CPU spike, Intel PowerThrottling auto-detection |
-| [`docs/process-priority.md`](docs/process-priority.md) | IFEO kernel mechanism, why it beats `-high` and Process Lasso, X3D CCD topology (dual-CCD only), affinity mask calculation, task design |
+| [`docs/process-priority.md`](docs/process-priority.md) | IFEO kernel mechanism, why it beats `-high` and Process Lasso, X3D CCD topology and manual-verification boundary |
 | [`docs/nvidia-optimization.md`](docs/nvidia-optimization.md) | DRS binary database vs `d3d\` registry path, clean driver install methodology, R570 regression |
 | [`docs/nvidia-drs-settings.md`](docs/nvidia-drs-settings.md) | All 52 DRS settings: IDs, values, decoded meanings, 13-section breakdown (incl. rBAR), registry keys, 3 excluded settings |
 | [`docs/power-plan.md`](docs/power-plan.md) | 4 FPSHeaven bugs, AMD CPPC2 vs Intel branching, EPP mechanics, PCIe ASPM, NVMe APST, C-state depth vs wake latency |

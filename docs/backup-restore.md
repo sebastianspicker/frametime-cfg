@@ -73,7 +73,7 @@ If `existed: false`, restore runs `bcdedit /deletevalue <key>` rather than setti
 
 ### `powerplan`
 
-Recorded by `Backup-PowerPlan` before the CS2 power plan is imported.
+Recorded, flushed, and verified by `Backup-PowerPlan` before the suite creates or activates a replacement power plan.
 
 ```json
 {
@@ -110,7 +110,7 @@ If `profileCreated: true`, restore deletes the entire profile. If the profile ex
 
 ### `scheduledtask`
 
-Recorded by `Backup-ScheduledTask` before creating the X3D CCD affinity task.
+Legacy backups may contain this entry from older releases that created an X3D CCD affinity task. Current releases do not infer CCD affinity from aggregate WMI counts and do not create this task automatically.
 
 ```json
 {
@@ -168,7 +168,7 @@ The file is plain JSON — readable in any text editor. Each `entries` array ele
 ## What Is NOT Backed Up
 
 - **Removed AppX packages** (Step 13 debloat) — Windows AppX removal is not trivially reversible. Removed packages can be reinstalled from the Microsoft Store manually, but the suite does not back up their state.
-- **Files deleted during GPU driver clean** (Phase 2) — driver binaries removed from `System32\DriverStore\FileRepository` are not recorded. The new driver install (Phase 3 Step 1) replaces them.
+- **Driver packages removed during GPU driver clean** (Phase 2) — Windows removes validated INF packages through `pnputil`; the suite does not copy those packages into `backup.json`. Phase 3 installs the selected replacement driver. The suite does not directly delete DriverStore folders or display-class registry keys.
 - **Autoexec.cfg edits** — the suite only appends one line (`exec optimization.cfg`) to autoexec.cfg. The original file is preserved; removing that line reverts the change. `optimization.cfg` itself can simply be deleted.
 - **Video.txt writes** (GUI) — the original video.txt is renamed to `video.txt.bak` before any write. The `.bak` file serves as the backup.
 

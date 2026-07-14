@@ -38,13 +38,15 @@ dot-sources the phase scripts in order:
 Those phase scripts execute as they are dot-sourced. They are not passive module
 imports, so ordering is workflow ordering.
 
-`SafeMode-DriverClean.ps1` is Phase 2. It runs in Safe Mode via `RunOnce`,
-removes the Safe Mode boot flag first, then performs native GPU driver removal,
-then registers Phase 3.
+`SafeMode-DriverClean.ps1` is Phase 2. It runs from the validated published
+runtime payload in Safe Mode via `RunOnce`, removes the Safe Mode boot flag
+first, then performs native GPU driver removal, then registers Phase 3.
 
-`PostReboot-Setup.ps1` is Phase 3. It runs in normal boot after Phase 2 and
-installs the clean driver, applies driver/device settings, writes final CS2
-configuration, and guides final benchmarking.
+`PostReboot-Setup.ps1` is Phase 3. It runs from the validated published runtime
+payload in normal boot after Phase 2, installs the clean driver, applies
+driver/device settings, writes final CS2 configuration, and guides final
+benchmarking. Its handoff remains registered until the final benchmark is
+captured and saved.
 
 `Boot-SafeMode.ps1` is a shortcut for re-entering Phase 2 after Phase 1 has
 already prepared the runtime payload and marked `state.json` as Safe Mode-ready.
@@ -55,9 +57,17 @@ defaults.
 
 ## Runtime State
 
-The runtime directory is `C:\CS2_OPTIMIZE`. The suite copies the scripts needed
-for Phase 2 and Phase 3 there before a reboot so `RunOnce` can execute a stable
-payload even if the original checkout moves.
+The state and log directory is `C:\CS2_OPTIMIZE`. Each published Phase 2/3
+payload is an immutable `C:\CS2_OPTIMIZE\runtime-generations\<id>` directory;
+`runtime-current.json` atomically selects the newest verified generation for
+manual launch. Before a reboot, the suite stages a fixed file set, writes a
+SHA-256 manifest, verifies the exact file set and hashes, renames it to a new
+generation, and commits the pointer before `RunOnce` is registered. Existing
+generations are retained so an already-armed handoff can never lose its target.
+
+The Phase 2 and Phase 3 entrypoints validate the published payload manifest
+before administrator validation or helper loading. A missing, extra, or
+hash-mismatched file stops the handoff rather than running it.
 
 Important files:
 
@@ -107,19 +117,23 @@ GUI-only helpers are loaded by the GUI entrypoint:
 
 Phase 1 Step 38 prepares the reboot handoff:
 
-1. copy required scripts, helpers, CFGs, and reference docs to
-   `C:\CS2_OPTIMIZE`;
-2. register Phase 2 in `HKLM\...\RunOnce`;
-3. set `bcdedit safeboot minimal`;
-4. mark `state.json` with `phase1SafeModeReady`;
-5. prompt for restart.
+1. stage the fixed Phase 2/3 file set in a unique directory and write its
+   SHA-256 manifest;
+2. verify the exact set and hashes, rename it to a new immutable generation,
+   and atomically commit `runtime-current.json` without removing older targets;
+3. register the validated Phase 2 runtime entrypoint in `HKLM\...\RunOnce`;
+4. set and verify `bcdedit safeboot minimal`;
+5. mark `state.json` with `phase1SafeModeReady`;
+6. prompt for restart.
 
 Phase 2 removes the Safe Mode boot flag before driver removal. This is the key
 crash-safety invariant: if driver cleanup fails later, the next boot should be
 normal mode rather than a Safe Mode loop.
 
 Phase 3 refuses to run in Safe Mode. If it detects Safe Mode, it attempts to
-clear the flag, re-registers itself, and asks for a normal reboot.
+clear the flag, re-registers its validated runtime entrypoint, and asks for a
+normal reboot. Its RunOnce handoff is retained when the final benchmark has not
+produced a saved result.
 
 ## Backup and Restore Rules
 
