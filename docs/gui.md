@@ -26,7 +26,10 @@ benchmark comparison, startup drift status, and explicit next actions.
 - Progress comes from `C:\CS2_OPTIMIZE\progress.json`.
 - Recorded phase completion and currently observed system state are different
   facts; use **Assess system** or **Verify supported settings** for fresh state.
-- Phase launch buttons open the existing terminal workflows.
+- Phase launch buttons open the existing terminal workflows. Phase 2 and Phase
+  3 buttons resolve `runtime-current.json` to the validated published payload
+  in its immutable runtime generation; if it is missing or fails integrity validation, the
+  GUI gives recovery guidance instead of starting an unvalidated handoff.
 
 ### 2. Assess
 
@@ -54,7 +57,9 @@ This task combines the settings that affect execution with the step catalog:
 
 Profile and preview state persists in `C:\CS2_OPTIMIZE\state.json`. Phase
 internals still run in terminal processes so reboot handoffs and prompts remain
-resumable.
+resumable. The Phase 2/3 payload is a fixed file set published as an immutable
+runtime generation with exact-set SHA-256 manifest validation. The GUI
+does not substitute a source-tree script when that payload is unavailable.
 
 ### 4. Benchmark
 

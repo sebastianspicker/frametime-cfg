@@ -92,8 +92,8 @@ Invoke-Pester -Path @(
 ) -CI
 ```
 
-Also parse all PowerShell files, run `xmllint --noout
-ui/CS2-Optimize-GUI.xaml` when available, and run the full local test entrypoint
+Also parse all PowerShell files, run `xmllint --noout ui/CS2-Optimize-GUI.xaml`
+when available, and run the full local test entrypoint
 before release:
 
 ```powershell

@@ -78,6 +78,28 @@ function Set-UISyncValue {
     $Store | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
 }
 
+function Enter-GuiBackupOperation {
+    <# Atomically acquires the backup lock for a GUI recovery operation.  The
+       preliminary check gives a useful message for the common case, while the
+       caught CreateNew failure closes the race with another contender. #>
+    if (Test-BackupLock) {
+        [System.Windows.MessageBox]::Show(
+            "Another CS2 Optimization process is running. Wait for it to finish first.",
+            "Locked", "OK", "Warning") | Out-Null
+        return $false
+    }
+    try {
+        Set-BackupLock
+        return $true
+    } catch {
+        Write-DebugLog "Backup lock acquisition lost to another process: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Another CS2 Optimization process acquired the recovery lock first. Wait for it to finish, then try again.",
+            "Locked", "OK", "Warning") | Out-Null
+        return $false
+    }
+}
+
 function Should-SkipStartupDriftCheck {
     param(
         $State,
@@ -702,8 +724,8 @@ function Start-InlineVerify {
 }
 
 (El "BtnOptPhase1"   ).Add_Click({ Launch-Terminal "Run-Optimize.ps1" })
-(El "BtnOptPhase2"   ).Add_Click({ Launch-Terminal "SafeMode-DriverClean.ps1" })
-(El "BtnOptPhase3"   ).Add_Click({ Launch-Terminal "PostReboot-Setup.ps1" })
+(El "BtnOptPhase2"   ).Add_Click({ Start-PublishedPhaseRuntime "SafeMode-DriverClean.ps1" })
+(El "BtnOptPhase3"   ).Add_Click({ Start-PublishedPhaseRuntime "PostReboot-Setup.ps1" })
 (El "BtnOptFullSetup").Add_Click({ Launch-Terminal "Run-Optimize.ps1" })
 (El "BtnOptVerify"   ).Add_Click({ Start-InlineVerify })
 
@@ -711,6 +733,44 @@ function Start-InlineVerify {
 if (-not $env:SAFEBOOT_OPTION) {
     (El "BtnOptPhase2").IsEnabled = $false
     (El "BtnOptPhase2").ToolTip   = "Phase 2 requires Safe Mode (use 'Boot to Safe Mode' first)"
+}
+
+function Invoke-GuiSafeModeExit {
+    <#  Remove SafeBoot and verify its absence before allowing the GUI to
+        restart. A successful delete exit code alone is not authoritative: an
+        enum failure or a remaining BCD element must keep the current Safe Mode
+        session alive for manual recovery.  #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if (-not $PSCmdlet.ShouldProcess("Safe Mode boot configuration", "Remove SafeBoot and restart into Normal Mode")) {
+        return $false
+    }
+
+    $safeBootResult = Clear-SafeBootVerified
+    if (-not $safeBootResult.Verified) {
+        [System.Windows.MessageBox]::Show(
+            "Safe Mode could not be verified disabled.`n`n$($safeBootResult.Message)`n`nReboot aborted — remain in this session and run the documented manual recovery commands.",
+            "Safe Mode Recovery Failed", "OK", "Error") | Out-Null
+        return $false
+    }
+
+    $global:LASTEXITCODE = $null
+    try {
+        $shutdownOutput = shutdown /r /t 5 /f 2>&1
+        $shutdownExitCode = $LASTEXITCODE
+    } catch {
+        $shutdownOutput = $_
+        $shutdownExitCode = $null
+    }
+    if ($null -eq $shutdownExitCode -or $shutdownExitCode -ne 0) {
+        $exitText = if ($null -eq $shutdownExitCode) { "not available" } else { [string]$shutdownExitCode }
+        [System.Windows.MessageBox]::Show(
+            "Safe Mode was disabled, but Windows rejected the restart request (exit code: $exitText).`n`n$shutdownOutput`n`nRestart manually when ready; the next boot will use Normal Mode.",
+            "Restart Failed", "OK", "Error") | Out-Null
+        return $false
+    }
+    return $true
 }
 
 # Boot to Safe Mode / Normal Mode button — context-aware failsafe
@@ -723,14 +783,7 @@ if ($env:SAFEBOOT_OPTION) {
             "This will remove the Safe Mode boot flag and restart into Normal Mode.`n`nRestart now?",
             "Boot to Normal Mode", "YesNo", "Question")
         if ($confirm -eq "Yes") {
-            $bcdOut = bcdedit /deletevalue safeboot 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                [System.Windows.MessageBox]::Show(
-                    "Failed to remove Safe Mode flag (bcdedit exit $LASTEXITCODE).`n`n$($bcdOut | Out-String)`nReboot aborted — you are still in Safe Mode.",
-                    "bcdedit Error", "OK", "Error")
-                return
-            }
-            shutdown /r /t 5 /f
+            $null = Invoke-GuiSafeModeExit
         }
     })
 } else {
@@ -829,15 +882,9 @@ function Load-Backup {
 })
 
 (El "BtnRestoreAll").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
     $r = [System.Windows.MessageBox]::Show("Restore ALL backed-up settings?`nThis will undo every change the suite made.","Restore All","YesNo","Warning")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         $Script:CriticalOperation = "Recovery"
         (El "BackupSummary").Text = "Restoring all recorded changes…"
         foreach ($name in "BtnBackupRefresh", "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
@@ -878,18 +925,12 @@ function Load-Backup {
 })
 
 (El "BtnRestoreStep").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
     $sel = (El "BackupGrid").SelectedItem
     if (-not $sel) { [System.Windows.MessageBox]::Show("Select a row first.","Restore Step"); return }
     $stepTitle = $sel.Step
     $r = [System.Windows.MessageBox]::Show("Restore all changes from:`n`"$stepTitle`"?","Restore Step","YesNo","Question")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         $Script:CriticalOperation = "Recovery"
         (El "BackupSummary").Text = "Restoring $stepTitle…"
         foreach ($name in "BtnBackupRefresh", "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
@@ -930,15 +971,9 @@ function Load-Backup {
 })
 
 (El "BtnClearBackup").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
     $r = [System.Windows.MessageBox]::Show("Delete all backup data?`nThis cannot be undone.","Clear Backups","YesNo","Warning")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         try {
             Save-BackupData (New-BackupDataObject)
             Load-Backup
@@ -1667,4 +1702,39 @@ function Launch-Terminal {
     $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File $fileArg"
     if ($ScriptArgs) { $allArgs += " `"$ScriptArgs`"" }
     Start-Process powershell -ArgumentList $allArgs
+}
+
+function Start-PublishedPhaseRuntime {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][ValidateSet("SafeMode-DriverClean.ps1", "PostReboot-Setup.ps1")][string]$Script)
+
+    try {
+        $runtimeRoot = Get-PhaseRuntimeRoot -DestinationRoot $CFG_WorkDir
+    } catch {
+        [System.Windows.MessageBox]::Show(
+            "The published runtime pointer is invalid.`n`n$_`n`nRun Phase 1 again to publish a verified generation.",
+            "Runtime pointer invalid", "OK", "Error") | Out-Null
+        return $false
+    }
+    $runtimeScript = Join-Path $runtimeRoot $Script
+    if (-not (Test-Path -LiteralPath $runtimeScript -PathType Leaf)) {
+        [System.Windows.MessageBox]::Show(
+            "The verified Phase 2/3 runtime payload is missing.`n`nRun Phase 1 again to publish a fresh immutable runtime generation, then retry.",
+            "Runtime payload missing", "OK", "Warning") | Out-Null
+        return $false
+    }
+    $payloadValidation = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+    if (-not $payloadValidation.Valid) {
+        [System.Windows.MessageBox]::Show(
+            "The Phase 2/3 runtime payload failed integrity validation.`n`n$($payloadValidation.Message)`n`nRun Phase 1 again to republish it, then retry.",
+            "Runtime payload invalid", "OK", "Error") | Out-Null
+        return $false
+    }
+    $fileArg = "`"$runtimeScript`""
+    $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File $fileArg"
+    if (-not $PSCmdlet.ShouldProcess($runtimeScript, "Start verified published Phase runtime")) {
+        return $false
+    }
+    Start-Process powershell -ArgumentList $allArgs
+    return $true
 }
