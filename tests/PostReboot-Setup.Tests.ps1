@@ -9,6 +9,27 @@ BeforeAll {
     if (-not (Get-Command Apply-NvidiaCS2Profile -ErrorAction SilentlyContinue)) {
         function global:Apply-NvidiaCS2Profile {}
     }
+    if (-not (Get-Command Invoke-BenchmarkCapture -ErrorAction SilentlyContinue)) {
+        function global:Invoke-BenchmarkCapture { param([string]$Label) }
+    }
+    if (-not (Get-Command Get-BenchmarkHistory -ErrorAction SilentlyContinue)) {
+        function global:Get-BenchmarkHistory { @() }
+    }
+    if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxPackage { param([switch]$AllUsers, $ErrorAction) @() }
+    }
+    if (-not (Get-Command Remove-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxPackage { param($Package, [switch]$AllUsers, $ErrorAction) }
+    }
+    if (-not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxProvisionedPackage { param([switch]$Online, $ErrorAction) @() }
+    }
+    if (-not (Get-Command Remove-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxProvisionedPackage {
+            param([string]$PackageName, [switch]$Online, $ErrorAction)
+            $PackageName
+        }
+    }
     function global:shutdown { param([Parameter(ValueFromRemainingArguments)]$CmdArgs) }
 }
 
@@ -38,6 +59,10 @@ Describe "PostReboot-Setup.ps1 entrypoint wrapper" {
         . $script:TargetScript
     }
 
+    BeforeEach {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
+    }
+
     It "bypasses administrator validation before orchestration for smoke tests" {
         Mock Assert-PostRebootSetupAdministrator { throw "Administrator check should not run" }
         Mock Invoke-PostRebootSetup { throw "Orchestration should not run" }
@@ -65,6 +90,162 @@ Describe "PostReboot-Setup.ps1 entrypoint wrapper" {
         Invoke-PostRebootSetupEntryPoint
 
         $script:CallOrder | Should -Be @("assert", "orchestrate")
+    }
+
+    It "fails closed before administrator validation when the published payload is invalid" {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $false; Message = "extra runtime file" } }
+        Mock Assert-PostRebootSetupAdministrator { throw "must not validate elevation" }
+        Mock Invoke-PostRebootSetup { throw "must not orchestrate" }
+        Mock Write-Host {}
+
+        { Invoke-PostRebootSetupEntryPoint } | Should -Not -Throw
+        Should -Invoke Assert-PostRebootSetupAdministrator -Exactly 0
+        Should -Invoke Invoke-PostRebootSetup -Exactly 0
+        Should -Invoke Write-Host -ParameterFilter { $Object -match "CRITICAL.*extra runtime file" }
+    }
+
+}
+
+Describe "PostReboot-Setup.ps1 source-tree trust boundary" {
+
+    BeforeAll {
+        . $script:TargetScript
+    }
+
+    It "does not treat the source-tree entrypoint as a published runtime" {
+        $result = Test-PublishedRuntimePayloadBootstrap -RuntimeRoot $script:ProjectRoot
+
+        $result.Valid | Should -Be $false
+        $result.Message | Should -Match "runtime-manifest.json is missing"
+    }
+}
+
+Describe "PostReboot-Setup.ps1 GPU AppX dry-run boundary" {
+
+    BeforeAll {
+        . $script:TargetScript
+    }
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $true
+        Mock Write-Host {}
+        Mock Get-AppxPackage { throw "dry-run must not enumerate AppX packages" }
+        Mock Get-AppxProvisionedPackage { throw "dry-run must not enumerate provisioned packages" }
+        Mock Remove-AppxPackage { throw "dry-run must not remove AppX packages" }
+        Mock Remove-AppxProvisionedPackage { throw "dry-run must not remove provisioned packages" }
+    }
+
+    It "previews NVIDIA cleanup without enumerating or uninstalling packages" {
+        $result = Remove-GpuAppxPackages -GpuInput "2"
+
+        $result.Status | Should -Be 'DryRun'
+        $result.CanCompleteStep | Should -BeFalse
+        Should -Invoke Get-AppxPackage -Exactly 0
+        Should -Invoke Get-AppxProvisionedPackage -Exactly 0
+        Should -Invoke Remove-AppxPackage -Exactly 0
+        Should -Invoke Remove-AppxProvisionedPackage -Exactly 0
+        Should -Invoke Write-Host -Exactly 1 -ParameterFilter { $Object -match "DRY-RUN.*NVIDIA" }
+    }
+}
+
+Describe "PostReboot-Setup.ps1 GPU AppX cleanup" {
+
+    BeforeAll {
+        . $script:TargetScript
+    }
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $false
+        Mock Write-OK {}
+        Mock Write-Debug {}
+        Mock Remove-AppxPackage {}
+        Mock Remove-AppxProvisionedPackage {}
+        Mock Get-Command { [PSCustomObject]@{ Name = $Name } } -ParameterFilter {
+            $Name -in @('Get-AppxPackage', 'Get-AppxProvisionedPackage')
+        }
+    }
+
+    It "preserves NVIDIA Control Panel while removing other installed and provisioned NVIDIA packages" {
+        $installedControlPanel = [PSCustomObject]@{
+            Name = "NVIDIACorp.NVIDIAControlPanel"
+            PackageFullName = "NVIDIACorp.NVIDIAControlPanel_8.1.0_x64__56jybvy8sckqj"
+        }
+        $installedCompanion = [PSCustomObject]@{
+            Name = "NVIDIACorp.NVIDIAApp"
+            PackageFullName = "NVIDIACorp.NVIDIAApp_1.0.0_x64__56jybvy8sckqj"
+        }
+        $provisionedControlPanel = [PSCustomObject]@{
+            DisplayName = "NVIDIACorp.NVIDIAControlPanel"
+            PackageName = "NVIDIACorp.NVIDIAControlPanel_8.1.0_neutral_~_56jybvy8sckqj"
+        }
+        $provisionedCompanion = [PSCustomObject]@{
+            DisplayName = "NVIDIACorp.NVIDIAApp"
+            PackageName = "NVIDIACorp.NVIDIAApp_1.0.0_neutral_~_56jybvy8sckqj"
+        }
+        $script:installedQueries = 0
+        $script:provisionedQueries = 0
+        Mock Get-AppxPackage {
+            $script:installedQueries++
+            if ($script:installedQueries -eq 1) { @($installedControlPanel, $installedCompanion) }
+            else { @($installedControlPanel) }
+        }
+        Mock Get-AppxProvisionedPackage {
+            $script:provisionedQueries++
+            if ($script:provisionedQueries -eq 1) { @($provisionedControlPanel, $provisionedCompanion) }
+            else { @($provisionedControlPanel) }
+        }
+        Mock Remove-AppxPackage {}
+        $result = Remove-GpuAppxPackages -GpuInput "2"
+
+        $result.Status | Should -Be 'Success' -Because $result.Message
+        $result.CanCompleteStep | Should -BeTrue
+        $result.RemovedCount | Should -Be 2
+        Should -Invoke Remove-AppxPackage -Exactly 1 -ParameterFilter {
+            $Package -eq $installedCompanion.PackageFullName
+        }
+        Should -Invoke Remove-AppxPackage -Exactly 0 -ParameterFilter {
+            $Package -eq $installedControlPanel.PackageFullName
+        }
+        Should -Invoke Remove-AppxProvisionedPackage -Exactly 1
+        (Get-Command Remove-GpuAppxPackages).ScriptBlock.ToString() |
+            Should -Match 'Remove-AppxProvisionedPackage\s+-Online\s+-PackageName\s+\$pkg\.PackageName'
+    }
+
+    It "fails closed when AppX inventory is unavailable" {
+        Mock Get-AppxPackage { throw 'AppXSVC unavailable' }
+        Mock Get-AppxProvisionedPackage { @() }
+
+        $result = Remove-GpuAppxPackages -GpuInput '2'
+
+        $result.Status | Should -Be 'Failed'
+        $result.CanCompleteStep | Should -BeFalse
+        $result.Message | Should -Match 'inventory failed'
+        Should -Invoke Remove-AppxPackage -Exactly 0
+    }
+
+    It "fails closed when a removed package remains in the verified post-state" {
+        $package = [PSCustomObject]@{
+            Name = 'NVIDIACorp.NVIDIAApp'
+            PackageFullName = 'NVIDIACorp.NVIDIAApp_1.0.0_x64__56jybvy8sckqj'
+        }
+        Mock Get-AppxPackage { @($package) }
+        Mock Get-AppxProvisionedPackage { @() }
+        Mock Remove-AppxPackage {}
+
+        $result = Remove-GpuAppxPackages -GpuInput '2'
+
+        $result.Status | Should -Be 'Failed'
+        $result.CanCompleteStep | Should -BeFalse
+        $result.Message | Should -Match 'remains'
+    }
+
+    It "exposes a fail-closed Phase 3 caller gate" {
+        $source = (Get-Command Invoke-PostRebootSetup).ScriptBlock.ToString()
+
+        $source | Should -Match 'gpuAppxCleanup\.CanCompleteStep'
+        $source | Should -Match 'Normal-Mode GPU AppX cleanup did not complete'
     }
 }
 
@@ -222,6 +403,10 @@ Describe "PostReboot-Setup.ps1 NVIDIA profile Step 4" {
         Mock Remove-BackupLock {}
         Mock Complete-Step {}
         Mock Skip-Step {}
+        Mock Test-StepCompleted {
+            param($phase, $stepNum)
+            $phase -eq 3 -and $stepNum -eq 1
+        }
         Mock Show-ResumePrompt { 4 }
         Mock Invoke-TieredStep {
             param(
@@ -330,6 +515,10 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         Mock Remove-BackupLock {}
         Mock Complete-Step {}
         Mock Skip-Step {}
+        Mock Test-StepCompleted {
+            param($phase, $stepNum)
+            $phase -eq 3 -and $stepNum -eq 1
+        }
         Mock Show-ResumePrompt { 9 }
         Mock Get-DnsClientServerAddress {
             [PSCustomObject]@{ ServerAddresses = @("8.8.8.8") }
@@ -483,5 +672,212 @@ Describe "PostReboot-Setup.ps1 DNS Step 9" {
         Should -Invoke Complete-Step -Exactly 1 -ParameterFilter {
             $phase -eq 3 -and $stepNum -eq 9 -and $stepName -eq "DNS"
         }
+    }
+}
+
+Describe "PostReboot-Setup.ps1 truthful MSI and NIC completion contract" {
+
+    It "routes skipped MSI/NIC results to Skip-Step and only completes completable results" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $source | Should -Match '(?s)\$msiResult\s*=\s*Enable-DeviceMSI.*?if\s*\(\$msiResult\.Status\s+-eq\s+"Skipped"\)\s*\{\s*Skip-Step\s+\$PHASE\s+2\s+"MSI"\s*\}.*?elseif\s*\(-not\s+\$msiResult\.CanCompleteStep\)\s*\{\s*throw.*?\}.*?else\s*\{\s*Complete-Step\s+\$PHASE\s+2\s+"MSI"'
+        $source | Should -Match '(?s)\$affinityResult\s*=\s*Set-NicInterruptAffinity.*?if\s*\(\$affinityResult\.Status\s+-eq\s+"Skipped"\)\s*\{\s*Skip-Step\s+\$PHASE\s+3\s+"NicAffinity"\s*\}.*?elseif\s*\(-not\s+\$affinityResult\.CanCompleteStep\)\s*\{\s*throw.*?\}.*?else\s*\{\s*Complete-Step\s+\$PHASE\s+3\s+"NicAffinity"'
+    }
+}
+
+Describe "PostReboot-Setup.ps1 truthful Phase 3 completion contracts" {
+
+    It "requires a successful structured HVCI registry write before completing VBS" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $source | Should -Match '(?s)\$hvciWriteResult\s*=\s*Set-RegistryValue.*?HypervisorEnforcedCodeIntegrity.*?-PassThru'
+        $source | Should -Match '(?s)if\s*\(\$hvciWriteResult\.Status\s+-eq\s+"DryRun"\).*?no completion recorded'
+        $source | Should -Match '(?s)if\s*\(\$hvciWriteResult\.Status\s+-ne\s+"Success"\)\s*\{\s*throw\s+"VBS/HVCI disable did not complete'
+        $source | Should -Match '(?s)\$hvciWriteResult\.Status\s+-ne\s+"Success".*?Complete-Step\s+\$PHASE\s+7\s+"VBS"'
+    }
+
+    It "treats a null DeviceGuard query as a structured VBS detection failure without completion" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+        $vbsBlock = [regex]::Match($source, '(?s)# STEP 7.*?(?=# STEP 8)').Value
+
+        $vbsBlock | Should -Match '\$vbsDetection\s*=\s*Get-VbsDetectionResult'
+        $vbsBlock | Should -Match 'if\s*\(\$vbsDetection\.Status\s+-ne\s+"Success"\)\s*\{\s*throw\s+"VBS detection did not complete'
+    }
+
+    It "treats a DeviceGuard query error as a structured VBS detection failure without completion" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+        $vbsBlock = [regex]::Match($source, '(?s)# STEP 7.*?(?=# STEP 8)').Value
+
+        $source | Should -Match '(?s)function\s+Get-VbsDetectionResult.*?Get-CimInstance\s+-ClassName\s+Win32_DeviceGuard.*?-ErrorAction\s+Stop'
+        $source | Should -Match '(?s)function\s+Get-VbsDetectionResult.*?catch\s*\{\s*return\s+\[PSCustomObject\]@\{\s*Status\s*=\s*"Failed".*?VBS detection query failed:'
+        $vbsBlock | Should -Match '(?s)\$vbsDetection\.Status\s+-ne\s+"Success".*?throw\s+"VBS detection did not complete.*?Complete-Step\s+\$PHASE\s+7\s+"VBS"'
+    }
+
+    It "only completes explicit, successful inactive VBS detection" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+        $vbsBlock = [regex]::Match($source, '(?s)# STEP 7.*?(?=# STEP 8)').Value
+
+        $source | Should -Match '(?s)function\s+Get-VbsDetectionResult.*?Status\s*=\s*"Success".*?IsActive\s*=\s*\(\[int\]\$dg\.VirtualizationBasedSecurityStatus\s+-ge\s+2\)'
+        $vbsBlock | Should -Match '(?s)if\s*\(-not\s+\$vbsDetection\.IsActive\)\s*\{\s*Write-OK\s+"VBS/Core Isolation: not active.*?Complete-Step\s+\$PHASE\s+7\s+"VBS"'
+    }
+
+    It "gates process-priority completion on the structured persistent-operation result" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $source | Should -Match '(?s)\$priorityResult\s*=\s*Set-CS2ProcessPriority.*?if\s*\(\$priorityResult\.Status\s+-eq\s+"DryRun"\).*?no completion recorded.*?elseif\s*\(\$priorityResult\.Status\s+-eq\s+"Skipped"\).*?Skip-Step\s+\$PHASE\s+10\s+"ProcessPriority".*?elseif\s*\(-not\s+\$priorityResult\.CanCompleteStep\).*?throw.*?else\s*\{\s*Complete-Step\s+\$PHASE\s+10\s+"ProcessPriority"'
+    }
+
+    It "keeps manual AMD or Intel driver work pending in YOLO mode" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $amdIntelDriverBlock = [regex]::Match(
+            $source,
+            '(?s)if\s*\(Test-YoloProfile\)\s*\{\s*Write-Warn\s+"Manual driver installation is required for AMD/Intel.*?\}\s+elseif\s*\(\$SCRIPT:DryRun\).*?else\s*\{\s*Read-Host.*?Complete-Step\s+\$PHASE\s+1\s+"Driver"'
+        )
+
+        $amdIntelDriverBlock.Success | Should -BeTrue
+        $amdIntelDriverBlock.Value | Should -Not -Match 'Skip-Step\s+\$PHASE\s+1'
+        $source | Should -Match '(?s)if\s*\(Test-YoloProfile\)\s*\{\s*Write-Warn\s+"Manual AMD Adrenalin settings are required.*?Skip-Step\s+\$PHASE\s+8\s+"AMDSettings \(manual action required\)".*?\}\s+elseif\s*\(\$SCRIPT:DryRun\).*?else\s*\{\s*Read-Host.*?Complete-Step\s+\$PHASE\s+8\s+"AMDSettings"'
+    }
+}
+
+Describe "Get-VbsDetectionResult" {
+
+    BeforeAll {
+        . $script:TargetScript
+    }
+
+    It "returns a non-completable failure when DeviceGuard returns null" {
+        Mock Get-CimInstance { $null }
+
+        $result = Get-VbsDetectionResult
+
+        $result.Status | Should -Be "Failed"
+        $result.CanCompleteStep | Should -Be $false
+        $result.IsActive | Should -BeNullOrEmpty
+        $result.Message | Should -Match "no Win32_DeviceGuard instance"
+    }
+
+    It "returns a non-completable failure when the DeviceGuard query errors" {
+        Mock Get-CimInstance { throw "provider unavailable" }
+
+        $result = Get-VbsDetectionResult
+
+        $result.Status | Should -Be "Failed"
+        $result.CanCompleteStep | Should -Be $false
+        $result.Message | Should -Match "provider unavailable"
+    }
+
+    It "reports an explicit inactive DeviceGuard status as successful" {
+        Mock Get-CimInstance { [PSCustomObject]@{ VirtualizationBasedSecurityStatus = 0 } }
+
+        $result = Get-VbsDetectionResult
+
+        $result.Status | Should -Be "Success"
+        $result.CanCompleteStep | Should -Be $true
+        $result.IsActive | Should -Be $false
+    }
+
+    It "reports an explicit active DeviceGuard status as successful" {
+        Mock Get-CimInstance { [PSCustomObject]@{ VirtualizationBasedSecurityStatus = 2 } }
+
+        $result = Get-VbsDetectionResult
+
+        $result.Status | Should -Be "Success"
+        $result.CanCompleteStep | Should -Be $true
+        $result.IsActive | Should -Be $true
+    }
+}
+
+Describe "PostReboot-Setup.ps1 final benchmark completion contract" {
+
+    It "only completes the final benchmark inside the usable-capture branch" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+        $captureBlock = [regex]::Match(
+            $source,
+            '(?s)\$bmResult\s*=\s*Invoke-BenchmarkCapture\s+-Label\s+"After all optimizations"\s*\n\s*if\s*\(\$bmResult\)\s*\{(?<usable>.*?)\}\s*elseif\s*\(-not\s+\$SCRIPT:DryRun\)\s*\{(?<missing>.*?)\}'
+        )
+
+        $captureBlock.Success | Should -BeTrue
+        $captureBlock.Groups['usable'].Value | Should -Match 'Complete-Step\s+\$PHASE\s+13\s+"FinalBenchmark"'
+        $captureBlock.Groups['missing'].Value | Should -Not -Match 'Complete-Step\s+\$PHASE\s+13\s+"FinalBenchmark"'
+        $captureBlock.Groups['missing'].Value | Should -Match 'remains incomplete'
+    }
+
+    It "retains the Phase 3 handoff when required driver or benchmark work is incomplete" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $source | Should -Match '(?s)if \(-not \(Test-StepCompleted \$PHASE 1\)\) \{(?<driverIncomplete>.*?)\}\s*elseif \(-not \(Test-StepCompleted \$PHASE 13\)\) \{(?<benchmarkIncomplete>.*?)\}\s*else \{\s*\$handoffRemoval = Remove-PhaseHandoff -Name "CS2_Phase3" -PassThru'
+        $source | Should -Match 'required driver installation is completed'
+        $source | Should -Match 'automatic handoff is retained until the final benchmark is saved'
+    }
+
+    It "does not complete Step 13 or remove the handoff after a null benchmark capture" {
+        Reset-TestState
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+        $SCRIPT:DryRun = $false
+        $SCRIPT:Profile = "YOLO"
+        $SCRIPT:Mode = "YOLO"
+        Mock Load-State {
+            [PSCustomObject]@{
+                gpuInput = "2"; mode = "YOLO"; logLevel = "NORMAL"; profile = "YOLO"
+                fpsCap = 0; avgFps = 0; rollbackDriver = $null; nvidiaDriverPath = $null
+            }
+        }
+        Mock Initialize-Backup {}
+        Mock Initialize-PhaseCounters {}
+        Mock Ensure-Dir {}
+        Mock Initialize-Log {}
+        Mock Write-Banner {}
+        Mock Show-ResumePrompt { 13 }
+        Mock Write-Section {}
+        Mock Write-TierBadge {}
+        Mock Write-Blank {}
+        Mock Write-Host {}
+        Mock Write-Info {}
+        Mock Write-Warn {}
+        Mock Write-Err {}
+        Mock Write-PhaseSummary {}
+        Mock Invoke-BenchmarkCapture { $null }
+        Mock Get-BenchmarkHistory { @() }
+        Mock Complete-Step {}
+        Mock Test-StepCompleted { $false }
+        Mock Remove-PhaseHandoff { [PSCustomObject]@{ Applied = $true; Message = "removed" } }
+        Mock Restart-Computer {}
+        Mock Remove-BackupLock {}
+
+        . $script:TargetScript
+        Invoke-PostRebootSetup
+
+        Should -Invoke Complete-Step -Exactly 0 -ParameterFilter { $phase -eq 3 -and $stepNum -eq 13 }
+        Should -Invoke Remove-PhaseHandoff -Exactly 0
+        Should -Invoke Restart-Computer -Exactly 0
+    }
+
+    It "forces a previously skipped final benchmark to rerun instead of removing the handoff" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $source | Should -Match '(?s)\$startStep\s*=\s*Show-ResumePrompt.*?if\s*\(-not\s*\(Test-StepCompleted\s+\$PHASE\s+1\)\).*?\$startStep\s*=\s*1.*?elseif\s*\(\$startStep\s*-gt\s*13\s*-and\s*-not\s*\(Test-StepCompleted\s+\$PHASE\s+13\)\).*?\$startStep\s*=\s*13.*?elseif\s*\(\$startStep\s*-gt\s*13\)'
+        $source | Should -Match '\$p2DriverDone\s*=\s*Test-StepCompleted\s+2\s+2'
+    }
+
+    It "does not record deferred NVIDIA driver work as skipped" {
+        $source = Get-Content -LiteralPath $script:TargetScript -Raw
+
+        $nvidiaDeclineBlock = [regex]::Match(
+            $source,
+            '(?s)\$r\s*=\s*if \(\$SCRIPT:DryRun\).*?if \(\$r\s+-notmatch.*?\}\s*else\s*\{(?<declined>.*?)\}\s*\}\s*else\s*\{\s*Write-Err "No valid driver file'
+        )
+        $missingDriverBlock = [regex]::Match(
+            $source,
+            '(?s)Write-Err "No valid driver file \(\.exe\) found\.".*?if \(\$skipConfirm -match "\^\[jJyY\]\$"\) \{(?<missing>.*?)\}\s*else'
+        )
+
+        $nvidiaDeclineBlock.Success | Should -BeTrue
+        $nvidiaDeclineBlock.Groups['declined'].Value | Should -Match 'remains pending'
+        $nvidiaDeclineBlock.Groups['declined'].Value | Should -Not -Match 'Skip-Step\s+\$PHASE\s+1'
+        $missingDriverBlock.Success | Should -BeTrue
+        $missingDriverBlock.Groups['missing'].Value | Should -Match 'remains pending'
+        $missingDriverBlock.Groups['missing'].Value | Should -Not -Match 'Skip-Step\s+\$PHASE\s+1'
     }
 }

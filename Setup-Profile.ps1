@@ -132,25 +132,15 @@ if ($startStep -gt $TOTAL_STEPS) {
     Write-Blank
     $r = if (Test-YoloProfile) { "y" } else { Read-Host "  Continue with Phase 2 (Safe Mode GPU driver clean)? [y/N]" }
     if ($r -match "^[jJyY]$") {
-        # Ensure safeboot flag is set before restarting
-        $bcdOut = bcdedit /set "{current}" safeboot minimal 2>&1
-        $bcdExit = $LASTEXITCODE
-        # Retry without {current} if first attempt failed
-        if ($bcdExit -ne 0) {
-            $bcdOut = bcdedit /set safeboot minimal 2>&1
-            $bcdExit = $LASTEXITCODE
-        }
-        # Trust exit code 0; fall back to BCD verification only if exit code is non-zero
-        if ($bcdExit -ne 0 -and -not (Test-BootConfigSet "safeboot")) {
+        $phase2Transaction = Enable-Phase2SafeModeTransaction -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir -StatePath $CFG_StateFile -Why "Completed Phase 1 resume"
+        if (-not $phase2Transaction.Applied) {
             Write-Host ""
             Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Red
-            Write-Host "  ║  Could not set Safe Mode boot flag.                     ║" -ForegroundColor Red
+            Write-Host "  ║  Could not prepare the Safe Mode handoff.               ║" -ForegroundColor Red
             Write-Host "  ║                                                         ║" -ForegroundColor Red
-            Write-Host "  ║  Fix manually in an admin Command Prompt (cmd.exe):     ║" -ForegroundColor Red
-            Write-Host "  ║    bcdedit /set {current} safeboot minimal              ║" -ForegroundColor Cyan
-            Write-Host "  ║    shutdown /r /t 0                                     ║" -ForegroundColor Cyan
+            Write-Host "  ║  Do NOT reboot until the transaction succeeds.          ║" -ForegroundColor Red
             Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
-            Write-Host "  bcdedit said: $($bcdOut | Out-String)".Trim() -ForegroundColor DarkGray
+            Write-Host "  $($phase2Transaction.Message)" -ForegroundColor DarkGray
             if (-not (Test-YoloProfile)) { Read-Host "`n  Press Enter to return to menu" }
             exit 0
         }

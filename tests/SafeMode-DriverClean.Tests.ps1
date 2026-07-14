@@ -29,6 +29,10 @@ Describe "SafeMode-DriverClean.ps1 entrypoint wrapper" {
         . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
     }
 
+    BeforeEach {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
+    }
+
     It "bypasses administrator validation before orchestration for smoke tests" {
         Mock Assert-SafeModeDriverCleanAdministrator { throw "Administrator check should not run" }
         Mock Invoke-SafeModeDriverClean { throw "Orchestration should not run" }
@@ -56,6 +60,18 @@ Describe "SafeMode-DriverClean.ps1 entrypoint wrapper" {
         Invoke-SafeModeDriverCleanEntryPoint
 
         $script:CallOrder | Should -Be @("assert", "orchestrate")
+    }
+
+    It "fails closed before administrator validation when the published payload is invalid" {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $false; Message = "hash mismatch" } }
+        Mock Assert-SafeModeDriverCleanAdministrator { throw "must not validate elevation" }
+        Mock Invoke-SafeModeDriverClean { throw "must not orchestrate" }
+        Mock Write-Host {}
+
+        { Invoke-SafeModeDriverCleanEntryPoint } | Should -Not -Throw
+        Should -Invoke Assert-SafeModeDriverCleanAdministrator -Exactly 0
+        Should -Invoke Invoke-SafeModeDriverClean -Exactly 0
+        Should -Invoke Write-Host -ParameterFilter { $Object -match "CRITICAL.*hash mismatch" }
     }
 }
 
@@ -169,6 +185,19 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
 
         Should -Invoke Clear-SafeBootVerified -Exactly 0
         Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Remove-GpuDriverClean -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+    }
+
+    It "blocks boot-state changes and driver removal in normal mode even for YOLO" {
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+        Mock Test-YoloProfile { $true }
+
+        . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
+        Invoke-SafeModeDriverClean
+
+        Should -Invoke Clear-SafeBootVerified -Exactly 0
         Should -Invoke Remove-GpuDriverClean -Exactly 0
         Should -Invoke Set-RunOnce -Exactly 0
         Should -Invoke shutdown -Exactly 0

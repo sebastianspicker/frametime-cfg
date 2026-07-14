@@ -515,41 +515,28 @@ Describe "Test-VerifyScheduledTasks" {
         }
     }
 
-    It "returns changed when the affinity task action payload does not match" {
+    It "returns changed when a legacy automatic affinity task remains" {
         Mock Get-ScheduledTask {
             [PSCustomObject]@{
                 State = 'Ready'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\CS2_OPTIMIZE\wrong.ps1"'
-                    }
-                )
+                Actions = @()
             }
         }
 
         $result = Test-VerifyScheduledTasks
 
         $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'action mismatch'
+        $result.Label | Should -Match 'Legacy task'
+        $result.Detail | Should -Match 'automatic CCD affinity is disabled'
     }
 
-    It "returns changed when the affinity task state is unhealthy" {
-        Mock Get-ScheduledTask {
-            [PSCustomObject]@{
-                State = 'Unknown'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CS2_AffinityScriptPath`""
-                    }
-                )
-            }
-        }
+    It "reports manual-only policy rather than a missing task on dual-CCD X3D" {
+        Mock Get-ScheduledTask { $null }
 
         $result = Test-VerifyScheduledTasks
 
-        $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'state: Unknown'
+        $result.Status | Should -Be "INFO"
+        $result.Label | Should -Be "CCD affinity policy"
+        $result.Detail | Should -Match 'manual only'
     }
 }

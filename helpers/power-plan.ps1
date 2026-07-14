@@ -131,31 +131,35 @@ function Set-PowerPlanValue {
             # Setting GUID not exposed on this hardware (e.g., no Wi-Fi, no USB-C PD, no SATA).
             # Expected and harmless — downgrade from warning to sub-message.
             Write-Sub "$Label — not present on this hardware (skipped)"
+            return
         } elseif ($msg -match "malformed|not within the range") {
             # Value outside platform-supported range (e.g., AMD EPP2, boost mode max differs
             # from Intel, perf decrease time cap varies). Expected on cross-vendor configs.
             Write-Sub "$Label — value $Value not supported on this platform (skipped)"
+            return
         } else {
-            Write-Warn "powercfg failed for '$Label': $ppOut"
+            throw "powercfg failed for '$Label': $ppOut"
         }
-    } else { Write-DebugLog "Power plan: $Label = $Value" }
+    } else {
+        Write-DebugLog "Power plan: $Label = $Value"
+    }
 }
 
 
 function New-CS2PowerPlan {
     <#
-    .SYNOPSIS  Creates a fresh "CS2 Optimized" power plan, removing any existing duplicate.
+    .SYNOPSIS  Creates a fresh "CS2 Optimized" power plan without replacing any prior plan.
     .OUTPUTS   GUID string of the new plan.
     .NOTES
-        Duplicates Windows High Performance (8c5e7fda) as the base. Re-running Step 6
-        is always safe — any existing "CS2 Optimized" plan is deleted first.
-        In DRY-RUN mode, skips deletion and creation (nothing is persisted).
+        Duplicates Windows High Performance (8c5e7fda) as the base. Ownership is
+        tracked by GUID; display names are never used to decide what may be deleted.
+        In DRY-RUN mode, skips creation (nothing is persisted).
     #>
     [CmdletBinding(SupportsShouldProcess)]
     param()
 
     if ($SCRIPT:DryRun) {
-        Write-ConsoleLine "  [DRY-RUN] Would remove existing CS2 Optimized plans and create fresh duplicate" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would create and configure a fresh CS2 Optimized plan" -ForegroundColor Magenta
         Write-ConsoleLine "  [DRY-RUN] Would name plan: CS2 Optimized" -ForegroundColor Magenta
         return "DRY-RUN-GUID"
     }
@@ -163,35 +167,285 @@ function New-CS2PowerPlan {
         return "DRY-RUN-GUID"
     }
 
-    # Remove any existing "CS2 Optimized" plans — idempotent re-run safety
-    $existing = powercfg /list 2>&1
-    foreach ($line in $existing) {
-        if ($line -match "CS2 Optimized" -and $line -match '\b([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})\b') {
-            $oldGuid = $Matches[1]
-            Write-DebugLog "Removing existing CS2 Optimized plan: $oldGuid"
-            powercfg /setactive SCHEME_BALANCED 2>&1 | Out-Null   # switch away first
-            powercfg /delete $oldGuid 2>&1 | Out-Null
-        }
-    }
-
     # Duplicate High Performance as base; fall back to Balanced on OEM systems where High Perf is removed
+    $guidPattern = '(?i)(?<![a-f0-9])[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?![a-f0-9])'
     $output = powercfg /duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>&1
-    if (-not ($output -match "([a-fA-F0-9-]{36})")) {
+    $duplicateExitCode = $LASTEXITCODE
+    $outputText = @($output) -join "`n"
+    if ($duplicateExitCode -ne 0 -or -not ($outputText -match $guidPattern)) {
         Write-Warn "High Performance plan not found — falling back to Balanced as base."
         Write-Warn "The Balanced plan uses conservative defaults for some settings. All tiered"
         Write-Warn "settings (T1/T2/T3) will still be applied and override the Balanced defaults."
         $output = powercfg /duplicatescheme 381b4222-f694-41f0-9685-ff5bb260df2e 2>&1
+        $duplicateExitCode = $LASTEXITCODE
+        $outputText = @($output) -join "`n"
     }
-    if ($output -match "([a-fA-F0-9-]{36})") {
-        $guid = $Matches[1]
+    if ($duplicateExitCode -eq 0 -and $outputText -match $guidPattern) {
+        $guid = $Matches[0]
     } else {
-        throw "Failed to create power plan (duplicatescheme returned no GUID). Output: $output"
+        throw "Failed to create power plan (duplicatescheme exit $duplicateExitCode returned no new GUID). Output: $output"
     }
 
-    powercfg /changename $guid "CS2 Optimized" `
-        "Tiered low-latency plan: T1 proven, T2 vendor-aware CPU/disk/USB, T3 C-states off" 2>&1 | Out-Null
+    $renameOutput = powercfg /changename $guid "CS2 Optimized" `
+        "Tiered low-latency plan: T1 proven, T2 vendor-aware CPU/disk/USB, T3 C-states off" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $deleteOutput = powercfg /delete $guid 2>&1
+        $deleteExitCode = $LASTEXITCODE
+        if ($deleteExitCode -ne 0) {
+            $exception = [InvalidOperationException]::new(
+                "Failed to name new power plan '$guid', and cleanup failed (exit $deleteExitCode): $deleteOutput."
+            )
+            $exception.Data['CreatedPowerPlanGuid'] = $guid
+            throw $exception
+        }
+        throw "Failed to name new power plan '$guid': $renameOutput"
+    }
 
     return $guid
+}
+
+function Get-ActivePowerPlanGuid {
+    $output = powercfg /getactivescheme 2>&1
+    if ($LASTEXITCODE -eq 0 -and $output -match '([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})') {
+        return $Matches[1].ToLowerInvariant()
+    }
+    throw "Could not determine the active power plan: $output"
+}
+
+function Get-SuiteOwnedPowerPlanGuids {
+    $guids = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $CFG_StateFile) {
+        try {
+            $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $candidates = @()
+            if ($state.PSObject.Properties['suiteOwnedPowerPlanGuids']) {
+                $candidates += @($state.suiteOwnedPowerPlanGuids)
+            }
+            if ($state.PSObject.Properties['suiteOwnedPowerPlanGuid']) {
+                $candidates += @($state.suiteOwnedPowerPlanGuid)
+            }
+            foreach ($candidate in $candidates) {
+                if ($candidate -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$' -and
+                    -not $guids.Contains(([string]$candidate).ToLowerInvariant())) {
+                    $guids.Add(([string]$candidate).ToLowerInvariant())
+                }
+            }
+        } catch {
+            throw "Could not read suite-owned power-plan identity from state.json: $_"
+        }
+    }
+    return @($guids)
+}
+
+function Set-SuiteOwnedPowerPlanGuids {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string[]]$Guids)
+
+    $validGuids = @($Guids | Where-Object {
+        $_ -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
+    } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
+    if (-not $PSCmdlet.ShouldProcess($CFG_StateFile, "Persist suite-owned power-plan identities")) { return }
+    if (Test-Path -LiteralPath $CFG_StateFile) {
+        $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    } else {
+        $state = [PSCustomObject]@{}
+    }
+    $state | Add-Member -NotePropertyName suiteOwnedPowerPlanGuids -NotePropertyValue $validGuids -Force
+    $state.PSObject.Properties.Remove('suiteOwnedPowerPlanGuid')
+    Save-SuiteState -State $state
+}
+
+function Invoke-CS2PowerPlanTransaction {
+    <# Creates, configures, activates, records, then retires only prior owned GUIDs. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($SCRIPT:DryRun) {
+        $dryGuid = New-CS2PowerPlan
+        Apply-PowerPlan -PlanGuid $dryGuid
+        return $dryGuid
+    }
+    if (-not $PSCmdlet.ShouldProcess(
+        "CS2 Optimized power plan",
+        "Create, configure, activate, persist ownership, and retire prior suite-owned plans"
+    )) {
+        return "DRY-RUN-GUID"
+    }
+
+    $previousActiveGuid = Get-ActivePowerPlanGuid
+    $priorOwnedGuids = @(Get-SuiteOwnedPowerPlanGuids)
+    $newGuid = $null
+    $activated = $false
+    try {
+        $newGuid = New-CS2PowerPlan
+        Apply-PowerPlan -PlanGuid $newGuid
+
+        $activationOutput = powercfg /setactive $newGuid 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to activate new power plan '$newGuid': $activationOutput"
+        }
+        $activated = $true
+
+        # Record both generations before deleting anything.  A failed cleanup
+        # therefore remains explicitly owned and can be retried/restored safely.
+        $trackedGuids = @($priorOwnedGuids + $newGuid | Select-Object -Unique)
+        Set-SuiteOwnedPowerPlanGuids -Guids $trackedGuids
+        if (Get-Command Update-PowerPlanBackupOwnership -ErrorAction SilentlyContinue) {
+            Update-PowerPlanBackupOwnership -OwnedGuids $trackedGuids
+        }
+
+        # Retirement only begins after both durable ownership surfaces contain
+        # both generations.  It is deliberately best-effort: a failure while
+        # deleting or narrowing the retired set must never roll back activation
+        # to a plan that may already have been deleted.
+        try {
+            $remainingGuids = [System.Collections.Generic.List[string]]::new()
+            $remainingGuids.Add($newGuid)
+            foreach ($oldGuid in $priorOwnedGuids) {
+                if ($oldGuid -eq $newGuid) { continue }
+                $deleteOutput = powercfg /delete $oldGuid 2>&1
+                if ($LASTEXITCODE -ne 0) {
+                    $presence = Get-PowerPlanGuidPresence -Guid $oldGuid
+                    if ($presence.Verified -and -not $presence.Present) {
+                        Write-DebugLog "Prior suite-owned power plan '$oldGuid' is already absent."
+                    } else {
+                        Write-Warn "Could not delete prior suite-owned power plan '$oldGuid': $deleteOutput $($presence.Message)"
+                        $remainingGuids.Add($oldGuid)
+                    }
+                }
+            }
+            Set-SuiteOwnedPowerPlanGuids -Guids @($remainingGuids)
+            if (Get-Command Update-PowerPlanBackupOwnership -ErrorAction SilentlyContinue) {
+                Update-PowerPlanBackupOwnership -OwnedGuids @($remainingGuids)
+            }
+        } catch {
+            Write-Warn "Power-plan retirement cleanup was incomplete after the replacement was committed: $_"
+        }
+        return $newGuid
+    } catch {
+        $transactionError = $_
+        if (-not $newGuid -and $transactionError.Exception.Data.Contains('CreatedPowerPlanGuid')) {
+            $candidateGuid = [string]$transactionError.Exception.Data['CreatedPowerPlanGuid']
+            if ($candidateGuid -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$') {
+                $newGuid = $candidateGuid.ToLowerInvariant()
+            }
+        }
+        if ($activated -and $previousActiveGuid) {
+            powercfg /setactive $previousActiveGuid 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "Power-plan rollback could not reactivate '$previousActiveGuid'; the new plan was left in place."
+                # The active replacement cannot be deleted safely. Preserve its
+                # identity alongside prior ownership so a later restore/retry
+                # never mistakes it for a foreign plan. This is best effort: the
+                # original persistence failure may also affect this recovery write.
+                $recoveryGuids = @($priorOwnedGuids + $newGuid | Where-Object { $_ } | Select-Object -Unique)
+                try {
+                    Set-SuiteOwnedPowerPlanGuids -Guids $recoveryGuids
+                    if (Get-Command Update-PowerPlanBackupOwnership -ErrorAction SilentlyContinue) {
+                        Update-PowerPlanBackupOwnership -OwnedGuids $recoveryGuids
+                    }
+                } catch {
+                    Write-Warn "Could not persist the active replacement power-plan identity during rollback recovery: $_"
+                }
+                throw "Power-plan transaction failed and the previous active plan could not be restored. The replacement '$newGuid' remains active and was retained for recovery. Original error: $transactionError"
+            }
+        }
+        $rollbackDeleteFailed = $false
+        $rollbackDeleteOutput = $null
+        if ($newGuid) {
+            $rollbackDeleteOutput = powercfg /delete $newGuid 2>&1
+            $rollbackDeleteFailed = ($LASTEXITCODE -ne 0)
+        }
+
+        if ($rollbackDeleteFailed) {
+            # The failed transaction still created a suite-owned object. Keep
+            # that identity recorded rather than silently orphaning it.
+            $recoveryGuids = @($priorOwnedGuids + $newGuid | Where-Object { $_ } | Select-Object -Unique)
+            $ownershipPersisted = $true
+            try {
+                Set-SuiteOwnedPowerPlanGuids -Guids $recoveryGuids
+                if (Get-Command Update-PowerPlanBackupOwnership -ErrorAction SilentlyContinue) {
+                    Update-PowerPlanBackupOwnership -OwnedGuids $recoveryGuids
+                }
+            } catch {
+                $ownershipPersisted = $false
+                Write-Warn "Could not persist rollback ownership for '$newGuid': $_"
+            }
+            $trackingText = if ($ownershipPersisted) {
+                "Its GUID remains recorded for a later restore/retry."
+            } else {
+                "Its GUID could not be recorded; remove it manually with 'powercfg /delete $newGuid'."
+            }
+            throw "Power-plan transaction failed and rollback could not delete replacement '$newGuid': $rollbackDeleteOutput. $trackingText Original error: $transactionError"
+        }
+
+        # Preserve the pre-transaction ownership record in both state and the
+        # durable restore point when the replacement was removed successfully
+        # (or creation never produced a GUID). These writes are independent so
+        # one failed persistence surface does not prevent repair of the other.
+        try { Set-SuiteOwnedPowerPlanGuids -Guids $priorOwnedGuids } catch {
+            Write-Warn "Could not restore prior suite-owned power-plan identity in state: $_"
+        }
+        if (Get-Command Update-PowerPlanBackupOwnership -ErrorAction SilentlyContinue) {
+            try { Update-PowerPlanBackupOwnership -OwnedGuids $priorOwnedGuids } catch {
+                Write-Warn "Could not restore prior suite-owned power-plan identity in backup metadata: $_"
+            }
+        }
+        throw $transactionError
+    }
+}
+
+function Invoke-CS2PowerPlanWithFallback {
+    <# Applies the intended owned plan, or reports a truthful fallback outcome. #>
+    [CmdletBinding()]
+    param()
+
+    try {
+        $guid = Invoke-CS2PowerPlanTransaction
+        return [PSCustomObject]@{
+            Status = if ($SCRIPT:DryRun -or $guid -eq 'DRY-RUN-GUID') { 'DryRun' } else { 'Success' }
+            CanCompleteStep = (-not $SCRIPT:DryRun -and $guid -ne 'DRY-RUN-GUID')
+            Guid = $guid
+            Message = "CS2 Optimized power plan applied."
+        }
+    } catch {
+        $transactionError = $_
+        Write-Warn "Power plan creation failed: $transactionError"
+        Write-Info "Fallback: activating Windows High Performance..."
+        if ($SCRIPT:DryRun) {
+            Write-ConsoleLine "  [DRY-RUN] Would fallback to High Performance plan" -ForegroundColor Magenta
+            return [PSCustomObject]@{
+                Status = 'DryRun'; CanCompleteStep = $false; Guid = $null
+                Message = "Power-plan fallback previewed after transaction failure."
+            }
+        }
+
+        $highOutput = powercfg /setactive SCHEME_MIN 2>&1
+        $highExitCode = $LASTEXITCODE
+        if ($highExitCode -eq 0) {
+            Write-OK "Windows High Performance active (fallback)."
+            return [PSCustomObject]@{
+                Status = 'Fallback'; CanCompleteStep = $false; Guid = $null
+                Message = "CS2 Optimized failed; Windows High Performance was activated as a fallback."
+            }
+        }
+
+        Write-Warn "High Performance not available — falling back to Balanced."
+        $balancedOutput = powercfg /setactive SCHEME_BALANCED 2>&1
+        $balancedExitCode = $LASTEXITCODE
+        if ($balancedExitCode -eq 0) {
+            Write-OK "Balanced power plan active (fallback)."
+            return [PSCustomObject]@{
+                Status = 'Fallback'; CanCompleteStep = $false; Guid = $null
+                Message = "CS2 Optimized failed; Balanced was activated as a fallback."
+            }
+        }
+
+        return [PSCustomObject]@{
+            Status = 'Failed'; CanCompleteStep = $false; Guid = $null
+            Message = "CS2 Optimized failed and neither fallback could be activated. High Performance: $highOutput (exit $highExitCode). Balanced: $balancedOutput (exit $balancedExitCode). Original error: $transactionError"
+        }
+    }
 }
 
 

@@ -481,6 +481,7 @@ if ($startStep -le 17) {
             Write-OK "CapFrameX download URL copied to clipboard."
 
             $r = if ($SCRIPT:DryRun -or (Test-YoloProfile)) { "n" } else { Read-Host "  Have you completed the baseline benchmark? [y/N]" }
+            $baselinePersisted = $false
             if ($r -match "^[jJyY]$") {
                 $result = Invoke-BenchmarkCapture -Label "Baseline (before optimizations)"
                 if ($result) {
@@ -490,6 +491,7 @@ if ($startStep -le 17) {
                             $st | Add-Member -NotePropertyName "baselineAvg" -NotePropertyValue $result.Avg -Force
                             $st | Add-Member -NotePropertyName "baselineP1" -NotePropertyValue $result.P1 -Force
                             Save-SuiteState -State $st
+                            $baselinePersisted = $true
                         } catch { Write-Warn "Could not persist baseline data: $_" }
                     } else {
                         Write-Host "  [DRY-RUN] Would persist baseline: Avg=$($result.Avg) P1=$($result.P1)" -ForegroundColor Magenta
@@ -498,7 +500,11 @@ if ($startStep -le 17) {
             } else {
                 Write-Info "You can run baseline later — but before/after comparison is most valuable."
             }
-            Complete-Step $PHASE 17 "CapFrameX-Baseline"
+            if ($baselinePersisted) {
+                Complete-Step $PHASE 17 "CapFrameX-Baseline"
+            } elseif (-not $SCRIPT:DryRun) {
+                Write-Warn "Baseline step remains incomplete until a captured result is saved to suite state."
+            }
         } `
         -SkipAction { Skip-Step $PHASE 17 "CapFrameX-Baseline" }
 }

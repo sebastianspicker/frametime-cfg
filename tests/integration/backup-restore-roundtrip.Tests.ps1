@@ -9,9 +9,18 @@
 
 BeforeAll {
     . "$PSScriptRoot/_IntegrationInit.ps1"
+
+    # Pester cannot expose a synthetic CmdArgs parameter when it mocks the
+    # native Windows powercfg.exe application. Shadow it with a test-only
+    # function so mock argument inspection is identical on every platform.
+    function global:powercfg {
+        param([Parameter(ValueFromRemainingArguments)][string[]]$CmdArgs)
+        $null = $CmdArgs
+    }
 }
 
 AfterAll {
+    Remove-Item Function:\global:powercfg -Force -ErrorAction SilentlyContinue
     if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
         Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -324,18 +333,73 @@ Describe "PowerPlan backup and restore roundtrip" {
         Mock Write-Info {}
     }
 
-    It "Backup-PowerPlan captures active plan GUID" {
+    It "Backup-PowerPlan durably captures and verifies the active plan GUID" {
         Mock powercfg {
+            $global:LASTEXITCODE = 0
             return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
         }
 
         Backup-PowerPlan -StepTitle "PowerPlan Test Step"
 
-        $SCRIPT:_backupPending.Count | Should -Be 1
-        $entry = $SCRIPT:_backupPending[0]
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 1
+        $entry = @($backup.entries)[0]
         $entry.type | Should -Be "powerplan"
         $entry.originalGuid | Should -Be "381b4222-f694-41f0-9685-ff5bb260df2e"
         $entry.originalName | Should -Be "Balanced"
+    }
+
+    It "aborts power-plan backup when durable persistence fails" {
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+        }
+        Mock Save-BackupData { throw "disk full" }
+
+        { Backup-PowerPlan -StepTitle "PowerPlan Test Step" } | Should -Throw '*disk full*'
+
+        $SCRIPT:_backupPending.Count | Should -Be 1
+    }
+
+    It "aborts when the active power plan cannot be identified" {
+        Mock powercfg {
+            $global:LASTEXITCODE = 1
+            return "access denied"
+        }
+
+        { Backup-PowerPlan -StepTitle "PowerPlan Test Step" } | Should -Throw '*durable power-plan restore point*'
+
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 0
+    }
+
+    It "reuses a durable original restore point when the active plan is suite-owned" {
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            return "Power Scheme GUID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee  (CS2 Optimized)"
+        }
+
+        { Backup-PowerPlan -StepTitle "CS2 Optimized Power Plan" } | Should -Not -Throw
+
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 1
+        @($backup.entries)[0].originalGuid | Should -Be "381b4222-f694-41f0-9685-ff5bb260df2e"
     }
 
     It "Backup-PowerPlan skips in DRY-RUN" {
@@ -344,6 +408,180 @@ Describe "PowerPlan backup and restore roundtrip" {
         Backup-PowerPlan -StepTitle "PowerPlan DRY Test"
 
         $SCRIPT:_backupPending.Count | Should -Be 0
+    }
+
+    It "does not update backup ownership metadata under WhatIf" {
+        $oldGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        $newGuid = '11111111-2222-3333-4444-555555555555'
+        $pendingEntry = [ordered]@{
+            type = 'powerplan'; originalGuid = '381b4222-f694-41f0-9685-ff5bb260df2e'
+            suiteOwnedGuids = @($oldGuid); step = 'PowerPlan Test Step'
+        }
+        $SCRIPT:_backupPending.Add($pendingEntry)
+        New-TestBackupFile -Entries @([ordered]@{
+            type = 'powerplan'; originalGuid = '381b4222-f694-41f0-9685-ff5bb260df2e'
+            suiteOwnedGuids = @($oldGuid); step = 'PowerPlan Test Step'
+        })
+
+        Update-PowerPlanBackupOwnership -OwnedGuids @($newGuid) -WhatIf
+
+        @($SCRIPT:_backupPending[0].suiteOwnedGuids) | Should -Be @($oldGuid)
+        $saved = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @(@($saved.entries)[0].suiteOwnedGuids) | Should -Be @($oldGuid)
+    }
+
+    It "does not update recorded ownership state under WhatIf" {
+        $oldGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        $newGuid = '11111111-2222-3333-4444-555555555555'
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = 'RECOMMENDED'; suiteOwnedPowerPlanGuids = @($oldGuid)
+        }) -Path $CFG_StateFile
+
+        Set-RecordedSuiteOwnedPowerPlanGuids -OwnedGuids @($newGuid) -WhatIf
+
+        $saved = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($saved.suiteOwnedPowerPlanGuids) | Should -Be @($oldGuid)
+    }
+
+    It "restore deletes only recorded suite-owned GUIDs and leaves foreign same-name plans alone" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $foreignSameNameGuid = "11111111-2222-3333-4444-555555555555"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        $script:restorePowerCommands = [System.Collections.Generic.List[string]]::new()
+        Mock powercfg {
+            $script:restorePowerCommands.Add(($CmdArgs -join ' '))
+            $global:LASTEXITCODE = 0
+            if ($CmdArgs[0] -eq '/list') {
+                return @(
+                    "Power Scheme GUID: $ownedGuid  (CS2 Optimized)",
+                    "Power Scheme GUID: $foreignSameNameGuid  (CS2 Optimized)"
+                )
+            }
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        $script:restorePowerCommands | Should -Contain "/setactive $originalGuid"
+        $script:restorePowerCommands | Should -Contain "/delete $ownedGuid"
+        $script:restorePowerCommands | Should -Not -Contain "/delete $foreignSameNameGuid"
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/list' }
+    }
+
+    It "retains only failed suite-owned deletions and retries them" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $deletedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $retryGuid = "11111111-2222-3333-4444-555555555555"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($deletedGuid, $retryGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($deletedGuid, $retryGuid)
+        }) -Path $CFG_StateFile
+        $script:failRetryDeletion = $true
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555" -and $script:failRetryDeletion) {
+                $global:LASTEXITCODE = 1
+                return 'access denied'
+            }
+            if ($CmdArgs[0] -eq '/list') {
+                $global:LASTEXITCODE = 0
+                if ($script:failRetryDeletion) {
+                    return "Power Scheme GUID: 11111111-2222-3333-4444-555555555555  (CS2 Optimized)"
+                }
+                return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+            }
+            $global:LASTEXITCODE = 0
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $false
+
+        $retainedBackup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($retainedBackup.entries).Count | Should -Be 1
+        @(@($retainedBackup.entries)[0].suiteOwnedGuids) | Should -Be @($retryGuid)
+        $retainedState = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($retainedState.suiteOwnedPowerPlanGuids) | Should -Be @($retryGuid)
+
+        $script:failRetryDeletion = $false
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
+        $restoredState = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($restoredState.suiteOwnedPowerPlanGuids).Count | Should -Be 0
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+        Should -Invoke powercfg -Exactly 2 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555"
+        }
+    }
+
+    It "converges when state persistence fails after deletion and the stale GUID is already absent on retry" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        $script:deleteCalls = 0
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/delete') {
+                $script:deleteCalls++
+                $global:LASTEXITCODE = if ($script:deleteCalls -eq 1) { 0 } else { 1 }
+                return $(if ($global:LASTEXITCODE -eq 0) { '' } else { 'scheme does not exist' })
+            }
+            if ($CmdArgs[0] -eq '/list') {
+                $global:LASTEXITCODE = 0
+                return "Power Scheme GUID: $originalGuid  (Balanced)"
+            }
+            $global:LASTEXITCODE = 0
+        }
+        $script:StateWriter = ${function:Set-RecordedSuiteOwnedPowerPlanGuids}
+        $script:stateWriteCalls = 0
+        Mock Set-RecordedSuiteOwnedPowerPlanGuids {
+            param($OwnedGuids)
+            $script:stateWriteCalls++
+            if ($script:stateWriteCalls -eq 1) { throw "injected state persistence failure" }
+            & $script:StateWriter -OwnedGuids $OwnedGuids
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $false
+
+        $retained = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($retained.entries).Count | Should -Be 1
+        @(@($retained.entries)[0].suiteOwnedGuids).Count | Should -Be 0
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
+        @((Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json).suiteOwnedPowerPlanGuids).Count | Should -Be 0
+        $script:deleteCalls | Should -Be 2
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/list' }
     }
 }
 

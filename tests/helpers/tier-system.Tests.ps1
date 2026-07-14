@@ -397,6 +397,35 @@ Describe "Invoke-TieredStep" {
             $state.skipCalled | Should -Be $true
         }
     }
+
+    Context "action outcome accounting" {
+        It "counts an action-recorded skip as skipped rather than applied" {
+            $SCRIPT:Profile = "SAFE"
+            Initialize-PhaseCounters
+            Mock Save-Progress {}
+            Mock Load-Progress {
+                [PSCustomObject]@{
+                    phase = 3; lastCompletedStep = 0; completedSteps = @(); skippedSteps = @(); timestamps = [PSCustomObject]@{}
+                }
+            }
+
+            $result = Invoke-TieredStep -Tier 1 -Title "Structured skip" -Why "Testing" `
+                -Risk "SAFE" -Action { Skip-Step 3 2 "No matching device" }
+
+            $result | Should -BeFalse
+            $SCRIPT:_phaseApplied | Should -Be 0
+            $SCRIPT:_phaseSkipped | Should -Be 1
+            $SCRIPT:_phaseFailed | Should -Be 0
+        }
+
+        It "does not claim a failed multi-write action left the system unaffected" {
+            $source = Get-Content -LiteralPath "$PSScriptRoot/../../helpers/tier-system.ps1" -Raw
+
+            $source | Should -Not -Match 'Your system is not affected'
+            $source | Should -Match 'some earlier changes in it may already be applied'
+            $source | Should -Match 'Backups were retained'
+        }
+    }
 }
 
 # ── Test-YoloProfile ─────────────────────────────────────────────────────────

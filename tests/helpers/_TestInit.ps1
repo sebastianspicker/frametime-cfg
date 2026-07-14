@@ -66,6 +66,34 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
         function global:Get-ScheduledTask { param($TaskName, $TaskPath) $null }
     }
+    # AppX stubs use the union of parameters exercised across the suite so
+    # Pester mock binding is independent of test-file discovery order.
+    if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxPackage {
+            param($Name, [switch]$AllUsers, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command Remove-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxPackage {
+            param([Parameter(ValueFromPipeline)]$InputObject, $Package, [switch]$AllUsers,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            process { $InputObject }
+        }
+    }
+    if (-not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxProvisionedPackage {
+            param([switch]$Online, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command Remove-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxProvisionedPackage {
+            param([Parameter(ValueFromPipeline)]$InputObject, [string]$PackageName, [switch]$Online,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            process { if ($null -ne $InputObject) { $InputObject } else { $PackageName } }
+        }
+    }
     if (-not (Get-Command Enable-ScheduledTask -ErrorAction SilentlyContinue)) {
         function global:Enable-ScheduledTask { param($TaskName, $TaskPath) $null }
     }

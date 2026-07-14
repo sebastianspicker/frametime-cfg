@@ -2,7 +2,7 @@
 .SYNOPSIS  Boot into Safe Mode for GPU driver clean removal (Phase 2).
 
   Quick-start shortcut that does exactly what Phase 1 Step 38 does:
-    1. Copies scripts + helpers to C:\CS2_OPTIMIZE\
+    1. Publishes a manifest-verified immutable runtime generation
     2. Registers Phase 2 (SafeMode-DriverClean.ps1) via RunOnce
     3. Sets bcdedit safeboot minimal
     4. Prompts for restart
@@ -102,53 +102,18 @@ if ($confirm -notmatch "^[jJyY]$") {
     exit 0
 }
 
-# -- 1. Copy scripts to work directory ----------------------------------------
+# -- 1-3. Prepare and verify the Phase 2 Safe Mode transaction ----------------
 Write-Host ""
-Write-Step "Copying scripts to $CFG_WorkDir..."
-Ensure-SecureWorkDir -Path $CFG_WorkDir
-Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
-
-# -- 2. Register Phase 2 RunOnce ----------------------------------------------
-Write-Step "Registering Phase 2 for Safe Mode boot..."
-$runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
-if (-not $runOnceResult.Applied) {
-    Write-Err "Phase 2 RunOnce registration failed. Safe Mode boot flag was NOT set."
+$phase2Transaction = Enable-Phase2SafeModeTransaction -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir -StatePath $CFG_StateFile -Why "Boot-SafeMode shortcut"
+if (-not $phase2Transaction.Applied) {
     Write-Host ""
-    Write-Host "  Fix the RunOnce error above, then re-run this shortcut." -ForegroundColor White
-    Write-Host "  Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
+    Write-Err "$($phase2Transaction.Message)"
+    Write-Host ""
     Write-Host ""
     Read-Host "  Press Enter to return"
     exit 1
 }
-Write-OK "Phase 2 registered via RunOnce."
-
-# -- 3. Set Safe Mode boot flag -----------------------------------------------
-Write-Step "Setting Safe Mode boot flag..."
-
-$bcdOut = bcdedit /set "{current}" safeboot minimal 2>&1
-$bcdExit = $LASTEXITCODE
-
-if ($bcdExit -ne 0) {
-    Write-Warn "bcdedit exited with code $bcdExit -- retrying without {current}..."
-    $bcdOut = bcdedit /set safeboot minimal 2>&1
-    $bcdExit = $LASTEXITCODE
-}
-
-$safebootOk = ($bcdExit -eq 0) -or (Test-BootConfigSet "safeboot")
-
-if (-not $safebootOk) {
-    Write-Host ""
-    Write-Err "Safe Mode boot flag could NOT be set."
-    Write-Host ""
-    Write-Host "  Try manually from an elevated cmd.exe:" -ForegroundColor White
-    Write-Host '    bcdedit /set {current} safeboot minimal' -ForegroundColor Cyan
-    Write-Host "  Then restart to enter Safe Mode for Phase 2." -ForegroundColor White
-    Write-Host ""
-    Read-Host "  Press Enter to return"
-    exit 1
-}
-
-Write-OK "Safe Mode boot flag set."
+Write-OK "Phase 2 handoff and Safe Mode boot flag are verified."
 
 # -- 4. Restart prompt ---------------------------------------------------------
 Write-Host ""

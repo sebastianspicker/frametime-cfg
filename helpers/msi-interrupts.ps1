@@ -2,6 +2,22 @@
 #  helpers/msi-interrupts.ps1  —  MSI Interrupts + NIC Interrupt Affinity
 # ==============================================================================
 
+function Get-InterruptOperationResult {
+    param(
+        [Parameter(Mandatory)][string]$Status,
+        [Parameter(Mandatory)][bool]$CanCompleteStep,
+        [Parameter(Mandatory)][string]$Message,
+        [bool]$Applied = $false
+    )
+
+    return [PSCustomObject]@{
+        Status          = $Status
+        Applied         = $Applied
+        CanCompleteStep = $CanCompleteStep
+        Message         = $Message
+    }
+}
+
 function Enable-DeviceMSI {
     <#
     .SYNOPSIS  Enables Message Signaled Interrupts (MSI) for GPU, NIC, and Audio
@@ -19,6 +35,7 @@ function Enable-DeviceMSI {
     )
 
     $modified = 0
+    $writeResults = [System.Collections.Generic.List[object]]::new()
     foreach ($dc in $deviceClasses) {
         $devices = Get-PnpDevice -Class $dc.Class -Status OK -ErrorAction SilentlyContinue
         if (-not $devices) {
@@ -34,14 +51,16 @@ function Enable-DeviceMSI {
             $msiPath = "$regBase\Device Parameters\Interrupt Management\MessageSignaledInterruptProperties"
 
             # Route through Set-RegistryValue for consistent DRY-RUN interception and auto-backup
-            Set-RegistryValue $msiPath "MSISupported" 1 "DWord" `
-                "MSI enabled for $($dc.Label): $($dev.FriendlyName)"
+            $msiWrite = Set-RegistryValue $msiPath "MSISupported" 1 "DWord" `
+                "MSI enabled for $($dc.Label): $($dev.FriendlyName)" -PassThru
+            $writeResults.Add($msiWrite)
 
             # Set MSI vector count limit for GPU using the suite's default heuristic.
             # Windows documents the key, but the exact value remains workload/device-specific.
             if ($dc.MsiLimit -gt 0) {
-                Set-RegistryValue $msiPath "MessageNumberLimit" $dc.MsiLimit "DWord" `
-                    "MSI vector limit ($($dc.MsiLimit)) for $($dc.Label): $($dev.FriendlyName)"
+                $limitWrite = Set-RegistryValue $msiPath "MessageNumberLimit" $dc.MsiLimit "DWord" `
+                    "MSI vector limit ($($dc.MsiLimit)) for $($dc.Label): $($dev.FriendlyName)" -PassThru
+                $writeResults.Add($limitWrite)
             }
 
             $modified++
@@ -50,12 +69,23 @@ function Enable-DeviceMSI {
 
     if ($modified -eq 0) {
         Write-Warn "No PCI devices found to enable MSI."
-    } else {
-        Write-OK "$modified device(s) verified for MSI mode."
-        if (-not $SCRIPT:DryRun) {
-            Write-Info "Restart required for MSI changes to take effect."
-        }
+        return (Get-InterruptOperationResult -Status "Skipped" -CanCompleteStep $false -Message "No applicable PCI devices were found.")
     }
+
+    $failedWrites = @($writeResults | Where-Object { $null -eq $_ -or $_.Status -notin @("Success", "DryRun") })
+    if ($failedWrites.Count -gt 0) {
+        $message = "$($failedWrites.Count) required MSI registry write(s) failed or were not applied."
+        Write-Warn $message
+        return (Get-InterruptOperationResult -Status "Failed" -CanCompleteStep $false -Message $message)
+    }
+
+    if ($SCRIPT:DryRun) {
+        return (Get-InterruptOperationResult -Status "DryRun" -CanCompleteStep $true -Message "MSI registry writes previewed for $modified device(s).")
+    }
+
+    Write-OK "$modified device(s) verified for MSI mode."
+    Write-Info "Restart required for MSI changes to take effect."
+    return (Get-InterruptOperationResult -Status "Success" -CanCompleteStep $true -Applied $true -Message "MSI registry writes applied for $modified device(s).")
 }
 
 function Set-NicRssConfig {
@@ -257,7 +287,7 @@ function Set-NicInterruptAffinity {
     $activeNic = Get-ActiveNicAdapter
     if (-not $activeNic) {
         Write-Warn "No active wired NIC found — skipping affinity."
-        return
+        return (Get-InterruptOperationResult -Status "Skipped" -CanCompleteStep $false -Message "No active wired NIC was found.")
     }
 
     # Match PnP device for registry path.
@@ -293,7 +323,7 @@ function Set-NicInterruptAffinity {
 
     if (-not $nic) {
         Write-Warn "Active NIC '$($activeNic.InterfaceDescription)' not found as PCI device — skipping affinity."
-        return
+        return (Get-InterruptOperationResult -Status "Skipped" -CanCompleteStep $false -Message "The active NIC was not found as a PCI device.")
     }
 
     # Ensure single device (not array)
@@ -312,7 +342,7 @@ function Set-NicInterruptAffinity {
 
     if ($coreCount -lt 2) {
         Write-Warn "Only 1 core detected — cannot set affinity away from Core 0."
-        return
+        return (Get-InterruptOperationResult -Status "Skipped" -CanCompleteStep $false -Message "At least two physical cores are required.")
     }
 
     # Calculate affinity mask for target core.
@@ -368,23 +398,34 @@ function Set-NicInterruptAffinity {
     $regBase = "HKLM:\SYSTEM\CurrentControlSet\Enum\$($nic.InstanceId)"
     $affinityPath = "$regBase\Device Parameters\Interrupt Management\Affinity Policy"
     if (-not $PSCmdlet.ShouldProcess($affinityPath, "Configure NIC interrupt affinity for $($nic.FriendlyName)")) {
-        return
+        return (Get-InterruptOperationResult -Status "Skipped" -CanCompleteStep $false -Message "NIC interrupt affinity was not approved.")
     }
 
     # Route DevicePolicy through Set-RegistryValue for consistent DRY-RUN/backup handling
-    Set-RegistryValue $affinityPath "DevicePolicy" 4 "DWord" `
-        "NIC interrupt affinity policy (Specified Processors): $($nic.FriendlyName)"
+    $policyWrite = Set-RegistryValue $affinityPath "DevicePolicy" 4 "DWord" `
+        "NIC interrupt affinity policy (Specified Processors): $($nic.FriendlyName)" -PassThru
 
     # AssignmentSetOverride is Binary — Set-RegistryValue supports this via -Type passthrough
     $lpIndices = @($targetLP)
     if ($siblingLP -ge 0 -and $siblingLP -le 63) { $lpIndices += $siblingLP }
     $lpLabel = ($lpIndices | ForEach-Object { "LP $_" }) -join ", "
-    Set-RegistryValue $affinityPath "AssignmentSetOverride" ([byte[]]$maskBytes) "Binary" `
-        "NIC affinity mask 0x$($mask.ToString('X')) -> ${lpLabel}: $($nic.FriendlyName)"
+    $maskWrite = Set-RegistryValue $affinityPath "AssignmentSetOverride" ([byte[]]$maskBytes) "Binary" `
+        "NIC affinity mask 0x$($mask.ToString('X')) -> ${lpLabel}: $($nic.FriendlyName)" -PassThru
 
-    if (-not $SCRIPT:DryRun) {
-        Write-OK "NIC affinity set: $($nic.FriendlyName) -> $lpLabel (physical core $physCoreIdx)"
-        Write-Info "Affinity mask: 0x$($mask.ToString('X')) ($lpLabel of $logicalCount LPs, $coreCount physical cores$(if($smtEnabled){', SMT enabled'}))"
+    $writeResults = @($policyWrite, $maskWrite)
+    $failedWrites = @($writeResults | Where-Object { $null -eq $_ -or $_.Status -notin @("Success", "DryRun") })
+    if ($failedWrites.Count -gt 0) {
+        $message = "$($failedWrites.Count) required NIC affinity registry write(s) failed or were not applied."
+        Write-Warn $message
+        return (Get-InterruptOperationResult -Status "Failed" -CanCompleteStep $false -Message $message)
     }
+
+    if ($SCRIPT:DryRun) {
+        return (Get-InterruptOperationResult -Status "DryRun" -CanCompleteStep $true -Message "NIC affinity registry writes previewed.")
+    }
+
+    Write-OK "NIC affinity set: $($nic.FriendlyName) -> $lpLabel (physical core $physCoreIdx)"
+    Write-Info "Affinity mask: 0x$($mask.ToString('X')) ($lpLabel of $logicalCount LPs, $coreCount physical cores$(if($smtEnabled){', SMT enabled'}))"
     Write-Info "Restart required for affinity changes to take effect."
+    return (Get-InterruptOperationResult -Status "Success" -CanCompleteStep $true -Applied $true -Message "NIC interrupt affinity applied and verified by registry write results.")
 }

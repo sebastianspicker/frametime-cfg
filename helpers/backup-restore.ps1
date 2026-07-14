@@ -15,6 +15,12 @@ $CFG_BackupLockFile = "$CFG_WorkDir\backup.lock"
 # Sentinel used when DRS profile was found via app registration rather than by name.
 # Must match between Backup-DrsSettings (write) and Restore-DrsSettings (read).
 $SCRIPT:DRS_FOUND_VIA_APP = "(found via cs2.exe)"
+if (-not (Get-Variable _backupLockToken -Scope Script -ErrorAction SilentlyContinue)) {
+    $SCRIPT:_backupLockToken = $null
+}
+if (-not (Get-Variable _backupLockStream -Scope Script -ErrorAction SilentlyContinue)) {
+    $SCRIPT:_backupLockStream = $null
+}
 
 # ── In-memory batch buffer ─────────────────────────────────────────────────
 # Backup entries are accumulated in $SCRIPT:_backupPending during a step, then
@@ -58,9 +64,27 @@ function Initialize-Backup {
         Write-ConsoleLine "    If no other window is open, this will clear itself automatically." -ForegroundColor DarkGray
         throw "Backup lock is already held by another active CS2 Optimization process."
     }
-    Set-BackupLock
+    try {
+        Set-BackupLock | Out-Null
+    } catch {
+        Write-Warn "Another CS2 Optimization window acquired the backup lock first."
+        Write-ConsoleLine "  $([char]0x2139) What to do: Close the other window first, then try again." -ForegroundColor Cyan
+        throw "Backup lock is already held by another active CS2 Optimization process."
+    }
 
-    if (-not (Test-Path $CFG_BackupFile)) { New-BackupFile } else { Set-SecureAcl -Path $CFG_BackupFile -Required }
+    try {
+        if (-not (Test-Path $CFG_BackupFile)) {
+            New-BackupFile
+        } else {
+            Set-SecureAcl -Path $CFG_BackupFile -Required
+        }
+    } catch {
+        # Initialization owns the lock at this point.  Do not strand it when
+        # backup creation or ACL hardening fails, otherwise every retry is
+        # misreported as a competing live process.
+        Remove-BackupLock
+        throw
+    }
 }
 
 function Test-BackupLock {
@@ -72,65 +96,190 @@ function Test-BackupLock {
           3. The lock is older than 4 hours (handles hung/stalled processes).
         Mitigates PID reuse: verifies the process is PowerShell, not an unrelated
         process that inherited the recycled PID.  #>
-    if (-not (Test-Path $CFG_BackupLockFile)) { return $false }
+    $nativeLockPath = $CFG_BackupLockFile -replace '\\', [System.IO.Path]::DirectorySeparatorChar
+    if (-not (Test-Path -LiteralPath $CFG_BackupLockFile)) { return $false }
+    if ($SCRIPT:_backupLockToken -and $SCRIPT:_backupLockStream) { return $true }
+
     try {
-        $lockData = Get-Content $CFG_BackupLockFile -Raw -ErrorAction Stop | ConvertFrom-Json
-        # Auto-expire: no optimization run should take more than 4 hours.
-        # Handles the case where a process is alive but hung/stalled indefinitely.
-        if ($lockData.started) {
+        # A live owner keeps the file open without write sharing.  Acquiring an
+        # exclusive read/write handle therefore proves that no owner currently
+        # holds the lock before any stale-file cleanup begins.
+        try {
+            $probe = [System.IO.File]::Open(
+                $nativeLockPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+        } catch [System.IO.IOException] {
+            return $true
+        }
+
+        try {
+            $probe.Position = 0
+            $reader = New-Object System.IO.StreamReader($probe, [System.Text.Encoding]::UTF8, $true, 1024, $true)
+            $isStale = $false
             try {
-                $parsedDate = [datetime]::Parse([string]$lockData.started)
+                $lockData = $reader.ReadToEnd() | ConvertFrom-Json -ErrorAction Stop
             } catch {
-                Write-DebugLog "Backup lock has unparseable timestamp '$($lockData.started)' — removing stale lock."
-                Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
-                return $false
+                $isStale = $true
+                Write-DebugLog "Backup lock is corrupt — claiming it for safe stale cleanup."
+            } finally {
+                $reader.Dispose()
             }
-            $lockAge = (Get-Date) - $parsedDate
-            if ($lockAge.TotalHours -gt 4) {
-                Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
-                Write-DebugLog "Removed expired backup lock (age: $([math]::Round($lockAge.TotalHours, 1))h, PID $($lockData.pid))."
-                return $false
+
+            # Auto-expire legacy locks that are not protected by a live owner
+            # handle. No optimization run should take more than four hours.
+            if (-not $isStale -and $lockData.started) {
+                try {
+                    $parsedDate = [datetime]::Parse([string]$lockData.started)
+                    $lockAge = (Get-Date) - $parsedDate
+                    if ($lockAge.TotalHours -gt 4) {
+                        $isStale = $true
+                        Write-DebugLog "Found expired backup lock (age: $([math]::Round($lockAge.TotalHours, 1))h, PID $($lockData.pid))."
+                    }
+                } catch {
+                    $isStale = $true
+                    Write-DebugLog "Backup lock has unparseable timestamp '$($lockData.started)' — marking stale."
+                }
             }
+
+            $proc = $null
+            $lockPid = 0
+            if (-not $isStale -and [int]::TryParse([string]$lockData.pid, [ref]$lockPid)) {
+                $proc = Get-Process -Id $lockPid -ErrorAction SilentlyContinue
+            }
+            if (-not $isStale -and $proc) {
+                # Mitigate PID reuse: verify the executable and, for new-format
+                # locks, the process start instant as well as the recycled PID.
+                $isPowerShell = $proc.ProcessName -match '^(?:powershell|pwsh|powershell_ise)$'
+                if ($isPowerShell) {
+                    if (-not $lockData.processStartUtc) { return $true }
+                    try {
+                        $actualStart = $proc.StartTime.ToUniversalTime().ToString('o')
+                        $expectedStart = ([datetime]::Parse([string]$lockData.processStartUtc)).ToUniversalTime().ToString('o')
+                        if ($actualStart -eq $expectedStart) { return $true }
+                    } catch { return $true }
+                }
+                Write-DebugLog "Found stale backup lock (PID $lockPid reused by '$($proc.ProcessName)')."
+                $isStale = $true
+            } elseif (-not $isStale) {
+                $isStale = $true
+                Write-DebugLog "Found stale backup lock (PID $($lockData.pid) no longer running)."
+            }
+
+            if (-not $isStale) { return $true }
+
+            # Claim the stale path while the exclusive handle is held.  Other
+            # cleaners see the cleanup token as busy, and CreateNew contenders
+            # cannot replace the path until this exact claimed file is removed.
+            $cleanupToken = [guid]::NewGuid().ToString('N')
+            $cleanupData = @{
+                pid = $PID
+                started = (Get-Date).ToUniversalTime().ToString('o')
+                processStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+                token = $cleanupToken
+                state = 'cleanup'
+            } | ConvertTo-Json -Compress
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($cleanupData)
+            $probe.SetLength(0)
+            $probe.Write($bytes, 0, $bytes.Length)
+            $probe.Flush($true)
+        } finally {
+            $probe.Dispose()
         }
-        $proc = Get-Process -Id $lockData.pid -ErrorAction SilentlyContinue
-        if ($proc) {
-            # Mitigate PID reuse: Windows recycles PIDs, so a live process with the
-            # same PID may be entirely unrelated. Verify it's a PowerShell instance.
-            $isPowerShell = $proc.ProcessName -match '^(?:powershell|pwsh|powershell_ise)$'
-            if ($isPowerShell) { return $true }
-            # PID was reused by a non-PowerShell process — stale lock
-            Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
-            Write-DebugLog "Removed stale backup lock (PID $($lockData.pid) reused by '$($proc.ProcessName)')."
-            return $false
-        }
-        # Process is dead — stale lock; remove it
-        Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
-        Write-DebugLog "Removed stale backup lock (PID $($lockData.pid) no longer running)."
+        Remove-BackupLock -Token $cleanupToken | Out-Null
+        return $false
     } catch {
-        # Corrupted lock file — remove it
-        Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+        # A corrupt legacy lock can only be removed after obtaining the same
+        # exclusive handle/claim path above.  If that was not possible, fail
+        # closed and report the lock as held.
+        Write-DebugLog "Backup lock could not be validated safely: $_"
+        return $true
     }
-    return $false
 }
 
 function Set-BackupLock {
     <#  Called at the start of optimization and restore operations.  #>
     [CmdletBinding(SupportsShouldProcess)]
-    param()
+    param([switch]$PassThru)
 
-    if ($PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Create backup lock")) {
-        $lockData = @{ pid = $PID; started = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss") }
-        Save-JsonAtomic -Data $lockData -Path $CFG_BackupLockFile
+    if (-not $PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Create backup lock")) { return $null }
+
+    $nativeLockPath = $CFG_BackupLockFile -replace '\\', [System.IO.Path]::DirectorySeparatorChar
+    $token = [guid]::NewGuid().ToString('N')
+    $processStartUtc = (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')
+    $lockData = @{
+        pid = $PID
+        started = (Get-Date).ToUniversalTime().ToString('o')
+        processStartUtc = $processStartUtc
+        token = $token
+        state = 'owned'
+    } | ConvertTo-Json -Compress
+    $stream = $null
+    try {
+        # FileMode.CreateNew is the acquisition primitive: exactly one
+        # contender succeeds and an existing lock is never overwritten.
+        $stream = [System.IO.File]::Open(
+            $nativeLockPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::Read
+        )
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($lockData)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
         Set-SecureAcl -Path $CFG_BackupLockFile -Required
+        $SCRIPT:_backupLockToken = $token
+        $SCRIPT:_backupLockStream = $stream
+        if ($PassThru) { return $token }
+    } catch {
+        if ($stream) {
+            $stream.Dispose()
+            Remove-Item -LiteralPath $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+        }
+        throw
     }
 }
 
 function Remove-BackupLock {
     [CmdletBinding(SupportsShouldProcess)]
-    param()
+    param([string]$Token)
 
-    if ($PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Remove backup lock")) {
-        Remove-Item $CFG_BackupLockFile -Force -ErrorAction SilentlyContinue
+    $nativeLockPath = $CFG_BackupLockFile -replace '\\', [System.IO.Path]::DirectorySeparatorChar
+    $ownerToken = if ($Token) { $Token } else { $SCRIPT:_backupLockToken }
+    if (-not $ownerToken) { return }
+    if (-not $PSCmdlet.ShouldProcess($CFG_BackupLockFile, "Remove owned backup lock")) { return }
+
+    if (-not $Token -and $SCRIPT:_backupLockStream) {
+        $SCRIPT:_backupLockStream.Dispose()
+        $SCRIPT:_backupLockStream = $null
+    }
+    try {
+        $stream = [System.IO.File]::Open(
+            $nativeLockPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        try {
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true, 1024, $true)
+            try { $lockData = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($lockData.token -ne $ownerToken) { return }
+            $stream.SetLength(0)
+            $releaseData = @{ token = $ownerToken; state = 'releasing' } | ConvertTo-Json -Compress
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($releaseData)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+        Remove-Item -LiteralPath $CFG_BackupLockFile -Force -ErrorAction Stop
+        if (-not $Token) { $SCRIPT:_backupLockToken = $null }
+    } catch [System.IO.FileNotFoundException] {
+        if (-not $Token) { $SCRIPT:_backupLockToken = $null }
+    } catch [System.IO.IOException] {
+        return
     }
 }
 
@@ -186,7 +335,19 @@ function Get-BackupDataRaw {
         $backupName = Split-Path $CFG_BackupFile -Leaf
         $backupStem = if ($backupName -match '^(.*)\.json$') { $Matches[1] } else { $backupName }
         $corruptPath = Join-Path $backupDir "$backupStem.corrupt.$ts.json"
-        try { Copy-Item $CFG_BackupFile $corruptPath -Force -ErrorAction Stop } catch { Write-DebugLog "Could not preserve corrupted backup file — original may already be gone." }
+        try {
+            Copy-Item $CFG_BackupFile $corruptPath -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $corruptPath)) { throw "Preserved copy was not created." }
+            if ((Get-Item -LiteralPath $CFG_BackupFile).Length -ne (Get-Item -LiteralPath $corruptPath).Length) {
+                throw "Preserved copy length does not match the original."
+            }
+            $sourceHash = (Get-FileHash -LiteralPath $CFG_BackupFile -Algorithm SHA256 -ErrorAction Stop).Hash
+            $preservedHash = (Get-FileHash -LiteralPath $corruptPath -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($sourceHash -ne $preservedHash) { throw "Preserved copy hash does not match the original." }
+        } catch {
+            Write-Warn "backup.json is corrupted, but it could not be preserved safely. The original was left untouched."
+            throw "Refusing to reset corrupted backup because preservation failed: $_"
+        }
         Write-Warn "backup.json was corrupted — saved copy to $corruptPath before resetting."
         Write-Warn "Backup history reset — previous entries preserved in $corruptPath"
         Remove-Item $CFG_BackupFile -Force -ErrorAction SilentlyContinue
@@ -459,39 +620,174 @@ function Backup-ServiceState {
 
 function Backup-PowerPlan {
     <#  Records the currently active power plan GUID before switching.
-        Entries are buffered in memory and flushed at step boundaries.  #>
+        Unlike ordinary setting backups, this restore point is flushed and
+        verified immediately: the caller must not mutate power plans until the
+        original active scheme is durably recoverable.  #>
     param([string]$StepTitle)
     if ($SCRIPT:DryRun) { return }
     $originalGuid = $null
     $originalName = $null
     try {
+        $global:LASTEXITCODE = 0
         $activeOutput = powercfg /getactivescheme 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "powercfg /getactivescheme failed with exit code $LASTEXITCODE`: $activeOutput"
+        }
         if ($activeOutput -match "([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})") {
-            $originalGuid = $Matches[1]
+            $originalGuid = $Matches[1].ToLowerInvariant()
             if ($activeOutput -match "\((.+)\)\s*$") {
                 $originalName = $Matches[1]
             }
         }
-    } catch { Write-DebugLog "Backup-PowerPlan: powercfg query failed — active plan GUID not captured." }
+    } catch {
+        throw "Cannot create a durable power-plan restore point: $_"
+    }
 
-    if ($originalGuid) {
-        # If the active plan is already "CS2 Optimized", skip backup — we don't want
-        # to record the CS2 plan as the rollback target on re-runs. The original
-        # user plan is already captured from the first run.
-        if ($originalName -and $originalName -match "CS2 Optimized") {
-            Write-DebugLog "Backup-PowerPlan: active plan is '$originalName' — skipping backup (re-run detected)"
-            return
-        }
+    if (-not $originalGuid) {
+        throw "Cannot create a durable power-plan restore point: powercfg returned no active scheme GUID."
+    }
+
+    $ownedGuids = @(Get-RecordedSuiteOwnedPowerPlanGuids)
+    $activeIsOwned = ($originalGuid -in $ownedGuids)
+    # Re-run detection uses persisted GUID ownership, never the mutable display
+    # name. A foreign same-name plan must still be backed up.
+    if ($activeIsOwned) {
+        Write-DebugLog "Backup-PowerPlan: active plan '$originalGuid' is suite-owned — verifying the existing rollback target."
+    } else {
         $entry = [ordered]@{
             type          = "powerplan"
             originalGuid  = $originalGuid
             originalName  = $originalName
+            suiteOwnedGuids = $ownedGuids
             step          = $StepTitle
             timestamp     = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         }
         $SCRIPT:_backupPending.Add($entry)
         Write-DebugLog "Backup-PowerPlan: saved $originalGuid ($originalName)"
     }
+
+    # This is a deliberate exception to the normal per-step batching policy.
+    # A crash after plan activation must never precede persistence of the
+    # original scheme. Flush failures propagate and abort the caller's action.
+    Flush-BackupBuffer
+    $durableBackup = Get-BackupDataRaw
+    $durablePowerEntries = @($durableBackup.entries | Where-Object {
+        $_.type -eq 'powerplan' -and
+        [string]$_.originalGuid -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
+    })
+    $restorePointVerified = if ($activeIsOwned) {
+        @($durablePowerEntries | Where-Object {
+            $recordedOwned = if ($_.PSObject.Properties['suiteOwnedGuids']) {
+                @($_.suiteOwnedGuids | ForEach-Object { ([string]$_).ToLowerInvariant() })
+            } else {
+                @()
+            }
+            $originalGuid -in $recordedOwned
+        }).Count -gt 0
+    } else {
+        @($durablePowerEntries | Where-Object {
+            ([string]$_.originalGuid).ToLowerInvariant() -eq $originalGuid
+        }).Count -gt 0
+    }
+    if (-not $restorePointVerified) {
+        throw "Power-plan restore point verification failed; no power-plan mutation was attempted."
+    }
+}
+
+function Get-RecordedSuiteOwnedPowerPlanGuids {
+    $guids = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $CFG_StateFile) {
+        try {
+            $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $candidates = @()
+            if ($state.PSObject.Properties['suiteOwnedPowerPlanGuids']) {
+                $candidates += @($state.suiteOwnedPowerPlanGuids)
+            }
+            if ($state.PSObject.Properties['suiteOwnedPowerPlanGuid']) {
+                $candidates += @($state.suiteOwnedPowerPlanGuid)
+            }
+            foreach ($candidate in $candidates) {
+                if ($candidate -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$') {
+                    $normalized = ([string]$candidate).ToLowerInvariant()
+                    if (-not $guids.Contains($normalized)) { $guids.Add($normalized) }
+                }
+            }
+        } catch {
+            Write-DebugLog "Could not read suite-owned power-plan GUIDs from state.json: $_"
+        }
+    }
+    return @($guids)
+}
+
+function Get-PowerPlanGuidPresence {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Guid)
+
+    $normalizedGuid = $Guid.ToLowerInvariant()
+    $listOutput = powercfg /list 2>&1
+    $listExitCode = $LASTEXITCODE
+    if ($listExitCode -ne 0) {
+        return [PSCustomObject]@{
+            Verified = $false
+            Present = $null
+            Message = "powercfg /list failed with exit code $listExitCode`: $listOutput"
+        }
+    }
+
+    $installedGuids = @($listOutput | ForEach-Object {
+        if ([string]$_ -match '(?i)([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})') {
+            $Matches[1].ToLowerInvariant()
+        }
+    })
+    return [PSCustomObject]@{
+        Verified = $true
+        Present = ($normalizedGuid -in $installedGuids)
+        Message = "Installed power-plan inventory completed."
+    }
+}
+
+function Update-PowerPlanBackupOwnership {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string[]]$OwnedGuids)
+
+    $validGuids = @($OwnedGuids | Where-Object {
+        $_ -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
+    } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
+    if (-not $PSCmdlet.ShouldProcess("power-plan backup ownership metadata", "Persist suite-owned power-plan identities")) { return }
+
+    foreach ($entry in $SCRIPT:_backupPending) {
+        $entryType = if ($entry -is [System.Collections.IDictionary]) { $entry['type'] } else { $entry.type }
+        if ($entryType -eq 'powerplan') {
+            if ($entry -is [System.Collections.IDictionary]) { $entry['suiteOwnedGuids'] = $validGuids }
+            else { $entry | Add-Member -NotePropertyName suiteOwnedGuids -NotePropertyValue $validGuids -Force }
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $CFG_BackupFile)) { return }
+    $backup = Get-BackupDataRaw
+    $changed = $false
+    foreach ($entry in @($backup.entries)) {
+        if ($entry.type -eq 'powerplan') {
+            $entry | Add-Member -NotePropertyName suiteOwnedGuids -NotePropertyValue $validGuids -Force
+            $changed = $true
+        }
+    }
+    if ($changed) { Save-BackupData $backup }
+}
+
+function Set-RecordedSuiteOwnedPowerPlanGuids {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string[]]$OwnedGuids)
+
+    if (-not (Test-Path -LiteralPath $CFG_StateFile)) { return }
+    if (-not $PSCmdlet.ShouldProcess($CFG_StateFile, "Persist remaining suite-owned power-plan identities")) { return }
+    $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $validGuids = @($OwnedGuids | Where-Object {
+        $_ -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
+    } | ForEach-Object { $_.ToLowerInvariant() } | Select-Object -Unique)
+    $state | Add-Member -NotePropertyName suiteOwnedPowerPlanGuids -NotePropertyValue $validGuids -Force
+    $state.PSObject.Properties.Remove('suiteOwnedPowerPlanGuid')
+    Save-SuiteState -State $state
 }
 
 function Backup-BootConfig {
@@ -1101,7 +1397,9 @@ function Restore-StepChanges {
                         $restoreFail++
                         continue
                     }
-                    # Restore original power plan and delete the imported one
+                    # Restore the original power plan first.  Cleanup below is
+                    # strictly GUID-based and limited to identities explicitly
+                    # recorded as suite-owned at successful installation time.
                     powercfg /setactive $e.originalGuid 2>&1 | Out-Null
                     if ($LASTEXITCODE -ne 0) {
                         Write-Warn "Failed to restore power plan '$($e.originalName)' ($($e.originalGuid)) — plan may no longer exist."
@@ -1109,20 +1407,42 @@ function Restore-StepChanges {
                         continue
                     }
                     Write-OK "Restored power plan: $($e.originalName) ($($e.originalGuid))"
-                    # Delete any FPSHeaven/CS2 Optimized plans we created
-                    $allPlans = powercfg /list 2>&1
-                    foreach ($line in $allPlans) {
-                        if ($line -match "([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})") {
-                            $planGuid = $Matches[1]
-                            if (($line -imatch "FPSHeaven" -or $line -imatch "CS2 Optimized") -and $planGuid -ne $e.originalGuid) {
-                                powercfg /delete $planGuid 2>&1 | Out-Null
-                                if ($LASTEXITCODE -eq 0) {
-                                    Write-OK "Deleted imported plan: $planGuid"
-                                } else {
-                                    Write-Warn "Could not delete imported plan: $planGuid"
-                                }
+
+                    $recordedOwnedGuids = @()
+                    if ($e.PSObject.Properties['suiteOwnedGuids']) {
+                        $recordedOwnedGuids += @($e.suiteOwnedGuids)
+                    }
+                    $recordedOwnedGuids += @(Get-RecordedSuiteOwnedPowerPlanGuids)
+                    $remainingOwnedGuids = [System.Collections.Generic.List[string]]::new()
+                    foreach ($planGuid in @($recordedOwnedGuids | Select-Object -Unique)) {
+                        if ($planGuid -notmatch '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$' -or
+                            $planGuid -eq $e.originalGuid) { continue }
+                        powercfg /delete $planGuid 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-OK "Deleted suite-owned plan: $planGuid"
+                        } else {
+                            $presence = Get-PowerPlanGuidPresence -Guid $planGuid
+                            if ($presence.Verified -and -not $presence.Present) {
+                                Write-DebugLog "Suite-owned power plan is already absent: $planGuid"
+                            } else {
+                                Write-Warn "Could not delete suite-owned plan: $planGuid. $($presence.Message)"
+                                $remainingOwnedGuids.Add($planGuid)
                             }
                         }
+                    }
+                    # Narrow the in-memory retry record before either fallible
+                    # persistence write. If state persistence fails, the retained
+                    # backup entry still contains only plans proven to remain.
+                    $e | Add-Member -NotePropertyName suiteOwnedGuids -NotePropertyValue @($remainingOwnedGuids) -Force
+                    try { Set-RecordedSuiteOwnedPowerPlanGuids -OwnedGuids @($remainingOwnedGuids) } catch {
+                        Write-Warn "Could not update suite-owned power-plan state after restore: $_"
+                        $restoreFail++
+                        continue
+                    }
+                    if ($remainingOwnedGuids.Count -gt 0) {
+                        Write-Warn "Power plan restore was partial; $($remainingOwnedGuids.Count) suite-owned plan(s) remain for retry."
+                        $restoreFail++
+                        continue
                     }
                     $restoreOk++
                 }

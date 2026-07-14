@@ -112,10 +112,10 @@ try {
         $nextAction = "-> Restart -> Safe Mode -> GPU driver clean`n-> Normal boot -> Phase 3 starts automatically"
         Write-PhaseSummary -PhaseLabel "PHASE 1" -NextAction $nextAction
 
-        # Only offer restart if safeboot is actually set in BCD.
-        # $SCRIPT:SafebootReady is set by Step 38, but on resume (step 38 already
-        # completed) it stays $false — fall back to live BCD check.
-        $safebootConfirmed = $SCRIPT:SafebootReady -or (Test-BootConfigSet "safeboot")
+        # Only offer restart after the current run completed the payload, RunOnce,
+        # BCD verification, and readiness transaction.  A residual BCD flag alone
+        # cannot prove that this reboot will launch the intended Phase 2 payload.
+        $safebootConfirmed = $SCRIPT:SafebootReady
         if (-not $safebootConfirmed) {
             Write-Blank
             Write-Warn "Safe Mode boot flag was NOT set — restarting would boot into Normal Mode."

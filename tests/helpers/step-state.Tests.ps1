@@ -130,6 +130,7 @@ Describe "Skip-Step" {
         Skip-Step -phase 1 -stepNum 4 -stepName "Skipped"
 
         Test-StepDone -phase 1 -stepNum 4 | Should -Be $true
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -Be $false
     }
 
     It "does not add skipped step to completedSteps" {
@@ -164,6 +165,26 @@ Describe "Skip-Step" {
 
         $prog = Load-Progress
         @($prog.skippedSteps | Where-Object { $_ -eq "P1:4" }).Count | Should -Be 1
+    }
+
+    It "replaces a skipped state with completed state after a successful retry" {
+        Skip-Step -phase 1 -stepNum 4 -stepName "Skipped"
+        Complete-Step -phase 1 -stepNum 4 -stepName "Retried"
+
+        $prog = Load-Progress
+        $prog.skippedSteps | Should -Not -Contain "P1:4"
+        $prog.completedSteps | Should -Contain "P1:4"
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -BeTrue
+    }
+
+    It "replaces a completed state when the current run explicitly skips it" {
+        Complete-Step -phase 1 -stepNum 4 -stepName "Completed"
+        Skip-Step -phase 1 -stepNum 4 -stepName "Skipped on rerun"
+
+        $prog = Load-Progress
+        $prog.completedSteps | Should -Not -Contain "P1:4"
+        $prog.skippedSteps | Should -Contain "P1:4"
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -BeFalse
     }
 }
 

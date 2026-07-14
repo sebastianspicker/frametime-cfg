@@ -653,38 +653,8 @@ if ($startStep -le 38) {
         Write-Host "  [DRY-RUN] Would copy scripts to $CFG_WorkDir, set RunOnce, and boot into Safe Mode" -ForegroundColor Magenta
         Complete-Step $PHASE 38 "SafeMode (DRY-RUN preview)"
     } else {
-        Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
-
-        $runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
-        if (-not $runOnceResult.Applied) {
-            $SCRIPT:SafebootReady = $false
-            Write-Err "Phase 2 RunOnce registration failed — Safe Mode boot flag was NOT set."
-            Write-Host "  $([char]0x2139) What to do: fix the RunOnce error above, then re-run Step 38." -ForegroundColor Cyan
-            Write-Host "    Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
-            return
-        }
-
-        # Use explicit {current} identifier — some Windows builds ignore the implicit default.
-        # Capture exit code before piping (| Out-String resets $LASTEXITCODE in PS 5.1).
-        $bcdOut = bcdedit /set "{current}" safeboot minimal 2>&1
-        $bcdExit = $LASTEXITCODE
-        Write-DebugLog "bcdedit /set {current} safeboot minimal — exit $bcdExit — $($bcdOut | Out-String)"
-
-        # If first attempt failed, retry without {current}
-        if ($bcdExit -ne 0) {
-            Write-Warn "bcdedit /set exited with code $bcdExit — retrying without {current}..."
-            $bcdOut = bcdedit /set safeboot minimal 2>&1
-            $bcdExit = $LASTEXITCODE
-            Write-DebugLog "bcdedit retry exit $bcdExit — $($bcdOut | Out-String)"
-        }
-
-        # Trust bcdedit exit code 0 as success. Only use Test-BootConfigSet as a
-        # fallback when bcdedit reports failure (exit code might be wrong but BCD
-        # was actually written — e.g. bcdedit returns 0 on "already set").
-        $safebootOk = ($bcdExit -eq 0) -or (Test-BootConfigSet "safeboot")
-
-        if ($safebootOk) {
-            Set-Phase1SafeModeReadyFlag -Path $CFG_StateFile | Out-Null
+        $phase2Transaction = Enable-Phase2SafeModeTransaction -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir -StatePath $CFG_StateFile -Why "Phase 1 Step 38 — Safe Mode for GPU driver clean"
+        if ($phase2Transaction.Applied) {
             $SCRIPT:SafebootReady = $true
             Write-Blank
             Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Yellow
@@ -703,7 +673,7 @@ if ($startStep -le 38) {
             Write-Host "  ║    bcdedit /set {current} safeboot minimal              ║" -ForegroundColor Red
             Write-Host "  ║  Then restart to enter Safe Mode for Phase 2.           ║" -ForegroundColor Red
             Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Red
-            Write-Err "bcdedit /set safeboot minimal failed — step 38 NOT marked complete (will retry on next run)."
+            Write-Err "$($phase2Transaction.Message) Step 38 is NOT marked complete (will retry on next run)."
         }
     }
 }

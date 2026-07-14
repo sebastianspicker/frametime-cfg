@@ -138,6 +138,131 @@ function Get-LatestNvidiaDriver {
     }
 }
 
+function Test-NvidiaSignerSubject {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Subject)
+
+    return ($Subject -match '(?:^|,\s*)(?:CN|O)=NVIDIA Corporation(?:,|$)')
+}
+
+function Resolve-TrustedNvidiaTaskkill {
+    <# Resolves taskkill.exe from the OS Windows directory, never from PATH. #>
+    [CmdletBinding()]
+    param(
+        [string]$WindowsRoot = [Environment]::GetFolderPath([Environment+SpecialFolder]::Windows)
+    )
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($WindowsRoot) -or $WindowsRoot -match '^[\\/]{2}') {
+            throw 'The Windows directory is missing or is not local.'
+        }
+
+        $expectedPath = [IO.Path]::GetFullPath(
+            (Join-Path (Join-Path $WindowsRoot 'System32') 'taskkill.exe')
+        )
+        if (-not [IO.Path]::IsPathRooted($expectedPath) -or $expectedPath -match '^[\\/]{2}') {
+            throw 'The taskkill path is not a rooted local path.'
+        }
+
+        $pathRoot = [IO.Path]::GetPathRoot($expectedPath)
+        if ([string]::IsNullOrWhiteSpace($pathRoot) -or
+            ([IO.DriveInfo]::new($pathRoot)).DriveType -ne [IO.DriveType]::Fixed) {
+            throw 'The taskkill path is not on a fixed local drive.'
+        }
+
+        $taskkillItem = Get-Item -LiteralPath $expectedPath -Force -ErrorAction Stop
+        if ($taskkillItem.PSIsContainer -or
+            ($taskkillItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'taskkill.exe is not a regular non-reparse file.'
+        }
+
+        $actualPath = [IO.Path]::GetFullPath($taskkillItem.FullName)
+        if (-not [string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'taskkill.exe resolved outside the expected System32 path.'
+        }
+        return $actualPath
+    } catch {
+        Write-DebugLog "Trusted taskkill.exe resolution failed: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Invoke-NvidiaTaskkillTree {
+    <# Uses the trusted Windows task-kill utility to terminate a PID and descendants. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$ProcessId)
+
+    $taskkillPath = Resolve-TrustedNvidiaTaskkill
+    if (-not $taskkillPath) { return $false }
+
+    try {
+        $nativeResult = Invoke-NvidiaTaskkillNative -TaskkillPath $taskkillPath -ProcessId $ProcessId
+        if ($null -eq $nativeResult.ExitCode -or $nativeResult.ExitCode -ne 0) {
+            Write-DebugLog "NVIDIA process-tree termination failed for PID $ProcessId (exit $($nativeResult.ExitCode)): $($nativeResult.Output -join ' ')"
+            return $false
+        }
+        return $true
+    } catch {
+        Write-DebugLog "NVIDIA process-tree termination raised an error for PID ${ProcessId}: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Invoke-NvidiaTaskkillNative {
+    <# Isolates native process invocation so tests never resolve or execute taskkill.exe. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$TaskkillPath,
+        [Parameter(Mandatory)][ValidateRange(1, 2147483647)][int]$ProcessId
+    )
+
+    $global:LASTEXITCODE = $null
+    $output = & $TaskkillPath /PID ([string]$ProcessId) /T /F 2>&1
+    [PSCustomObject]@{
+        ExitCode = $LASTEXITCODE
+        Output = @($output)
+    }
+}
+
+function Stop-NvidiaProcessBounded {
+    <# Terminates a process tree started by this module and bounds the final wait. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]$Process,
+        [int]$WaitTimeoutMs = 10000
+    )
+
+    try {
+        if ($Process.PSObject.Properties.Match('HasExited').Count -gt 0 -and $Process.HasExited) {
+            return $true
+        }
+        $processId = 0
+        if ($Process.PSObject.Properties.Match('Id').Count -eq 0 -or
+            -not [int]::TryParse([string]$Process.Id, [ref]$processId) -or
+            $processId -le 0) {
+            Write-DebugLog 'NVIDIA process-tree termination refused a process without a valid PID.'
+            return $false
+        }
+
+        if (-not $PSCmdlet.ShouldProcess("PID $processId", 'Terminate NVIDIA process tree')) {
+            return $false
+        }
+        if (-not (Invoke-NvidiaTaskkillTree -ProcessId $processId)) {
+            return $false
+        }
+    } catch {
+        Write-DebugLog "NVIDIA process-tree termination failed: $($_.Exception.Message)"
+        return $false
+    }
+
+    try {
+        return [bool]$Process.WaitForExit($WaitTimeoutMs)
+    } catch {
+        Write-DebugLog "NVIDIA process termination wait failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 function Test-NvidiaDriverSignature {
     <#
     .SYNOPSIS  Validates the Authenticode signature on a downloaded NVIDIA driver .exe.
@@ -170,14 +295,348 @@ function Test-NvidiaDriverSignature {
         Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
         return $false
     }
-    if ($sig.SignerCertificate.Subject -notmatch 'NVIDIA') {
-        Write-Err "Driver not signed by NVIDIA (signer: $($sig.SignerCertificate.Subject)). Removing file."
+    $signerSubject = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Subject } else { '' }
+    if (-not (Test-NvidiaSignerSubject -Subject $signerSubject)) {
+        Write-Err "Driver not signed by NVIDIA Corporation (signer: $signerSubject). Removing file."
         Remove-Item $FilePath -Force -ErrorAction SilentlyContinue
         return $false
     }
 
-    Write-OK "Authenticode signature valid: $($sig.SignerCertificate.Subject)"
+    Write-OK "Authenticode signature valid: $signerSubject"
     return $true
+}
+
+function Set-NvidiaExtractionDirectoryAcl {
+    <#
+    .SYNOPSIS  Restricts an extraction directory to SYSTEM and elevated local
+               Administrators, excluding sibling processes using the caller's
+               unelevated token.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    if (-not $PSCmdlet.ShouldProcess($Path, 'Restrict NVIDIA extraction directory ACL')) {
+        return $false
+    }
+
+    if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
+        throw "NVIDIA driver installation requires Windows ACL support."
+    }
+
+    $systemSid = New-Object System.Security.Principal.SecurityIdentifier(
+        [System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null
+    )
+    $administratorsSid = New-Object System.Security.Principal.SecurityIdentifier(
+        [System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null
+    )
+
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($administratorsSid)
+    foreach ($sid in @($systemSid, $administratorsSid)) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        [void]$acl.AddAccessRule($rule)
+    }
+
+    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    return $true
+}
+
+function New-SecureNvidiaExtractionDirectory {
+    <#
+    .SYNOPSIS  Creates an unpredictable extraction directory exclusively and
+               applies a restrictive ACL before returning it.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ParentPath
+    )
+
+    $parent = Get-Item -LiteralPath $ParentPath -ErrorAction Stop
+    if (-not $parent.PSIsContainer -or ($parent.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "The temporary directory is not a trusted physical directory: $ParentPath"
+    }
+    if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+        $volumeRoot = [System.IO.Path]::GetPathRoot($parent.FullName)
+        if ($parent.FullName -match '^\\\\' -or $volumeRoot -notmatch '^[A-Za-z]:\\$' -or
+            [System.IO.DriveInfo]::new($volumeRoot).DriveType -ne [System.IO.DriveType]::Fixed) {
+            throw "The NVIDIA extraction parent must be on a local fixed-path Windows volume: $($parent.FullName)"
+        }
+        $ancestor = $parent
+        while ($ancestor) {
+            if ($ancestor.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw "The NVIDIA extraction parent has a reparse point in its ancestry: $($ancestor.FullName)"
+            }
+            $ancestor = $ancestor.Parent
+        }
+    }
+
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        for ($attempt = 0; $attempt -lt 16; $attempt++) {
+            $bytes = New-Object byte[] 32
+            $random.GetBytes($bytes)
+            $token = [System.BitConverter]::ToString($bytes).Replace('-', '')
+            $candidate = Join-Path $parent.FullName "NVDriverExtract_$token"
+
+            if (-not $PSCmdlet.ShouldProcess($candidate, 'Create secure NVIDIA extraction directory')) {
+                return $null
+            }
+
+            try {
+                $created = New-Item -ItemType Directory -Path $candidate -ErrorAction Stop
+            } catch {
+                if (Test-Path -LiteralPath $candidate) {
+                    continue
+                }
+                throw
+            }
+
+            try {
+                if (-not (Set-NvidiaExtractionDirectoryAcl -Path $created.FullName)) {
+                    throw 'The NVIDIA extraction directory ACL was not applied.'
+                }
+                $contents = @(Get-ChildItem -LiteralPath $created.FullName -Force -ErrorAction Stop)
+                if ($contents.Count -ne 0) {
+                    throw "The new extraction directory was not empty."
+                }
+                return $created.FullName
+            } catch {
+                Remove-Item -LiteralPath $created.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                throw
+            }
+        }
+    } finally {
+        $random.Dispose()
+    }
+
+    throw "Could not create an exclusive NVIDIA extraction directory after 16 attempts."
+}
+
+function Test-NvidiaSetupPath {
+    <#
+    .SYNOPSIS  Verifies that setup.exe is a regular descendant of the trusted
+               extraction root and has no reparse point in its ancestry.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExtractionRoot,
+
+        [Parameter(Mandatory)]
+        [string]$CandidatePath
+    )
+
+    try {
+        $rootItem = Get-Item -LiteralPath $ExtractionRoot -Force -ErrorAction Stop
+        $candidateItem = Get-Item -LiteralPath $CandidatePath -Force -ErrorAction Stop
+    } catch {
+        return $false
+    }
+
+    if (-not $rootItem.PSIsContainer -or $candidateItem.PSIsContainer -or
+        $candidateItem.Name -ine 'setup.exe') {
+        return $false
+    }
+
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    $rootCanonical = [System.IO.Path]::GetFullPath($rootItem.FullName).TrimEnd($separator)
+    $candidateCanonical = [System.IO.Path]::GetFullPath($candidateItem.FullName)
+    $rootPrefix = $rootCanonical + $separator
+    if (-not $candidateCanonical.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $false
+    }
+
+    $current = $candidateItem
+    while ($current) {
+        if ($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            return $false
+        }
+
+        $currentCanonical = [System.IO.Path]::GetFullPath($current.FullName).TrimEnd($separator)
+        if ($currentCanonical -eq $rootCanonical) {
+            return $true
+        }
+
+        if ($current.PSIsContainer) {
+            $current = $current.Parent
+        } else {
+            $current = $current.Directory
+        }
+    }
+
+    return $false
+}
+
+function Find-NvidiaSetupExecutable {
+    <#
+    .SYNOPSIS  Finds exactly one structurally trusted setup.exe without
+               traversing directory reparse points.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExtractionRoot
+    )
+
+    $pending = New-Object 'System.Collections.Generic.Queue[string]'
+    $pending.Enqueue($ExtractionRoot)
+    $candidates = @()
+
+    try {
+        while ($pending.Count -gt 0) {
+            $directory = $pending.Dequeue()
+            $children = @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction Stop |
+                Sort-Object -Property FullName)
+            foreach ($child in $children) {
+                $isReparsePoint = [bool]($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint)
+                if ($child.PSIsContainer) {
+                    if ($isReparsePoint) {
+                        throw "Extracted package contains a directory reparse point: $($child.FullName)"
+                    }
+                    $pending.Enqueue($child.FullName)
+                } elseif ($child.Name -ieq 'setup.exe') {
+                    $candidates += $child
+                }
+            }
+        }
+    } catch {
+        throw "Could not enumerate the extracted NVIDIA package safely: $($_.Exception.Message)"
+    }
+
+    if ($candidates.Count -eq 0) {
+        return $null
+    }
+    if ($candidates.Count -ne 1) {
+        throw "Extraction produced $($candidates.Count) setup.exe candidates; refusing an ambiguous installer selection."
+    }
+
+    $candidate = $candidates[0].FullName
+    if (-not (Test-NvidiaSetupPath -ExtractionRoot $ExtractionRoot -CandidatePath $candidate)) {
+        throw "Extracted setup.exe failed canonical containment or reparse-point validation."
+    }
+
+    return [System.IO.Path]::GetFullPath($candidate)
+}
+
+function Get-NvidiaDisplayDriverSnapshot {
+    <# .SYNOPSIS Captures a stable NVIDIA display-driver identity and version. #>
+    $gpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match 'NVIDIA' } |
+        Sort-Object -Property PNPDeviceID, DeviceID, Name |
+        Select-Object -First 1
+
+    if (-not $gpu) {
+        return $null
+    }
+
+    $identity = if ($gpu.PNPDeviceID) {
+        "PNP:$($gpu.PNPDeviceID)"
+    } elseif ($gpu.DeviceID) {
+        "DEVICE:$($gpu.DeviceID)"
+    } else {
+        "NAME:$($gpu.Name)"
+    }
+
+    return [PSCustomObject]@{
+        Identity = $identity
+        Name = [string]$gpu.Name
+        Version = [string]$gpu.DriverVersion
+    }
+}
+
+function Remove-NvidiaPackageBloat {
+    <# Removes required unwanted components before setup.exe can execute. #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)]
+        [string]$PackageRoot
+    )
+
+    try {
+        $packageRootItem = Get-Item -LiteralPath $PackageRoot -Force -ErrorAction Stop
+        if (-not $packageRootItem.PSIsContainer -or
+            ($packageRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw "Package root is not a trusted physical directory."
+        }
+    } catch {
+        return [PSCustomObject]@{
+            Status = 'Failed'; RemovedCount = 0
+            Failures = @("Could not validate package root '$PackageRoot': $($_.Exception.Message)")
+        }
+    }
+
+    $patterns = @(
+        "GFExperience*", "NvApp*", "NvBackend*", "NvTelemetry*",
+        "NvContainer\plugins\LocalSystem\NvTelemetry*", "NvNodejs*", "nodejs*",
+        "NvCamera*", "ShadowPlay*", "NvVAD*", "EULA.txt", "ListDevices.txt", "license.txt"
+    )
+    $removedCount = 0
+    $notProcessed = 0
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($pattern in $patterns) {
+        try {
+            $relativeParent = Split-Path -Path $pattern -Parent
+            $leafPattern = Split-Path -Path $pattern -Leaf
+            $searchRoot = if ($relativeParent) { Join-Path $PackageRoot $relativeParent } else { $PackageRoot }
+            if (-not (Test-Path -LiteralPath $searchRoot -PathType Container -ErrorAction Stop)) {
+                continue
+            }
+            $items = @(Get-ChildItem -LiteralPath $searchRoot -Force -ErrorAction Stop |
+                Where-Object { $_.Name -like $leafPattern })
+        } catch {
+            $failures.Add("Could not enumerate '$pattern': $($_.Exception.Message)")
+            continue
+        }
+        foreach ($item in $items) {
+            if (-not $PSCmdlet.ShouldProcess($item.FullName, 'Remove NVIDIA package component')) {
+                $notProcessed++
+                continue
+            }
+            try {
+                Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction Stop
+                if (Test-Path -LiteralPath $item.FullName) {
+                    throw "Path still exists after removal."
+                }
+                $removedCount++
+                Write-DebugLog "Removed: $($item.Name)"
+            } catch {
+                $failures.Add("Could not remove '$($item.FullName)': $($_.Exception.Message)")
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        Status = if ($failures.Count -gt 0) { 'Failed' } elseif ($notProcessed -gt 0) { 'DryRun' } else { 'Success' }
+        RemovedCount = $removedCount
+        Failures = @($failures)
+        NotProcessedCount = $notProcessed
+    }
+}
+
+function Test-NvidiaDriverSnapshotChanged {
+    <# .SYNOPSIS Tests whether an NVIDIA driver appeared or changed version. #>
+    param(
+        $Before,
+        $After
+    )
+
+    if (-not $After -or -not $After.Version) {
+        return $false
+    }
+    if (-not $Before) {
+        return $true
+    }
+
+    return ($Before.Identity -ne $After.Identity -or $Before.Version -ne $After.Version)
 }
 
 function Install-NvidiaDriverClean {
@@ -210,7 +669,7 @@ function Install-NvidiaDriverClean {
         return $true
     }
 
-    if (-not (Test-Path $DriverExe)) {
+    if (-not (Test-Path -LiteralPath $DriverExe -PathType Leaf)) {
         Write-Err "Driver file not found: $DriverExe"
         return $false
     }
@@ -223,8 +682,9 @@ function Install-NvidiaDriverClean {
         Write-Err "Driver path contains path traversal: $DriverExe"
         return $false
     }
-    $driverItem = Get-Item $DriverExe -ErrorAction SilentlyContinue
-    if (-not $driverItem -or $driverItem.PSIsContainer) {
+    $driverItem = Get-Item -LiteralPath $DriverExe -Force -ErrorAction SilentlyContinue
+    if (-not $driverItem -or $driverItem.PSIsContainer -or
+        ($driverItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
         Write-Err "Driver path is not a file: $DriverExe"
         return $false
     }
@@ -232,14 +692,14 @@ function Install-NvidiaDriverClean {
     # This is an execution boundary: the installer runs as admin, so invalid or
     # non-NVIDIA signatures must fail closed. Manual/persisted driver paths are
     # untrusted because they can cross an admin execution boundary.
-    $sig = Get-AuthenticodeSignature $DriverExe -ErrorAction SilentlyContinue
+    $sig = Get-AuthenticodeSignature -FilePath $driverItem.FullName -ErrorAction SilentlyContinue
     if (-not $sig -or $sig.Status -ne 'Valid') {
         Write-Err "Driver .exe has no valid Authenticode signature (status: $(if($sig){$sig.Status}else{'N/A'})). Refusing to execute."
         return $false
     }
-    $sigSubject = $sig.SignerCertificate.Subject
-    if ($sigSubject -notmatch 'NVIDIA') {
-        Write-Err "Driver .exe is signed but not by NVIDIA (signer: $sigSubject). Refusing to execute."
+    $sigSubject = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Subject } else { '' }
+    if (-not (Test-NvidiaSignerSubject -Subject $sigSubject)) {
+        Write-Err "Driver .exe is signed but not by NVIDIA Corporation (signer: $sigSubject). Refusing to execute."
         return $false
     }
     Write-DebugLog "Driver Authenticode signature valid: $sigSubject"
@@ -254,39 +714,117 @@ function Install-NvidiaDriverClean {
     # PowerShell's Start-Process can double-quote array elements, mangling the
     # -e"path" flag and causing the extractor to fall back to a full silent install
     # (which installs NVIDIA App, Control Panel, and other bloat).
-    $extractDir = Join-Path $env:TEMP "NVDriverExtract_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
-    New-Item -ItemType Directory -Path $extractDir -Force -ErrorAction SilentlyContinue | Out-Null
+    $tempParent = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
+    try {
+        $extractDir = New-SecureNvidiaExtractionDirectory -ParentPath $tempParent
+    } catch {
+        Write-Err "Could not create a secure NVIDIA extraction directory: $($_.Exception.Message)"
+        return $false
+    }
+
+    # Defense in depth: the creator guarantees an empty directory, but verify
+    # again at the call site before exposing the path to another process.
+    try {
+        $preexistingItems = @(Get-ChildItem -LiteralPath $extractDir -Force -ErrorAction Stop)
+    } catch {
+        Write-Err "Could not verify the NVIDIA extraction directory: $($_.Exception.Message)"
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    if ($preexistingItems.Count -ne 0) {
+        Write-Err "The NVIDIA extraction directory contains preexisting items; refusing to execute the package."
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    # The caller-supplied package remains writable by the invoking user while
+    # this elevated process is running.  Copy it into the newly ACL-restricted
+    # directory, prove the copy is byte-for-byte identical, then execute only
+    # that secured copy.  This closes the authenticate-then-execute race on the
+    # original download path.
+    $securedDriverExe = Join-Path $extractDir 'nvidia-driver-package.exe'
+    try {
+        $sourceHash = (Get-FileHash -LiteralPath $driverItem.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+        $sourceLength = [int64]$driverItem.Length
+        Copy-Item -LiteralPath $driverItem.FullName -Destination $securedDriverExe -ErrorAction Stop
+        $securedItem = Get-Item -LiteralPath $securedDriverExe -Force -ErrorAction Stop
+        if ($securedItem.PSIsContainer -or
+            ($securedItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -or
+            [int64]$securedItem.Length -ne $sourceLength) {
+            throw 'The secured NVIDIA package copy is not a regular file with the expected length.'
+        }
+        $securedHash = (Get-FileHash -LiteralPath $securedItem.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
+        if (-not [string]::Equals($sourceHash, $securedHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The secured NVIDIA package copy does not match the verified source hash.'
+        }
+        $securedSignature = Get-AuthenticodeSignature -FilePath $securedItem.FullName -ErrorAction Stop
+        $securedSubject = if ($securedSignature -and $securedSignature.SignerCertificate) {
+            [string]$securedSignature.SignerCertificate.Subject
+        } else {
+            ''
+        }
+        if (-not $securedSignature -or $securedSignature.Status -ne 'Valid' -or
+            -not (Test-NvidiaSignerSubject -Subject $securedSubject)) {
+            throw "The secured NVIDIA package copy failed Authenticode validation (status: $(if($securedSignature){$securedSignature.Status}else{'N/A'}); signer: $(if($securedSubject){$securedSubject}else{'N/A'}))."
+        }
+    } catch {
+        Write-Err "Could not secure and verify the NVIDIA package copy: $($_.Exception.Message)"
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    # Capture the pre-operation state before either executable is launched. If
+    # the outer package unexpectedly performs a full installation, an unchanged
+    # preexisting WMI record is not evidence that this operation succeeded.
+    $baselineGpu = Get-NvidiaDisplayDriverSnapshot
     Write-Step "Extracting driver package (silent)..."
     Write-Info "Extracting to: $extractDir"
 
-    $extractProcess = Start-Process -FilePath $DriverExe `
-        -ArgumentList "-s -e`"$extractDir`"" `
-        -PassThru
+    try {
+        $extractProcess = Start-Process -FilePath $securedDriverExe `
+            -ArgumentList "-s -e`"$extractDir`"" `
+            -PassThru
+    } catch {
+        Write-Err "Could not start NVIDIA package extraction: $($_.Exception.Message)"
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
 
     # Wait up to 5 minutes for extraction — prevents indefinite hangs
     $extractTimeout = 300000  # 5 minutes in ms
-    $completed = $extractProcess.WaitForExit($extractTimeout)
+    $completed = $false
+    $extractWaitFailed = $false
+    try {
+        $completed = $extractProcess.WaitForExit($extractTimeout)
+    } catch {
+        $extractWaitFailed = $true
+        Write-Err "Could not wait for NVIDIA package extraction: $($_.Exception.Message)"
+    }
     if (-not $completed) {
-        Write-Err "Extraction timed out after 5 minutes."
-        try { $extractProcess | Stop-Process -Force -ErrorAction SilentlyContinue } catch {
-            Write-DebugLog "Driver extraction cleanup failed: $($_.Exception.Message)"
+        if (-not $extractWaitFailed) { Write-Err "Extraction timed out after 5 minutes." }
+        $extractTerminated = Stop-NvidiaProcessBounded -Process $extractProcess
+        if ($extractTerminated) {
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Write-Warn "Extraction termination could not be verified; retained the secured working directory: $extractDir"
         }
         return $false
     }
 
-    # Find setup.exe — may be at root or in a subdirectory depending on driver version
-    $setupExe = $null
+    # Find setup.exe — exactly one regular, contained candidate is required.
+    # Directory reparse points are never traversed by Find-NvidiaSetupExecutable.
+    try {
+        $setupExe = Find-NvidiaSetupExecutable -ExtractionRoot $extractDir
+    } catch {
+        Write-Err $_.Exception.Message
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
     $packageRoot = $extractDir
-    if (Test-Path "$extractDir\setup.exe") {
-        $setupExe = "$extractDir\setup.exe"
-    } else {
-        # Some driver packages extract into a nested folder
-        $found = Get-ChildItem $extractDir -Recurse -Filter "setup.exe" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($found) {
-            $setupExe = $found.FullName
-            $packageRoot = $found.DirectoryName
-            Write-Info "Found setup.exe in subdirectory: $($found.DirectoryName | Split-Path -Leaf)"
+    if ($setupExe) {
+        $packageRoot = Split-Path -Path $setupExe -Parent
+        if ($packageRoot -ne $extractDir) {
+            Write-Info "Found setup.exe in subdirectory: $(Split-Path -Path $packageRoot -Leaf)"
         }
     }
 
@@ -295,27 +833,27 @@ function Install-NvidiaDriverClean {
         # The self-extractor may have performed a full install instead of extract-only.
         # This happens when argument quoting is misinterpreted by the extractor.
         # Detect by checking if NVIDIA driver appeared in WMI after extraction attempt.
-        $postGpu = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match "NVIDIA" } | Select-Object -First 1
-        if ($postGpu -and $postGpu.DriverVersion) {
-            Write-Warn "setup.exe not found, but NVIDIA driver is now detected."
+        $postGpu = Get-NvidiaDisplayDriverSnapshot
+        if (Test-NvidiaDriverSnapshotChanged -Before $baselineGpu -After $postGpu) {
+            Write-Warn "setup.exe not found, but the NVIDIA driver state changed during this operation."
             Write-Warn "The installer performed a full install instead of extract-only."
             Write-Info "Detected: $($postGpu.Name) — Driver $($postGpu.DriverVersion)"
             Write-Info "Applying post-install cleanup (removing bloat, disabling telemetry)..."
             $fullInstallDetected = $true
             $installSuccess = $true
-            Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         } else {
             Write-Err "Extraction failed — setup.exe not found in $extractDir"
             Write-Info "Exit code: $($extractProcess.ExitCode)"
-            if (Test-Path $extractDir) {
-                $extractContents = Get-ChildItem $extractDir -ErrorAction SilentlyContinue | Select-Object -First 10
+            if (Test-Path -LiteralPath $extractDir) {
+                $extractContents = Get-ChildItem -LiteralPath $extractDir -ErrorAction SilentlyContinue | Select-Object -First 10
                 if ($extractContents) {
                     Write-Info "Extraction folder contains: $($extractContents.Name -join ', ')"
                 } else {
                     Write-Info "Extraction folder is empty."
                 }
             }
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
             return $false
         }
     } else {
@@ -327,39 +865,75 @@ function Install-NvidiaDriverClean {
         # Remove component folders so setup.exe never installs them.
         # NVDisplay.ContainerLocalSystem is NOT removed — it's required for NVCP.
         Write-Step "Removing unwanted components from extracted package..."
-        $bloatFolders = @(
-            "GFExperience*",           # GeForce Experience (legacy)
-            "NvApp*",                  # NVIDIA App (GFE replacement)
-            "NvBackend*",              # GFE/App backend service
-            "NvTelemetry*",            # Telemetry container
-            "NvContainer\plugins\LocalSystem\NvTelemetry*",  # Telemetry plugin
-            "NvNodejs*",               # NodeJS runtime (used by GFE/App)
-            "nodejs*",                 # NodeJS alt location
-            "NvCamera*",               # ShadowPlay / Ansel
-            "ShadowPlay*",             # ShadowPlay standalone
-            "NvVAD*",                  # Virtual Audio Device (ShadowPlay)
-            "EULA.txt",                # Not needed for silent install
-            "ListDevices.txt",         # Not needed for silent install
-            "license.txt"              # Not needed for silent install
-        )
-        $removedCount = 0
-        foreach ($pattern in $bloatFolders) {
-            $items = Get-ChildItem (Join-Path $packageRoot $pattern) -ErrorAction SilentlyContinue
-            foreach ($item in $items) {
-                Remove-Item $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                $removedCount++
-                Write-DebugLog "Removed: $($item.Name)"
-            }
+        $bloatRemoval = Remove-NvidiaPackageBloat -PackageRoot $packageRoot
+        if ($bloatRemoval.Status -ne 'Success') {
+            foreach ($failure in $bloatRemoval.Failures) { Write-Warn $failure }
+            Write-Err "Required NVIDIA package components could not be stripped; setup.exe will not be executed."
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            return $false
         }
-        Write-ActionOK "Removed $removedCount bloat components from package."
+        Write-ActionOK "Removed $($bloatRemoval.RemovedCount) bloat components from package."
 
         # ── 3. Run setup.exe from stripped package ───────────────────────────
         Write-Step "Installing NVIDIA driver (driver-only, silent)..."
         Write-Info "This takes 3-7 minutes. Screen may flicker — do not touch the PC."
 
-        $installProcess = Start-Process -FilePath $setupExe `
-            -ArgumentList "-s -noreboot -clean" `
-            -Wait -PassThru -NoNewWindow
+        # Revalidate the execution boundary after package modification and
+        # immediately before elevation. Fail closed if setup.exe was replaced,
+        # redirected through a reparse point, or signed by another publisher.
+        if (-not (Test-NvidiaSetupPath -ExtractionRoot $extractDir -CandidatePath $setupExe)) {
+            Write-Err "Extracted setup.exe is no longer a trusted descendant of the extraction directory."
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            return $false
+        }
+        $setupSignature = Get-AuthenticodeSignature -FilePath $setupExe -ErrorAction SilentlyContinue
+        $setupSignerSubject = if ($setupSignature -and $setupSignature.SignerCertificate) {
+            [string]$setupSignature.SignerCertificate.Subject
+        } else {
+            ''
+        }
+        $isNvidiaSigner = Test-NvidiaSignerSubject -Subject $setupSignerSubject
+        if (-not $setupSignature -or $setupSignature.Status -ne 'Valid' -or
+            -not $setupSignature.SignerCertificate -or
+            -not $isNvidiaSigner) {
+            $setupStatus = if ($setupSignature) { $setupSignature.Status } else { 'N/A' }
+            $setupSigner = if ($setupSignerSubject) { $setupSignerSubject } else { 'N/A' }
+            Write-Err "Extracted setup.exe failed NVIDIA Authenticode validation (status: $setupStatus; signer: $setupSigner). Refusing to execute."
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            return $false
+        }
+
+        try {
+            $installProcess = Start-Process -FilePath $setupExe `
+                -ArgumentList "-s -noreboot -clean" `
+                -PassThru -NoNewWindow
+        } catch {
+            Write-Err "Could not start the extracted NVIDIA installer: $($_.Exception.Message)"
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            return $false
+        }
+
+        # A healthy driver install normally completes in 3-7 minutes.  Bound
+        # the wait so a stalled vendor installer cannot block Phase 3 forever.
+        $installTimeout = 600000  # 10 minutes in ms
+        $installCompleted = $false
+        $installWaitFailed = $false
+        try {
+            $installCompleted = $installProcess.WaitForExit($installTimeout)
+        } catch {
+            $installWaitFailed = $true
+            Write-Err "Could not wait for the extracted NVIDIA installer: $($_.Exception.Message)"
+        }
+        if (-not $installCompleted) {
+            if (-not $installWaitFailed) { Write-Err "NVIDIA installer timed out after 10 minutes; terminating it." }
+            $installTerminated = Stop-NvidiaProcessBounded -Process $installProcess
+            if ($installTerminated) {
+                Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Warn "Installer termination could not be verified; retained the secured working directory: $extractDir"
+            }
+            return $false
+        }
 
         $installSuccess = $false
         if ($installProcess.ExitCode -eq 0) {
@@ -375,25 +949,28 @@ function Install-NvidiaDriverClean {
         }
 
         # Clean up extraction folder
-        Remove-Item $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     } else {
         # ── Full install detected — remove bloat that was installed ──────────
         # The extractor ran a full install including NVIDIA App, GFE, etc.
         # Remove the bloat software while keeping the display driver intact.
         Write-Step "Removing NVIDIA bloat installed during full install..."
+        $fullInstallCleanupFailures = [System.Collections.Generic.List[string]]::new()
 
         # Remove NVIDIA AppX packages (NVIDIA App, Control Panel from Store)
         if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
-            $nvAppx = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -match "NVIDIA" -and $_.Name -notmatch "ControlPanel" }
-            foreach ($pkg in $nvAppx) {
-                try {
+            try {
+                $nvAppx = @(Get-AppxPackage -AllUsers -ErrorAction Stop |
+                    Where-Object { $_.Name -match "NVIDIA" -and $_.Name -notmatch "ControlPanel" })
+                foreach ($pkg in $nvAppx) {
                     Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction Stop
                     Write-OK "Removed AppX: $($pkg.Name)"
-                } catch {
-                    Write-DebugLog "AppX removal: $($pkg.Name) — $_"
                 }
+            } catch {
+                $fullInstallCleanupFailures.Add("NVIDIA AppX cleanup failed: $($_.Exception.Message)")
             }
+        } else {
+            $fullInstallCleanupFailures.Add("NVIDIA AppX cleanup is unavailable on this system.")
         }
 
         # Remove bloat directories (keep NVDisplay.Container for NVCP + driver core)
@@ -412,26 +989,44 @@ function Install-NvidiaDriverClean {
         )
         $removedBloat = 0
         foreach ($dir in $bloatDirs) {
-            if (Test-Path $dir) {
-                Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
-                $removedBloat++
-                Write-DebugLog "Removed: $dir"
+            if (Test-Path -LiteralPath $dir) {
+                try {
+                    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+                    if (Test-Path -LiteralPath $dir) { throw "Path still exists after removal." }
+                    $removedBloat++
+                    Write-DebugLog "Removed: $dir"
+                } catch {
+                    $fullInstallCleanupFailures.Add("Could not remove '$dir': $($_.Exception.Message)")
+                }
             }
         }
         if ($removedBloat -gt 0) { Write-ActionOK "Removed $removedBloat NVIDIA bloat directories." }
 
         # Remove bloat scheduled tasks
         $bloatTaskPatterns = @("NvDriverUpdateCheckDaily*", "NVIDIA GeForce*", "NvNodeLauncher*", "NvBackend*", "NvTmRep*")
-        foreach ($pattern in $bloatTaskPatterns) {
-            $tasks = Get-ScheduledTask -TaskName $pattern -ErrorAction SilentlyContinue
+        try {
+            $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object {
+                $taskName = $_.TaskName
+                @($bloatTaskPatterns | Where-Object { $taskName -like $_ }).Count -gt 0
+            })
             foreach ($t in $tasks) {
                 try {
                     Unregister-ScheduledTask -TaskName $t.TaskName -Confirm:$false -ErrorAction Stop
                     Write-DebugLog "Removed task: $($t.TaskName)"
-                } catch { Write-DebugLog "Task removal: $($t.TaskName) — $_" }
+                } catch {
+                    $fullInstallCleanupFailures.Add("Could not remove task '$($t.TaskName)': $($_.Exception.Message)")
+                }
             }
+        } catch {
+            $fullInstallCleanupFailures.Add("NVIDIA scheduled-task enumeration failed: $($_.Exception.Message)")
         }
-        Write-ActionOK "Full-install bloat cleanup complete."
+        if ($fullInstallCleanupFailures.Count -gt 0) {
+            foreach ($failure in $fullInstallCleanupFailures) { Write-Warn $failure }
+            Write-Warn "The NVIDIA driver was installed, but full-install bloat cleanup did not complete."
+            $installSuccess = $false
+        } else {
+            Write-ActionOK "Full-install bloat cleanup complete."
+        }
     }
 
     # ── 4. Disable telemetry services (if any survived the strip) ────────────
@@ -473,15 +1068,10 @@ function Install-NvidiaDriverClean {
         Apply-NvidiaPostInstallTweaks
     }
 
-    # ── 4. Cleanup NVIDIA temp extraction folders ────────────────────────────
-    Write-Step "Cleaning up NVIDIA temp folders..."
-    $nvTempPatterns = @("$env:TEMP\NVIDIA*", "$env:TEMP\NV*")
-    foreach ($p in $nvTempPatterns) {
-        Get-ChildItem $p -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-    Write-OK "Cleanup complete."
+    # The transaction removes only its own unpredictable extraction directory
+    # on every return path. Never sweep broad %TEMP%\NV* patterns: another
+    # installer or user process may own those directories concurrently.
+    Write-OK "Owned extraction cleanup complete."
 
     return $installSuccess
 }

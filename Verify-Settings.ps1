@@ -291,33 +291,23 @@ function Test-VerifyScheduledTasks {
     try { $x3d = Get-X3DCcdInfo } catch {
         Write-DebugLog "Verify X3D CPU detection failed: $($_.Exception.Message)"
     }
-    if (-not $x3d -or -not $x3d.IsX3D -or -not $x3d.DualCCD) {
-        return New-VerifyCheckResult -Status "INFO" -Label "Scheduled task: CS2 CCD affinity" -Detail "N/A (not a dual-CCD X3D system)"
-    }
 
     try {
         $task = Get-ScheduledTask -TaskName $CS2_AffinityTaskName -ErrorAction SilentlyContinue
-        if (-not $task) {
-            return New-VerifyCheckResult -Status "MISSING" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "not found"
+        if ($task) {
+            # Older releases guessed an LP mask from aggregate WMI counts. That
+            # mapping is not authoritative, so any surviving task is legacy
+            # drift rather than a required optimization.
+            return New-VerifyCheckResult -Status "CHANGED" -Label "Legacy task: $CS2_AffinityTaskName" -Detail "remove it; automatic CCD affinity is disabled"
         }
-        $healthyStates = @("Ready", "Running")
-        $taskState = [string]$task.State
-        if ($taskState -notin $healthyStates) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(state: $taskState)"
-        }
-
-        $expectedCommand = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-        $expectedArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CS2_AffinityScriptPath`""
-        $actions = @($task.Actions)
-        $actualCommand = if ($actions.Count -gt 0) { [string]$actions[0].Execute } else { "" }
-        $actualArguments = if ($actions.Count -gt 0) { [string]$actions[0].Arguments } else { "" }
-        if ($actualCommand -ne $expectedCommand -or $actualArguments -ne $expectedArguments) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(action mismatch: exec='$actualCommand' args='$actualArguments')"
-        }
-        return New-VerifyCheckResult -Status "OK" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(state: $taskState)"
     } catch {
-        return New-VerifyCheckResult -Status "MISSING" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "not readable"
+        return New-VerifyCheckResult -Status "CHANGED" -Label "Legacy task: $CS2_AffinityTaskName" -Detail "absence could not be verified"
     }
+
+    if ($x3d -and $x3d.IsX3D -and $x3d.DualCCD) {
+        return New-VerifyCheckResult -Status "INFO" -Label "CCD affinity policy" -Detail "manual only (no authoritative logical-processor-to-CCD map)"
+    }
+    return New-VerifyCheckResult -Status "INFO" -Label "CCD affinity policy" -Detail "N/A (automatic affinity disabled)"
 }
 
 function Test-VerifyNvidiaDrsProfile {
