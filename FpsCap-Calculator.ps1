@@ -1,6 +1,5 @@
-﻿#Requires -RunAsAdministrator
-<#
-.SYNOPSIS  FPS Cap Calculator — CS2 benchmark output -> FPS cap  [T1]
+﻿<#
+.SYNOPSIS  FPS Cap Calculator - CS2 benchmark output -> FPS cap  [T1]
 
   Reads [VProf] FPS: Avg=XXX.X, P1=XXX.X from clipboard or input.
   Calculates cap (avg - 9%), shows P1/Avg ratio, copies cap to clipboard.
@@ -13,6 +12,20 @@ param(
     [switch]$SmokeTest
 )
 
+if ($SmokeTest) {
+    Write-Host "SMOKE TEST OK: FpsCap-Calculator" -ForegroundColor Green
+    exit 0
+}
+
+function Assert-Administrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]$identity
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw "FpsCap-Calculator.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+    }
+}
+
+Assert-Administrator
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -22,12 +35,7 @@ $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Initialize-ScriptDefaults
 Ensure-Dir $CFG_LogDir
 
-if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: FpsCap-Calculator" -ForegroundColor Green
-    exit 0
-}
-
-Write-LogoBanner "FPS Cap Calculator  [T1]  ·  CS2 Optimization Suite"
+Write-LogoBanner "FPS Cap Calculator  [T1]  ·  frametime.cfg"
 Write-Host "  $("─" * 58)" -ForegroundColor DarkGray
 
 Write-Host @"
@@ -42,7 +50,7 @@ Write-Host @"
 
   Workflow:
   1.  Workshop -> Subscribe to map -> Start CS2 -> Play -> Workshop Maps
-  2.  Map runs 2-3 min automatically — don't touch PC
+  2.  Map runs 2-3 min automatically - don't touch PC
   3.  Console window opens at end -> copy [VProf] line
   4.  Come back here -> Option [1] -> [Enter]
   Tip: Run 3 times, copy all [VProf] lines at once.
@@ -66,7 +74,7 @@ if ($ManualAvg -gt 0) {
             Write-Step "Reading clipboard..."
             try {
                 $clip = Get-Clipboard
-                # Get-Clipboard may return a string[] (one element per line) —
+                # Get-Clipboard may return a string[] (one element per line) -
                 # join into a single string for regex matching in Parse-BenchmarkOutput
                 if ($clip -is [array]) { $clip = $clip -join "`n" }
                 if ($clip) {
@@ -96,7 +104,7 @@ if ($ManualAvg -gt 0) {
 
 # Fallback
 if (-not $result) {
-    Write-Warn "No result detected — please enter manually."
+    Write-Warn "No result detected - please enter manually."
     do {
         $v = Read-Host "  Avg FPS"; $fv = 0
         $ok = [float]::TryParse($v, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$fv) -and $fv -gt 0
@@ -134,12 +142,9 @@ Write-Host "  └─────────────────────
 # P1/Avg ratio
 if ($p1 -gt 0) {
     $ratio = [math]::Round($p1 / $avg, 2)
-    $rText  = if ($ratio -ge 0.40) { "✔  Good ($ratio) — consistent frametimes" }
-              elseif ($ratio -ge 0.30) { "⚠  OK ($ratio) — room for improvement" }
-              else { "✘  Bad ($ratio) — check bottleneck! XMP active? Temps OK?" }
-    $rColor = if ($ratio -ge 0.40) { "Green" } elseif ($ratio -ge 0.30) { "Yellow" } else { "Red" }
-    Write-Host "  P1/Avg ratio:  $rText" -ForegroundColor $rColor
-    Write-Info "  Healthy: > 0.40  |  Critical: < 0.30"
+    Write-Host "  P1/Avg ratio:  $ratio" -ForegroundColor White
+    Write-Info "  This summary ratio does not describe the full frame-time distribution."
+    Write-Info "  Compare repeatable captures with the same map, settings, and workload."
 }
 
 "$cap" | Set-ClipboardSafe

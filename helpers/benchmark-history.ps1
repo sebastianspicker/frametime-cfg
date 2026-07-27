@@ -1,9 +1,9 @@
 ﻿# ==============================================================================
-#  helpers/benchmark-history.ps1  —  Iterative Benchmark Tracking
+#  helpers/benchmark-history.ps1  -  Iterative Benchmark Tracking
 # ==============================================================================
 
 $CFG_BenchmarkFile    = "$CFG_WorkDir\benchmark_history.json"
-$script:CFG_BenchmarkMaxEntries = 200   # Cap history size — prevents unbounded JSON growth
+$script:CFG_BenchmarkMaxEntries = 200   # Cap history size - prevents unbounded JSON growth
 
 function Add-BenchmarkResult {
     <#
@@ -23,13 +23,18 @@ function Add-BenchmarkResult {
         [int]$Runs = 1
     )
 
+    if ($SCRIPT:DryRun) {
+        Write-ConsoleLine "  [DRY-RUN] Would record benchmark: Avg $AvgFps FPS, 1% low $P1Fps FPS ($Runs run(s))." -ForegroundColor Magenta
+        return $null
+    }
+
     # @() wrapper ensures $history is always an array, even when Get-BenchmarkHistory
     # returns $null (empty/missing file). Without it, $null += $entry yields a bare
     # Hashtable whose .Count equals its key count, causing the trim logic to misfire.
     $history = @(Get-BenchmarkHistory)
 
     $entry = @{
-        # Local time (timezone not tracked — acceptable for gaming benchmarks)
+        # Local time (timezone not tracked - acceptable for gaming benchmarks)
         timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         avgFps    = $AvgFps
         p1Fps     = $P1Fps
@@ -77,11 +82,11 @@ function Show-BenchmarkComparison {
     }
 
     Write-Blank
-    Write-Host "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  BENCHMARK HISTORY                                              ║" -ForegroundColor Cyan
-    Write-Host "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-    Write-Host "  ║  #   Date        Time      Avg FPS   1% Low   Δ Avg   Δ 1%     ║" -ForegroundColor Cyan
-    Write-Host "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╔══════════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-ConsoleLine "  ║  BENCHMARK HISTORY                                              ║" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+    Write-ConsoleLine "  ║  #   Date        Time      Avg FPS   1% Low   Δ Avg   Δ 1%     ║" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╠══════════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
 
     for ($i = 0; $i -lt $history.Count; $i++) {
         $entry = $history[$i]
@@ -97,8 +102,8 @@ function Show-BenchmarkComparison {
         $avg = if ($null -ne $entry.avgFps) { $entry.avgFps.ToString("F1", [System.Globalization.CultureInfo]::InvariantCulture).PadLeft(7) } else { "    N/A" }
         $p1  = if ($null -ne $entry.p1Fps) { $entry.p1Fps.ToString("F1", [System.Globalization.CultureInfo]::InvariantCulture).PadLeft(7) } else { "    N/A" }
 
-        $avgDiffStr = "   —  "
-        $p1DiffStr  = "   —  "
+        $avgDiffStr = "   -  "
+        $p1DiffStr  = "   -  "
         $color = "White"
 
         if ($i -gt 0) {
@@ -113,17 +118,17 @@ function Show-BenchmarkComparison {
         }
 
         $label = if ($entry.label) { "  $($entry.label)" } else { "" }
-        Write-Host "  ║  $num  $date  $time   $avg   $p1  $avgDiffStr  $p1DiffStr  ║$label" -ForegroundColor $color
+        Write-ConsoleLine "  ║  $num  $date  $time   $avg   $p1  $avgDiffStr  $p1DiffStr  ║$label" -ForegroundColor $color
     }
 
-    Write-Host "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-ConsoleLine "  ╚══════════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
     # Overall comparison (first vs last)
     if ($history.Count -ge 2) {
         $first = $history[0]
         $last  = $history[-1]
         if ($null -eq $last.avgFps -or $null -eq $first.avgFps -or $null -eq $last.p1Fps -or $null -eq $first.p1Fps) {
-            Write-Info "Cannot compute total change — some entries have missing FPS data."
+            Write-Info "Cannot compute total change - some entries have missing FPS data."
             return
         }
         $totalAvgDiff = [math]::Round($last.avgFps - $first.avgFps, 1)
@@ -131,18 +136,18 @@ function Show-BenchmarkComparison {
         $totalColor = if ($totalP1Diff -gt 0) { "Green" } elseif ($totalP1Diff -lt 0) { "Red" } else { "Yellow" }
 
         Write-Blank
-        Write-Host "  TOTAL CHANGE (first -> last):" -ForegroundColor $totalColor
-        Write-Host "  Avg FPS: $($first.avgFps) -> $($last.avgFps)  ($(if($totalAvgDiff -ge 0){'+'})$totalAvgDiff)" -ForegroundColor $totalColor
-        Write-Host "  1% Lows: $($first.p1Fps) -> $($last.p1Fps)  ($(if($totalP1Diff -ge 0){'+'})$totalP1Diff)" -ForegroundColor $totalColor
+        Write-ConsoleLine "  TOTAL CHANGE (first -> last):" -ForegroundColor $totalColor
+        Write-ConsoleLine "  Avg FPS: $($first.avgFps) -> $($last.avgFps)  ($(if($totalAvgDiff -ge 0){'+'})$totalAvgDiff)" -ForegroundColor $totalColor
+        Write-ConsoleLine "  1% Lows: $($first.p1Fps) -> $($last.p1Fps)  ($(if($totalP1Diff -ge 0){'+'})$totalP1Diff)" -ForegroundColor $totalColor
 
         if ($totalP1Diff -gt 5) {
-            Write-OK "Significant improvement in 1% lows!"
+            Write-OK "Recorded 1% lows increased by more than 5 FPS. Causation is not established."
         } elseif ($totalP1Diff -gt 0) {
-            Write-OK "Marginal improvement in 1% lows."
+            Write-OK "Recorded 1% lows increased. Causation is not established."
         } elseif ($totalP1Diff -eq 0) {
-            Write-Info "No change in 1% lows — within margin of error."
+            Write-Info "No recorded change in 1% lows."
         } else {
-            Write-Warn "1% lows degraded. Check recent changes."
+            Write-Warn "Recorded 1% lows decreased. Review the capture conditions and recent changes."
         }
     }
 }
@@ -156,6 +161,12 @@ function Invoke-BenchmarkCapture {
         [string]$Label = ""
     )
 
+    if ($SCRIPT:DryRun) {
+        Write-ConsoleLine "  [DRY-RUN] Would capture and parse FPSHeaven [VProf] benchmark output." -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would save benchmark history, compare results, calculate the FPS cap, and copy it to the clipboard." -ForegroundColor Magenta
+        return $null
+    }
+
     # @() wrapper: PowerShell pipeline unwraps `return @()` to $null; with
     # Set-StrictMode -Version Latest, $null.Count is a terminating error.
     $history = @(Get-BenchmarkHistory)
@@ -166,8 +177,8 @@ function Invoke-BenchmarkCapture {
         Write-Blank
     }
 
-    Write-Host "  Run a FPSHeaven benchmark map in CS2, then paste the [VProf] output here." -ForegroundColor White
-    Write-Host "  Format: [VProf] FPS: Avg=XXX.X, P1=XXX.X" -ForegroundColor DarkGray
+    Write-ConsoleLine "  Run a FPSHeaven benchmark map in CS2, then paste the [VProf] output here." -ForegroundColor White
+    Write-ConsoleLine "  Format: [VProf] FPS: Avg=XXX.X, P1=XXX.X" -ForegroundColor DarkGray
     Write-Blank
 
     $userInput = Read-Host "  Paste [VProf] output (or [Enter] to skip)"
@@ -200,31 +211,31 @@ function Invoke-BenchmarkCapture {
     if ($history.Count -gt 0) {
         $prev = $history[-1]
         if ($null -eq $prev.avgFps -or $null -eq $prev.p1Fps) {
-            Write-Info "Previous run has incomplete data — skipping comparison."
+            Write-Info "Previous run has incomplete data - skipping comparison."
         } else {
         $avgDiff = [math]::Round($result.Avg - $prev.avgFps, 1)
         $p1Diff  = [math]::Round($result.P1 - $prev.p1Fps, 1)
         $pColor = if ($p1Diff -gt 0) { "Green" } elseif ($p1Diff -lt 0) { "Red" } else { "Yellow" }
 
         Write-Blank
-        Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $pColor
-        Write-Host "  │  COMPARISON WITH PREVIOUS:                                   │" -ForegroundColor $pColor
+        Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $pColor
+        Write-ConsoleLine "  │  COMPARISON WITH PREVIOUS:                                   │" -ForegroundColor $pColor
         $avgLine = "Avg FPS: $($prev.avgFps.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)) -> $($result.Avg.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture))  ($(if($avgDiff -ge 0){'+'})$($avgDiff.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)))"
         $p1Line  = "1% Lows: $($prev.p1Fps.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)) -> $($result.P1.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture))  ($(if($p1Diff -ge 0){'+'})$($p1Diff.ToString('F1', [System.Globalization.CultureInfo]::InvariantCulture)))"
-        Write-Host "  │  $avgLine$((' ' * [math]::Max(0, 60 - $avgLine.Length)))│" -ForegroundColor White
-        Write-Host "  │  $p1Line$((' ' * [math]::Max(0, 60 - $p1Line.Length)))│" -ForegroundColor White
-        Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $pColor
+        Write-ConsoleLine "  │  $avgLine$((' ' * [math]::Max(0, 60 - $avgLine.Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  │  $p1Line$((' ' * [math]::Max(0, 60 - $p1Line.Length)))│" -ForegroundColor White
+        Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $pColor
 
         if ($p1Diff -gt 5) {
-            Write-OK "Notable improvement in 1% lows! The last change had measurable effect."
+            Write-OK "Recorded 1% lows increased relative to the previous entry. Causation is not established."
         } elseif ($p1Diff -gt 0) {
-            Write-Info "Small improvement. Within typical variance — run 3x to confirm."
+            Write-Info "Recorded 1% lows increased by 5 FPS or less. Repeat the capture before drawing a conclusion."
         } elseif ($p1Diff -lt -5) {
-            Write-Warn "1% lows degraded significantly. Consider reverting the last change."
+            Write-Warn "Recorded 1% lows decreased by more than 5 FPS. Review capture conditions and recent changes."
         } elseif ($p1Diff -lt 0) {
-            Write-Info "Small degradation. May be variance — run 3x to confirm."
+            Write-Info "Recorded 1% lows decreased by 5 FPS or less. Repeat the capture before drawing a conclusion."
         } else {
-            Write-Info "No change. Within margin of error."
+            Write-Info "No recorded change."
         }
         } # end else (prev data valid)
     }

@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
-#  helpers/system-analysis.ps1  —  Non-destructive system health checks
+#  helpers/system-analysis.ps1  -  Non-destructive system health checks
 #  Returns structured [PSCustomObject] results for GUI display.
-#  Safe to call from a RunSpace — does all its own registry reads.
+#  Safe to call from a RunSpace - does all its own registry reads.
 # ==============================================================================
 
 function script:Get-RegVal {
@@ -23,7 +23,7 @@ function script:New-CheckItem {
     )
     $label = switch ($Status) {
         "OK"   { "✓  OK"   } "WARN" { "⚠  WARN" } "ERR"  { "✗  ERR" }
-        "INFO" { "ℹ  INFO" } "SKIP" { "—  SKIP" } default { $Status }
+        "INFO" { "ℹ  INFO" } "SKIP" { "-  SKIP" } default { $Status }
     }
     $color = switch ($Status) {
         "OK"   { "#22c55e" } "WARN" { "#fbbf24" } "ERR"  { "#ef4444" }
@@ -54,39 +54,41 @@ function Invoke-CheckHardware {
         $vbsVal = $dg.VirtualizationBasedSecurityStatus
         $vbsStr = switch ($vbsVal) { 0 { "Off" } 1 { "Configured (not running)" } 2 { "Running" } default { "Unknown" } }
         $st = if ($vbsVal -eq 0) { "OK" } elseif ($vbsVal -eq 1) { "INFO" } else { "WARN" }
-        $results.Add((New-CheckItem "Hardware" "Security" "VBS / HVCI" $vbsStr "Off" $st "P3-7" "VBS running = 5-15% CPU overhead in games on OEM Win11 builds"))
+        $results.Add((New-CheckItem "Hardware" "Security" "VBS / HVCI" $vbsStr "Off" $st "P3-7" "Disabling VBS or HVCI reduces security; measure workload effects locally"))
     } catch {
         $results.Add((New-CheckItem "Hardware" "Security" "VBS / HVCI" "Query failed" "Off" "INFO" "P3-7" "Could not query Win32_DeviceGuard"))
     }
 
-    # WHEA errors (PBO/CO stability indicator)
+    # WHEA events are hardware-error evidence, not a root-cause diagnosis.
     try {
         $whea = Test-WheaErrors
         if ($whea) {
             $wheaStr = if ($whea.HasErrors) { "$($whea.RecentCount) in last 24h" } else { "0 recent ($($whea.Count) total)" }
             $wheaSt = if ($whea.HasErrors) { "ERR" } elseif ($whea.Count -gt 0) { "WARN" } else { "OK" }
-            $results.Add((New-CheckItem "Hardware" "CPU" "WHEA Errors" $wheaStr "0" $wheaSt "BIOS" "WHEA errors indicate PBO/CO instability — reduce Curve Optimizer by 5"))
+            $results.Add((New-CheckItem "Hardware" "CPU" "WHEA Errors" $wheaStr "0" $wheaSt "BIOS" "Review event details and recent hardware or firmware changes"))
         }
     } catch { Write-DebugLog "WHEA check failed: $_" }
 
-    # AMD X3D CPU base clock (informational — MaxClockSpeed is base, not boost)
+    # AMD X3D CPU base clock (informational - MaxClockSpeed is base, not boost)
     $amdCpu = $null
     try {
         $amdCpu = Get-AmdCpuInfo
         if ($amdCpu -and $amdCpu.IsX3D -and $amdCpu.MaxClockSpeed -gt 0) {
             $baseStr = "$($amdCpu.MaxClockSpeed) MHz (base clock)"
-            $results.Add((New-CheckItem "Hardware" "CPU" "X3D Base Clock" $baseStr "N/A (boost requires HWiNFO)" "INFO" "BIOS" "Win32_Processor.MaxClockSpeed reports base clock, not boost — use HWiNFO to verify boost"))
+            $results.Add((New-CheckItem "Hardware" "CPU" "X3D Base Clock" $baseStr "N/A (boost requires HWiNFO)" "INFO" "BIOS" "Win32_Processor.MaxClockSpeed reports base clock, not boost - use HWiNFO to verify boost"))
         }
     } catch { Write-DebugLog "X3D base clock check failed: $_" }
 
-    # DDR5 FCLK/MCLK 1:1
+    # Reported DDR5 data rate. Windows inventory does not expose FCLK or UCLK here.
     try {
         $ddr5 = Get-Ddr5TimingInfo
         if ($ddr5 -and $ddr5.IsDDR5) {
             $mtsStr = "DDR5-$($ddr5.ActiveMTs)"
-            $ddr5St = if ($ddr5.IsOptimal1to1) { "OK" } elseif ($ddr5.ActiveMTs -gt 6400) { "WARN" } else { "INFO" }
-            $ddr5Rec = if ($amdCpu -and $amdCpu.IsX3D) { "DDR5-6000 (1:1)" } else { "XMP rated speed" }
-            $results.Add((New-CheckItem "Hardware" "Memory" "DDR5 Speed" $mtsStr $ddr5Rec $ddr5St "P1-2" "AM5 optimal: DDR5-6000 (FCLK 2000, MCLK 3000, 1:1 ratio)"))
+            $ddr5Downclocked = if ($ddr5.PSObject.Properties['IsDownclocked']) { [bool]$ddr5.IsDownclocked } else { $false }
+            $ratedMts = if ($ddr5.PSObject.Properties['RatedMTs']) { "$($ddr5.RatedMTs) MT/s" } else { "not reported" }
+            $ddr5St = if ($ddr5Downclocked) { "WARN" } else { "OK" }
+            $ddr5Rec = "Reported rated speed: $ratedMts"
+            $results.Add((New-CheckItem "Hardware" "Memory" "DDR5 Speed" $mtsStr $ddr5Rec $ddr5St "P1-2" "Effective clock ratios require separate measurement; validated profiles vary by platform"))
         }
     } catch { Write-DebugLog "DDR5 timing check failed: $_" }
 
@@ -95,7 +97,7 @@ function Invoke-CheckHardware {
         $dc = Test-DualChannel
         if ($null -ne $dc) {
             $st = if ($dc.DualChannel -eq $true) { "OK" } elseif ($dc.DualChannel -eq $false) { "ERR" } else { "INFO" }
-            $results.Add((New-CheckItem "Hardware" "Memory" "Dual-Channel RAM" $dc.Reason "Dual-channel" $st "P1-24" "Single-channel halves memory bandwidth — 20-40% FPS loss in CS2"))
+            $results.Add((New-CheckItem "Hardware" "Memory" "Dual-Channel RAM" $dc.Reason "Manual verification" $st "P1-24" "Channel population can affect available bandwidth; confirm against the motherboard guide"))
         }
     } catch { Write-DebugLog "Dual-channel RAM check failed: $_" }
 
@@ -105,7 +107,7 @@ function Invoke-CheckHardware {
         if ($ram) {
             $xmpStr = if ($ram.AtRatedSpeed) { "At rated speed ($($ram.ActiveMhz) MT/s)" } else { "Below rated ($($ram.ActiveMhz) MT/s, rated $($ram.SpeedMhz) MT/s)" }
             $st = if ($ram.AtRatedSpeed) { "OK" } else { "WARN" }
-            $results.Add((New-CheckItem "Hardware" "Memory" "XMP / EXPO" $xmpStr "At rated speed" $st "P1-2" "RAM running below rated speed — enable XMP/EXPO in BIOS"))
+            $results.Add((New-CheckItem "Hardware" "Memory" "XMP / EXPO" $xmpStr "At rated speed" $st "P1-2" "Review the firmware memory profile when RAM runs below its rated speed"))
         }
     } catch { Write-DebugLog "XMP/EXPO check failed: $_" }
 
@@ -120,13 +122,13 @@ function Invoke-CheckWindowsGaming {
     try {
         $hags = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" "HwSchMode"
         $hagsStr = switch ($hags) { 2 { "Enabled" } 1 { "Disabled" } $null { "Not set" } default { "$hags" } }
-        $r.Add((New-CheckItem "Windows" "Display" "HAGS" $hagsStr "Enabled (2)" "INFO" "P1-7" "Setup-dependent — benchmark both ON and OFF on your system"))
+        $r.Add((New-CheckItem "Windows" "Display" "HAGS" $hagsStr "Enabled (2)" "INFO" "P1-7" "Setup-dependent - benchmark both ON and OFF on your system"))
     } catch { Write-DebugLog "HAGS registry check failed: $_" }
 
     # Fast Startup
     $fs = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" "HiberbootEnabled"
     $st = if ($null -ne $fs -and $fs -eq 0) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Boot" "Fast Startup" $(if ($null -ne $fs -and $fs -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-23" "Prevents MSI interrupt changes persisting across shutdown"))
+    $r.Add((New-CheckItem "Windows" "Boot" "Fast Startup" $(if ($null -ne $fs -and $fs -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-23" "Requests a full kernel and device initialization after shutdown"))
 
     # Game Mode
     $gm = Get-RegVal "HKCU:\Software\Microsoft\GameBar" "AutoGameModeEnabled"
@@ -141,18 +143,18 @@ function Invoke-CheckWindowsGaming {
     # MPO
     $mpo = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows\Dwm" "OverlayTestMode"
     $st = if ($mpo -eq 5) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Display" "MPO" $(if ($mpo -eq 5) {"Disabled"} else {"Enabled"}) "Disabled (5)" $st "P1-11" "Multiplane Overlay can cause DWM compositing stutters"))
+    $r.Add((New-CheckItem "Windows" "Display" "MPO" $(if ($mpo -eq 5) {"Disabled"} else {"Enabled"}) "Disabled (5)" $st "P1-11" "Repository display-composition experiment; effect is system-specific"))
 
     # FSE Behavior
     $fse = Get-RegVal "HKCU:\System\GameConfigStore" "GameDVR_FSEBehavior"
     $st = if ($fse -eq 2) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Display" "FSE Behavior" $(if ($null -ne $fse) {"$fse"} else {"Not set"}) "2" $st "P1-26" "Fullscreen exclusivity mode for lower input latency"))
+    $r.Add((New-CheckItem "Windows" "Display" "FSE Behavior" $(if ($null -ne $fse) {"$fse"} else {"Not set"}) "2" $st "P1-26" "Repository AppCompat fullscreen policy for cs2.exe"))
 
     # Auto HDR
     $hdr = Get-RegVal "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\VideoSettings" "AutoHDREnabled"
     if ($null -ne $hdr) {
         $st = if ($hdr -eq 0) { "OK" } else { "WARN" }
-        $r.Add((New-CheckItem "Windows" "Display" "Auto HDR" $(if ($hdr -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-36" "Tone-mapping overhead + overbright window areas in CS2"))
+        $r.Add((New-CheckItem "Windows" "Display" "Auto HDR" $(if ($hdr -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-36" "Repository Auto HDR policy for cs2.exe"))
     }
 
     # Visual Effects
@@ -163,7 +165,7 @@ function Invoke-CheckWindowsGaming {
     # ClearType (preserved despite Best Performance)
     $ct = Get-RegVal "HKCU:\Control Panel\Desktop" "FontSmoothing"
     $st = if ($ct -eq "2") { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Display" "ClearType" $(if ($ct -eq "2") {"Enabled"} else {"Disabled/Not set"}) "Enabled (2)" $st "P1-36" "Font smoothing — preserved alongside Best Performance"))
+    $r.Add((New-CheckItem "Windows" "Display" "ClearType" $(if ($ct -eq "2") {"Enabled"} else {"Disabled/Not set"}) "Enabled (2)" $st "P1-36" "Font smoothing - preserved alongside Best Performance"))
 
     # Steam Overlay
     $steamOv = Get-RegVal "HKCU:\Software\Valve\Steam" "GameOverlayDisabled"
@@ -181,7 +183,7 @@ function Invoke-CheckSystemLatency {
     $sysResp = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" "SystemResponsiveness"
     $sysRespDisplay = if ($null -eq $sysResp) { "Not set (default: 20)" } else { "$sysResp" }
     $st = if ($sysResp -eq 10) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "MMCSS" "SystemResponsiveness" $sysRespDisplay "10" $st "P1-27" "Controls CPU% reserved for multimedia — lower = more for CS2"))
+    $r.Add((New-CheckItem "Windows" "MMCSS" "SystemResponsiveness" $sysRespDisplay "10" $st "P1-27" "Controls CPU% reserved for multimedia - lower = more for CS2"))
 
     # NoLazyMode
     $lazy = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" "NoLazyMode"
@@ -191,7 +193,7 @@ function Invoke-CheckSystemLatency {
     # Win32PrioritySeparation
     $w32 = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" "Win32PrioritySeparation"
     $st = if ($w32 -eq 0x2A) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Scheduler" "Win32PrioritySeparation" $(if ($null -ne $w32) {"0x{0:X}" -f $w32} else {"Not set"}) "0x2A (42)" $st "P1-27" "Short fixed quantum, max foreground boost"))
+    $r.Add((New-CheckItem "Windows" "Scheduler" "Win32PrioritySeparation" $(if ($null -ne $w32) {"0x{0:X}" -f $w32} else {"Not set"}) "0x2A (42)" $st "P1-27" "Repository short, fixed-quantum foreground policy"))
 
     # DisablePagingExecutive
     $dpe = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" "DisablePagingExecutive"
@@ -206,28 +208,28 @@ function Invoke-CheckSystemLatency {
     # FTH
     $fth = Get-RegVal "HKLM:\SOFTWARE\Microsoft\FTH" "Enabled"
     $st = if ($null -ne $fth -and $fth -eq 0) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "System" "Fault Tolerant Heap" $(if ($null -ne $fth -and $fth -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-27" "Prevents 10-15% heap slowdown after crashes"))
+    $r.Add((New-CheckItem "Windows" "System" "Fault Tolerant Heap" $(if ($null -ne $fth -and $fth -eq 0) {"Disabled"} else {"Enabled"}) "Disabled (0)" $st "P1-27" "Controls Windows fault-tolerant heap mitigations for repeatedly crashing applications"))
 
     # Automatic Maintenance
     $maint = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" "MaintenanceDisabled"
     $st = if ($maint -eq 1) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "System" "Auto Maintenance" $(if ($maint -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Stops 12-14% mid-game CPU spikes (djdallmann xperf)"))
+    $r.Add((New-CheckItem "Windows" "System" "Auto Maintenance" $(if ($maint -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Controls automatic Windows maintenance scheduling"))
 
     # NTFS Last Access
     $ntfsLa = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "NtfsDisableLastAccessUpdate"
-    # (-2147483647) = 0x80000001 as signed int32 — PS 5.1 reads DWORD as Int32; 1 = disabled (legacy)
+    # (-2147483647) = 0x80000001 as signed int32 - PS 5.1 reads DWORD as Int32; 1 = disabled (legacy)
     $st = if ($ntfsLa -eq (-2147483647) -or $ntfsLa -eq 1) { "OK" } else { "WARN" }
     $r.Add((New-CheckItem "Windows" "Filesystem" "NTFS Last Access" $(if ($ntfsLa -eq (-2147483647) -or $ntfsLa -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (0x80000001)" $st "P1-27" "Removes metadata write on every file read"))
 
     # NTFS 8.3 Name Creation
     $ntfs83 = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "NtfsDisable8dot3NameCreation"
     $st = if ($ntfs83 -eq 1) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "Filesystem" "NTFS 8.3 Names" $(if ($ntfs83 -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Eliminates legacy short name generation overhead"))
+    $r.Add((New-CheckItem "Windows" "Filesystem" "NTFS 8.3 Names" $(if ($ntfs83 -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Disables new legacy 8.3 name creation under the configured policy"))
 
     # DisableCoInstallers
     $coIns = Get-RegVal "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer" "DisableCoInstallers"
     $st = if ($coIns -eq 1) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Windows" "System" "PnP Co-Installers" $(if ($coIns -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Prevents vendor bloatware injection during device install"))
+    $r.Add((New-CheckItem "Windows" "System" "PnP Co-Installers" $(if ($coIns -eq 1) {"Disabled"} else {"Enabled"}) "Disabled (1)" $st "P1-27" "Requests disabled third-party co-installer execution during device setup"))
 
     # MMCSS Games task
     $gamesPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games"
@@ -238,20 +240,17 @@ function Invoke-CheckSystemLatency {
     $st = if ($gamesOk) { "OK" } else { "WARN" }
     $r.Add((New-CheckItem "Windows" "MMCSS" "Games Task Priority" "Pri=$gPri Sched=$gSch GPU=$gGpu" "6 / High / 8" $st "P1-27" "MMCSS Games scheduling class for foreground game threads"))
 
-    # Boot config (bcdedit) — read-only query
+    # Boot config (bcdedit) - read-only query
     # Use /v to get hex element IDs instead of localized key names.
-    # Match on hex IDs (locale-independent) + any truthy value — same approach as Verify-Settings.ps1.
-    # 0x26000060 = disabledynamictick, 0x26000092 = useplatformtick
+    # Match on hex IDs (locale-independent) + any truthy value - same approach as Verify-Settings.ps1.
+    # 0x26000060 = disabledynamictick.
     try {
         $bcdOutput = bcdedit /enum "{current}" /v 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) {
-            Write-DebugLog "bcdedit exited with code $LASTEXITCODE — skipping boot config checks"
+            Write-DebugLog "bcdedit exited with code $LASTEXITCODE - skipping boot config checks"
         } else {
             $dynTick = if ($bcdOutput -match "0x26000060\s+\S+") { "OK" } else { "WARN" }
-            $r.Add((New-CheckItem "Windows" "Boot" "Dynamic Tick" $(if ($dynTick -eq "OK") {"Disabled"} else {"Active"}) "Disabled" $dynTick "P1-10" "Adaptive timer causes irregular CPU wakeups — frametime jitter"))
-
-            $platTick = if ($bcdOutput -match "0x26000092\s+\S+") { "OK" } else { "WARN" }
-            $r.Add((New-CheckItem "Windows" "Boot" "Platform Tick" $(if ($platTick -eq "OK") {"Active"} else {"Inactive"}) "Active" $platTick "P1-10" "Hardware timer instead of software timer"))
+            $r.Add((New-CheckItem "Windows" "Boot" "Dynamic Tick" $(if ($dynTick -eq "OK") {"Disabled"} else {"Active"}) "Disabled" $dynTick "P1-10" "Adaptive timer causes irregular CPU wakeups - frametime jitter"))
         }
     } catch { Write-DebugLog "bcdedit check failed: $_" }
 
@@ -267,7 +266,7 @@ function Invoke-CheckInput {
     $ms3 = Get-RegVal "HKCU:\Control Panel\Mouse" "MouseThreshold2"
     $allOff = ("$ms1" -eq "0") -and ("$ms2" -eq "0") -and ("$ms3" -eq "0")
     $st = if ($allOff) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Input" "Mouse" "Mouse Acceleration (Windows)" "Speed=$ms1 Thr1=$ms2 Thr2=$ms3" "All 0" $st "P1-29" "EnhancePointerPrecision — adds non-linear speed scaling"))
+    $r.Add((New-CheckItem "Input" "Mouse" "Mouse Acceleration (Windows)" "Speed=$ms1 Thr1=$ms2 Thr2=$ms3" "All 0" $st "P1-29" "EnhancePointerPrecision - adds non-linear speed scaling"))
 
     $queueSize = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters" "MouseDataQueueSize"
     $st = if ($queueSize -eq 50) { "OK" } else { "WARN" }
@@ -296,13 +295,13 @@ function Invoke-CheckNetwork {
                 if ($nd -eq 1) { $nagleOk = $true; break }
             }
         }
-        $r.Add((New-CheckItem "Network" "TCP" "Nagle Disable (TcpNoDelay)" $(if ($nagleOk) {"Disabled on active NIC"} else {"Enabled / Not set"}) "1 (disabled)" $(if ($nagleOk) {"OK"} else {"WARN"}) "P1-25" "Nagle bundles small TCP packets → increases latency"))
+        $r.Add((New-CheckItem "Network" "TCP" "Nagle Disable (TcpNoDelay)" $(if ($nagleOk) {"Disabled on active NIC"} else {"Enabled / Not set"}) "1 (disabled)" $(if ($nagleOk) {"OK"} else {"WARN"}) "P1-25" "Repository TCP policy on detected active interfaces"))
     } catch { Write-DebugLog "Nagle/TcpNoDelay check failed: $_" }
 
-    # IPv6 — intentionally left enabled (2026 reversal: Steam prefers IPv6 when faster)
+    # IPv6 is intentionally left enabled so Windows can select an available route.
     $ipv6 = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" "DisabledComponents"
     $st = if ($null -eq $ipv6 -or $ipv6 -ne 0xFF) { "OK" } else { "WARN" }
-    $r.Add((New-CheckItem "Network" "Stack" "IPv6" $(if ($ipv6 -eq 0xFF) {"Disabled (0xFF)"} else {"Enabled"}) "Enabled" $st "P1-16" "2026: Steam prefers IPv6 when faster; disabling forces CGNAT (+5-15ms)"))
+    $r.Add((New-CheckItem "Network" "Stack" "IPv6" $(if ($ipv6 -eq 0xFF) {"Disabled (0xFF)"} else {"Enabled"}) "Enabled" $st "P1-16" "Leaving IPv6 enabled allows Windows to select IPv4 or IPv6 routes"))
 
     # QoS NLA bypass
     $nla = Get-RegVal "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\QoS" "Do not use NLA"
@@ -310,7 +309,7 @@ function Invoke-CheckNetwork {
     $r.Add((New-CheckItem "Network" "QoS" "QoS NLA Bypass" $(if ($nla -eq "1") {"Enabled"} else {"Not set"}) "1" $st "P1-16" "Required for DSCP EF=46 QoS to function on unidentified networks"))
 
     # URO (Win11 only)
-    # netsh output is locale-dependent — check for ABSENCE of enabled patterns
+    # netsh output is locale-dependent - check for ABSENCE of enabled patterns
     # since there are fewer locale variants for "enabled" than "disabled"
     try {
         $build = [System.Environment]::OSVersion.Version.Build
@@ -318,7 +317,7 @@ function Invoke-CheckNetwork {
             $uro = & netsh int udp show global 2>&1 | Select-String "uro"
             $uroStr = if ($uro) { "$uro".Trim() } else { "" }
             if (-not $uroStr) {
-                $r.Add((New-CheckItem "Network" "Stack" "URO (UDP Receive Offload)" "not available" "disabled" "OK" "P1-16" "URO not present on this build — no action needed"))
+                $r.Add((New-CheckItem "Network" "Stack" "URO (UDP Receive Offload)" "not available" "disabled" "OK" "P1-16" "URO not present on this build - no action needed"))
             } else {
                 $uroVal = if ($uroStr -notmatch "enabled|aktiviert|activé|abilitato|activado|ativado") { "disabled" } else { "enabled" }
                 $st = if ($uroVal -eq "disabled") { "OK" } else { "WARN" }
@@ -376,7 +375,7 @@ function Invoke-CheckServices {
 function Invoke-CheckCS2 {
     $r = [System.Collections.Generic.List[object]]::new()
 
-    # Steam base path — used for video.txt and launch options below
+    # Steam base path - used for video.txt and launch options below
     $steamPath = Get-SteamPath
 
     # Find CS2 install
@@ -384,7 +383,7 @@ function Invoke-CheckCS2 {
     try { $cs2Path = Get-CS2InstallPath } catch { Write-DebugLog "CS2 install path detection failed: $_" }
 
     if (-not $cs2Path) {
-        $r.Add((New-CheckItem "CS2" "Install" "CS2 Install" "Not found" "Found" "ERR" "—" "CS2 not detected — check Steam library"))
+        $r.Add((New-CheckItem "CS2" "Install" "CS2 Install" "Not found" "Found" "ERR" "-" "CS2 not detected - check Steam library"))
         return $r
     }
 
@@ -393,24 +392,24 @@ function Invoke-CheckCS2 {
 
     # optimization.cfg
     $optExists = Test-Path $optPath
-    $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "74 optimized CVars — network, audio, mouse, video"))
+    $r.Add((New-CheckItem "CS2" "Config" "optimization.cfg" $(if ($optExists) {"Present"} else {"Missing"}) "Present" $(if ($optExists) {"OK"} else {"ERR"}) "P1-34" "73 repository-defined network, audio, input, HUD, gameplay, and video values"))
 
     if ($optExists) {
         # Check key CVars in optimization.cfg
         $optContent = Get-Content $optPath -Raw -ErrorAction SilentlyContinue
         $keyChecks = @(
-            @{ CVar="snd_use_hrtf"; Expected="1"; Impact="Steam Audio HRTF enable" }
-            @{ CVar="cl_autowepswitch"; Expected="0"; Impact="Prevents auto weapon switch on pickup" }
-            @{ CVar="rate";         Expected="1000000"; Impact="CS2 max bandwidth rate" }
-            @{ CVar="speaker_config"; Expected="1"; Impact="Headphones mode — required for HRTF" }
+            @{ CVar="snd_spatialize_lerp"; Expected="0"; Impact="Headphone-focused spatial baseline; no snd_use_hrtf toggle in current public convar surface" }
+            @{ CVar="cl_autowepswitch"; Expected="0"; Impact="Requests disabled automatic weapon selection on pickup" }
+            @{ CVar="rate";         Expected="1000000"; Impact="Repository receive-bandwidth value; client and server limits can change" }
+            @{ CVar="speaker_config"; Expected="1"; Impact="Repository headphone-mode value" }
         )
         foreach ($ck in $keyChecks) {
             if ($optContent -match "(?m)^\s*$([regex]::Escape($ck.CVar))\s+(\S+)") {
                 $val = $Matches[1].Trim()
                 $st = if ($val -eq $ck.Expected) { "OK" } else { "WARN" }
-                $r.Add((New-CheckItem "CS2" "Autoexec" $ck.CVar $val $ck.Expected $st "P1-34" $ck.Impact))
+                $r.Add((New-CheckItem "CS2" "Generated CFG" $ck.CVar $val $ck.Expected $st "P1-34" $ck.Impact))
             } else {
-                $r.Add((New-CheckItem "CS2" "Autoexec" $ck.CVar "Not in optimization.cfg" $ck.Expected "WARN" "P1-34" $ck.Impact))
+                $r.Add((New-CheckItem "CS2" "Generated CFG" $ck.CVar "Not in optimization.cfg" $ck.Expected "WARN" "P1-34" $ck.Impact))
             }
         }
     }
@@ -423,11 +422,11 @@ function Invoke-CheckCS2 {
             if ($vtxt) {
                 $vtContent = Get-Content $vtxt.FullName -Raw -ErrorAction SilentlyContinue
                 $vtChecks = @(
-                    @{ Key="setting.msaa_samples";         Expected="4";  Label="MSAA";            Impact="Community benchmark default for stronger 1% lows" }
-                    @{ Key="setting.r_low_latency";        Expected="1";  Label="NVIDIA Reflex";   Impact="Common low-latency default; benchmark if unsure" }
-                    @{ Key="setting.mat_vsync";            Expected="0";  Label="VSync";           Impact="Must be OFF — adds 1-3 frames render queue latency" }
-                    @{ Key="setting.sc_hdr_enabled_override"; Expected="3"; Label="HDR Shader"; Impact="Performance mode — Quality washes out window/sun areas" }
-                    @{ Key="setting.fullscreen";           Expected="1";  Label="Fullscreen Mode"; Impact="Exclusive FS bypasses DWM compositor — lower input latency" }
+                    @{ Key="setting.msaa_samples";         Expected="4";  Label="MSAA";            Impact="High-end/mid default; benchmark against 2x or CMAA2 if FPS budget is tight" }
+                    @{ Key="setting.r_low_latency";        Expected="1";  Label="NVIDIA Reflex";   Impact="Repository preset; compare with the same capture settings" }
+                    @{ Key="setting.mat_vsync";            Expected="0";  Label="VSync";           Impact="Fixed-refresh preset; validate VRR and G-SYNC configurations separately" }
+                    @{ Key="setting.sc_hdr_enabled_override"; Expected="3"; Label="HDR Shader"; Impact="Performance mode suite default; compare visually on your display" }
+                    @{ Key="setting.fullscreen";           Expected="1";  Label="Fullscreen Mode"; Impact="Exclusive-fullscreen repository preset" }
                 )
                 foreach ($vc in $vtChecks) {
                     if ($vtContent -match "(?m)`"$([regex]::Escape($vc.Key))`"\s+`"([^`"]+)`"") {
@@ -439,7 +438,7 @@ function Invoke-CheckCS2 {
                     }
                 }
             } else {
-                $r.Add((New-CheckItem "CS2" "video.txt" "video.txt" "Not found" "Present" "WARN" "P3-6" "Video settings file missing — launch CS2 once to generate it"))
+                $r.Add((New-CheckItem "CS2" "video.txt" "video.txt" "Not found" "Present" "WARN" "P3-6" "Video settings file missing - launch CS2 once to generate it"))
             }
         }
     } catch { Write-DebugLog "video.txt check failed: $_" }
@@ -456,9 +455,9 @@ function Invoke-CheckCS2 {
                     $hasConsole = $lo -match "-console"
                     $hasExec    = $lo -match "\+exec"
                     $allGood = $hasConsole -and $hasExec
-                    $r.Add((New-CheckItem "CS2" "Launch" "Launch Options" $lo "-console +exec autoexec" $(if ($allGood) {"OK"} else {"WARN"}) "P1-34" "Essential launch flags — exec must load autoexec.cfg"))
+                    $r.Add((New-CheckItem "CS2" "Launch" "Launch Options" $lo "-console +exec autoexec" $(if ($allGood) {"OK"} else {"WARN"}) "P1-34" "Repository example; verify accepted options in the current client"))
                 } else {
-                    $r.Add((New-CheckItem "CS2" "Launch" "Launch Options" "Not set" "-console +exec autoexec" "WARN" "P1-34" "Launch options not configured in Steam"))
+                    $r.Add((New-CheckItem "CS2" "Launch" "Launch Options" "Not set" "-console +exec autoexec" "WARN" "P1-34" "Repository example is not configured in Steam"))
                 }
             }
         }

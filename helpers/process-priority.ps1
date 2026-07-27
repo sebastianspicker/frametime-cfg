@@ -1,34 +1,59 @@
 ﻿# ==============================================================================
-#  helpers/process-priority.ps1  —  Native Process Priority & CCD Affinity
+#  helpers/process-priority.ps1  -  Native Process Priority & CCD Affinity
 # ==============================================================================
 #
-#  Replaces Process Lasso with native Windows mechanisms:
-#    1. IFEO PerfOptions — persistent CPU priority via registry (kernel-level)
-#    2. Scheduled task — CCD affinity for dual-CCD Ryzen X3D (if applicable)
+#  Uses native Windows mechanisms:
+#    1. IFEO PerfOptions - persistent CPU priority via registry (kernel-level)
+#    2. Optional CCD affinity - only when an authoritative logical-processor
+#       to CCD mapping is available (not provided by Win32_Processor)
 #
 #  IFEO (Image File Execution Options) PerfOptions:
-#    Windows kernel reads CpuPriorityClass at process creation — zero overhead.
-#    No background service, no polling. The kernel applies it before the process
-#    entry point runs.
+#    Windows reads CpuPriorityClass at process creation. This implementation does
+#    not install a separate polling process or service.
 #
 #  CpuPriorityClass values (PROCESS_PRIORITY_CLASS kernel enum):
 #    1=Idle  2=Normal  3=High  4=Realtime  5=BelowNormal  6=AboveNormal
 
-$CS2_AffinityTaskName  = "CS2_Optimize_CCD_Affinity"
-$CS2_AffinityScriptPath = "$CFG_WorkDir\cs2_affinity.ps1"
+$CS2_AffinityTaskName = "frametime_cfg_cs2_affinity"
+$LegacyCS2AffinityTaskName = "CS2_Optimize_CCD_Affinity"
+$CS2_AffinityScriptPath = "$CFG_WorkDir\frametime_cs2_affinity.ps1"
+
+function Get-ProcessPriorityOperationResult {
+    <#
+    .SYNOPSIS  Returns a truthful Phase 3 process-priority operation outcome.
+    .DESCRIPTION
+        The IFEO value is the durable priority mechanism.  Automatic CCD
+        affinity is deliberately not inferred from core or logical-processor
+        counts: Win32_Processor does not expose LP-to-CCD membership.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("Success", "Failed", "Skipped", "DryRun")]
+        [string]$Status,
+
+        [string]$Message = "",
+        $IfeoResult = $null,
+        $AffinityTaskResult = $null
+    )
+
+    return [PSCustomObject]@{
+        Status             = $Status
+        CanCompleteStep    = ($Status -eq "Success")
+        Message            = $Message
+        IfeoResult         = $IfeoResult
+        AffinityTaskResult = $AffinityTaskResult
+    }
+}
 
 function Get-X3DCcdInfo {
     <#
     .SYNOPSIS  Detects Ryzen X3D CPU and returns CCD topology info.
     .DESCRIPTION
         Single-CCD X3D (5700X3D, 5800X3D, 7800X3D, 9800X3D): no pinning needed.
-        Dual-CCD X3D (7900X3D, 7950X3D, 9900X3D, 9950X3D): returns affinity
-        mask for CCD0 (V-Cache CCD).
-
-        AMD standard logical processor numbering (SMT enabled):
-          LP 0..(totalCores-1)      = first thread of each core (CCD0 then CCD1)
-          LP totalCores..(totalLP-1) = second thread (SMT partner)
-        CCD0 always contains cores 0..(ccd0Cores-1).
+        Dual-CCD X3D models are detected, but Win32_Processor exposes only
+        aggregate core/LP counts.  Those counts cannot authoritatively map a
+        Windows logical processor to its CCD, so this function never fabricates
+        an affinity mask.  Manual topology verification is required.
     #>
     try {
         $cpu = Get-CachedCpuInfo
@@ -36,57 +61,33 @@ function Get-X3DCcdInfo {
 
     if ($cpu.Name -notmatch "X3D") { return $null }
 
-    # Single CCD X3D — all cores on V-Cache, no pinning needed
+    # Single CCD X3D - all cores on V-Cache, no pinning needed
     if ($cpu.Name -match "(5700X3D|5800X3D|7800X3D|9700X3D|9800X3D)") {
         return @{
             IsX3D   = $true
             DualCCD = $false
             CpuName = $cpu.Name.Trim()
-            Reason  = "Single CCD — all cores have V-Cache, no pinning needed"
+            Reason  = "Single CCD - all cores have V-Cache, no pinning needed"
         }
     }
 
-    # Dual CCD X3D — CCD0 has V-Cache
+    # Dual-CCD X3D - model detection is safe, LP-to-CCD inference is not.
     if ($cpu.Name -match "(7900X3D|7950X3D|9900X3D|9950X3D)") {
-        $totalCores = $cpu.NumberOfCores
-        $totalLP    = $cpu.NumberOfLogicalProcessors
-        $smtEnabled = ($totalLP -gt $totalCores)
-        # Per-model CCD0 core count for known asymmetric X3D CPUs.
-        # 9900X3D = 8+4, 9950X3D/7950X3D = 8+8, 7900X3D = 6+6.
-        $ccd0Cores = if ($cpu.Name -match "9900X3D") { 8 }
-            elseif ($cpu.Name -match "7950X3D|9950X3D") { 8 }
-            elseif ($cpu.Name -match "7900X3D") { 6 }
-            else { [math]::Floor($totalCores / 2) }
-
-        # Build affinity mask for CCD0 (V-Cache CCD)
-        # Use [uint64] to avoid sign overflow on 64-core systems
-        [uint64]$mask = 0
-        for ($i = 0; $i -lt $ccd0Cores; $i++) {
-            $mask = $mask -bor ([uint64]1 -shl $i)                     # First thread
-            if ($smtEnabled -and ($totalCores + $i) -lt 64) {
-                $mask = $mask -bor ([uint64]1 -shl ($totalCores + $i))  # SMT partner
-            }
-        }
-
         return @{
-            IsX3D        = $true
-            DualCCD      = $true
-            CpuName      = $cpu.Name.Trim()
-            Ccd0Cores    = $ccd0Cores
-            TotalCores   = $totalCores
-            SmtEnabled   = $smtEnabled
-            AffinityMask = $mask
-            AffinityHex  = "0x" + $mask.ToString("X")
-            Reason       = "Dual CCD — CCD0 (cores 0-$($ccd0Cores - 1)) has V-Cache"
+            IsX3D                    = $true
+            DualCCD                  = $true
+            CpuName                  = $cpu.Name.Trim()
+            HasAuthoritativeTopology = $false
+            Reason                   = "Dual-CCD model detected, but Windows logical-processor-to-CCD topology is unavailable; automatic affinity is disabled."
         }
     }
 
-    # Unknown X3D variant — inform but don't auto-pin
+    # Unknown X3D variant - inform but don't auto-pin
     return @{
         IsX3D   = $true
         DualCCD = $null
         CpuName = $cpu.Name.Trim()
-        Reason  = "Unknown X3D model — manual CCD identification recommended"
+        Reason  = "Unknown X3D model - manual CCD identification recommended"
     }
 }
 
@@ -95,26 +96,39 @@ function Set-CS2ProcessPriority {
     .SYNOPSIS  Sets persistent High CPU priority for cs2.exe via IFEO PerfOptions.
     .DESCRIPTION
         Uses Windows IFEO to set CpuPriorityClass=3 (High) for cs2.exe.
-        The kernel reads this at process creation — zero overhead, no service.
+        Windows reads this policy when creating the process. It does not require
+        a resident helper service; scheduling effects remain system-dependent.
 
-        On dual-CCD Ryzen X3D CPUs, also creates a scheduled task to pin cs2.exe
-        affinity to the V-Cache CCD (CCD0).
-
-        DRY-RUN: IFEO write intercepted by Set-RegistryValue. Task printed only.
+        For dual-CCD Ryzen X3D CPUs, Windows' aggregate WMI counts are not used
+        to guess an affinity mask.  IFEO remains the only automatic mechanism
+        until an authoritative LP-to-CCD mapping is available.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param()
 
-    # ── 1. IFEO PerfOptions — persistent High priority ────────────────
+    if (-not $PSCmdlet.ShouldProcess("cs2.exe", "Configure process priority and X3D affinity")) {
+        return (Get-ProcessPriorityOperationResult -Status "Skipped" -Message "Process-priority configuration was not approved.")
+    }
+
+    # ── 1. IFEO PerfOptions - persistent High priority ────────────────
     $ifeoPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe\PerfOptions"
-    Set-RegistryValue $ifeoPath "CpuPriorityClass" 3 "DWord" `
-        "Persistent High CPU priority for cs2.exe (IFEO kernel-level)"
+    $ifeoResult = Set-RegistryValue $ifeoPath "CpuPriorityClass" 3 "DWord" `
+        "Persistent High CPU priority for cs2.exe (IFEO kernel-level)" -PassThru
+    if (-not $ifeoResult) {
+        return (Get-ProcessPriorityOperationResult -Status "Failed" -Message "IFEO priority write did not return a result." -IfeoResult $ifeoResult)
+    }
+    if ($ifeoResult.Status -eq "DryRun") {
+        return (Get-ProcessPriorityOperationResult -Status "DryRun" -Message "IFEO priority configuration previewed; no persistent change was made." -IfeoResult $ifeoResult)
+    }
+    if ($ifeoResult.Status -ne "Success") {
+        return (Get-ProcessPriorityOperationResult -Status $ifeoResult.Status -Message "IFEO priority configuration did not complete: $($ifeoResult.Message)" -IfeoResult $ifeoResult)
+    }
 
     # ── 2. Apply to currently running cs2.exe (if any) ─────────────────
     $cs2 = Get-Process cs2 -ErrorAction SilentlyContinue
     if ($cs2) {
         if ($SCRIPT:DryRun) {
-            Write-Host "  [DRY-RUN] Would set running cs2.exe priority to High" -ForegroundColor Magenta
+            Write-ConsoleLine "  [DRY-RUN] Would set running cs2.exe priority to High" -ForegroundColor Magenta
         } else {
             try {
                 $cs2 | ForEach-Object { $_.PriorityClass = 'High' }
@@ -123,19 +137,20 @@ function Set-CS2ProcessPriority {
         }
     }
 
-    # ── 3. X3D CCD Affinity (dual-CCD only) ──────────────────────────
+    # ── 3. X3D topology notice (automatic affinity intentionally disabled) ──
+    $affinityTaskResult = $null
     $x3d = Get-X3DCcdInfo
     if ($x3d -and $x3d.IsX3D) {
         Write-Blank
-        if ($x3d.DualCCD) {
-            Write-Host "  X3D DETECTED: $($x3d.CpuName)" -ForegroundColor Yellow
-            Write-Host "  $($x3d.Reason)" -ForegroundColor White
-            Write-Host "  V-Cache CCD affinity mask: $($x3d.AffinityHex)" -ForegroundColor Cyan
+        if ($x3d.DualCCD -and $x3d.HasAuthoritativeTopology) {
+            Write-ConsoleLine "  X3D DETECTED: $($x3d.CpuName)" -ForegroundColor Yellow
+            Write-ConsoleLine "  $($x3d.Reason)" -ForegroundColor White
+            Write-ConsoleLine "  V-Cache CCD affinity mask: $($x3d.AffinityHex)" -ForegroundColor Cyan
 
             # Set affinity on running cs2.exe if present
             if ($cs2) {
                 if ($SCRIPT:DryRun) {
-                    Write-Host "  [DRY-RUN] Would set cs2.exe affinity to $($x3d.AffinityHex)" -ForegroundColor Magenta
+                    Write-ConsoleLine "  [DRY-RUN] Would set cs2.exe affinity to $($x3d.AffinityHex)" -ForegroundColor Magenta
                 } else {
                     try {
                         $cs2 | ForEach-Object { $_.ProcessorAffinity = [IntPtr]::new([long]$x3d.AffinityMask) }
@@ -145,25 +160,34 @@ function Set-CS2ProcessPriority {
             }
 
             # Create scheduled task for persistent CCD affinity
-            Install-CS2AffinityTask -AffinityMask $x3d.AffinityMask -AffinityHex $x3d.AffinityHex
+            $affinityTaskResult = Install-CS2AffinityTask -AffinityMask $x3d.AffinityMask -AffinityHex $x3d.AffinityHex
+            if (-not $affinityTaskResult) {
+                return (Get-ProcessPriorityOperationResult -Status "Failed" -Message "Dual-CCD affinity task did not return a result." -IfeoResult $ifeoResult)
+            }
+            if ($affinityTaskResult.Status -ne "Success") {
+                return (Get-ProcessPriorityOperationResult -Status $affinityTaskResult.Status -Message "Dual-CCD affinity task did not complete: $($affinityTaskResult.Message)" -IfeoResult $ifeoResult -AffinityTaskResult $affinityTaskResult)
+            }
 
+        } elseif ($x3d.DualCCD) {
+            Write-Warn "X3D detected ($($x3d.CpuName)): $($x3d.Reason)"
+            Write-Info "Persistent IFEO priority was configured; verify CCD topology manually before applying any affinity policy."
         } elseif ($x3d.DualCCD -eq $false) {
             Write-Info "X3D detected ($($x3d.CpuName)): $($x3d.Reason)"
         } else {
-            Write-Warn "X3D detected ($($x3d.CpuName)): $($x3d.Reason) — verify CCD layout manually."
+            Write-Warn "X3D detected ($($x3d.CpuName)): $($x3d.Reason) - verify CCD layout manually."
         }
     }
 
     Write-Blank
     Write-OK "CS2 process priority: High (persistent via IFEO PerfOptions)"
-    Write-Host "  Alternative for advanced CPU management: bitsum.com/processlasso/" -ForegroundColor DarkGray
+    return (Get-ProcessPriorityOperationResult -Status "Success" -Message "Persistent IFEO priority configured." -IfeoResult $ifeoResult -AffinityTaskResult $affinityTaskResult)
 }
 
 function Install-CS2AffinityTask {
     <#
     .SYNOPSIS  Creates a scheduled task that periodically pins cs2.exe to V-Cache CCD.
     .DESCRIPTION
-        Installs a lightweight script (C:\CS2_OPTIMIZE\cs2_affinity.ps1) that checks
+        Installs a lightweight script (C:\FRAMETIME_CFG\frametime_cs2_affinity.ps1) that checks
         if cs2.exe is running and sets its ProcessorAffinity to the V-Cache CCD.
         A scheduled task runs this script every 2 minutes after logon.
         Each execution takes ~50ms and only modifies affinity if needed.
@@ -171,27 +195,38 @@ function Install-CS2AffinityTask {
     param([uint64]$AffinityMask, [string]$AffinityHex)
 
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would create scheduled task '$CS2_AffinityTaskName'" -ForegroundColor Magenta
-        Write-Host "  [DRY-RUN] Would create affinity script: $CS2_AffinityScriptPath" -ForegroundColor DarkMagenta
-        return
+        Write-ConsoleLine "  [DRY-RUN] Would create scheduled task '$CS2_AffinityTaskName'" -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would create affinity script: $CS2_AffinityScriptPath" -ForegroundColor DarkMagenta
+        return (Get-ProcessPriorityOperationResult -Status "DryRun" -Message "Dual-CCD affinity task previewed.")
     }
 
-    # Backup task existence before creation
-    Backup-ScheduledTask -TaskName $CS2_AffinityTaskName -StepTitle $SCRIPT:CurrentStepTitle -ScriptPath $CS2_AffinityScriptPath
+    try {
+        # Backup task existence before creation
+        $capture = Backup-ScheduledTask -TaskName $CS2_AffinityTaskName `
+            -StepTitle $SCRIPT:CurrentStepTitle -ScriptPath $CS2_AffinityScriptPath -PassThru
+        if (-not $capture -or -not $capture.Captured) {
+            $detail = if ($capture -and $capture.Message) { $capture.Message } else { 'No capture result was returned.' }
+            throw "Affinity-task installation blocked because its original state was not captured: $detail"
+        }
+        Flush-BackupBuffer
+        $durableBackup = Get-BackupDataRaw
+        if (@($durableBackup.entries | Where-Object {
+            $_.type -eq 'scheduledtask' -and [string]$_.step -eq [string]$SCRIPT:CurrentStepTitle -and
+            $_.taskName -eq $CS2_AffinityTaskName
+        }).Count -eq 0) {
+            throw "Affinity-task installation blocked because backup.json has no restore record for '$CS2_AffinityTaskName'."
+        }
 
-    # SECURITY: The affinity script is written to C:\CS2_OPTIMIZE\ and executed by a scheduled
-    # task with HighestAvailable privilege. If a non-admin user can modify this file, they achieve
-    # privilege escalation. C:\CS2_OPTIMIZE\ is created by an admin process, so default ACLs
-    # inherit from C:\ — Administrators: Full, SYSTEM: Full, Users: Read+Execute.
-    # Accepted risk: if a local admin has already compromised ACLs on C:\, the entire system is
-    # already compromised. The task runs as InteractiveToken (current user), NOT SYSTEM,
-    # limiting the blast radius to the logged-in user's privilege level.
+    # SECURITY: The affinity script is executed by a HighestAvailable task.
+    # Ensure-SecureWorkDir and the required file ACL restrict modification to
+    # Administrators/SYSTEM before the task is registered. The task uses the
+    # current user's InteractiveToken rather than SYSTEM.
 
     # Create the affinity setter script
     # Use [long] cast to prevent Int32 truncation on high-core-count CPUs (>32 logical processors)
-    Ensure-SecureWorkDir -Path $CFG_WorkDir
-    $scriptContent = @"
-# CS2 CCD Affinity Setter — created by CS2 Optimization Suite
+        Ensure-SecureWorkDir -Path $CFG_WorkDir
+        $scriptContent = @"
+# CS2 CCD Affinity Setter - created by frametime.cfg
 # Sets cs2.exe affinity to V-Cache CCD (mask: $AffinityHex)
 # Runs every 2 minutes via scheduled task. Each run takes ~50ms.
 `$global:_affinityErrors = 0
@@ -207,12 +242,12 @@ if (`$procs) {
     }
 }
 "@
-    Set-Content -Path $CS2_AffinityScriptPath -Value $scriptContent -Encoding UTF8 -Force
-    Set-SecureAcl -Path $CS2_AffinityScriptPath
+        Set-Content -Path $CS2_AffinityScriptPath -Value $scriptContent -Encoding UTF8 -Force -ErrorAction Stop
+        Set-SecureAcl -Path $CS2_AffinityScriptPath -Required
 
     # Register scheduled task via XML for reliable logon trigger + repetition
-    $escapedPath = [System.Security.SecurityElement]::Escape($CS2_AffinityScriptPath)
-    $taskXml = @"
+        $escapedPath = [System.Security.SecurityElement]::Escape($CS2_AffinityScriptPath)
+        $taskXml = @"
 <?xml version="1.0"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
@@ -248,11 +283,13 @@ if (`$procs) {
 </Task>
 "@
 
-    try {
         Register-ScheduledTask -TaskName $CS2_AffinityTaskName -Xml $taskXml -Force | Out-Null
         Write-OK "Scheduled task '$CS2_AffinityTaskName' created (CCD affinity every 2 min)"
+        return (Get-ProcessPriorityOperationResult -Status "Success" -Message "Dual-CCD affinity task '$CS2_AffinityTaskName' created.")
     } catch {
-        Write-Warn "Could not create scheduled task: $_"
+        $message = "Could not create scheduled task: $_"
+        Write-Warn $message
         Write-Info "Manual alternative: set cs2.exe affinity to $AffinityHex in Task Manager"
+        return (Get-ProcessPriorityOperationResult -Status "Failed" -Message $message)
     }
 }

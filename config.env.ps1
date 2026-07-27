@@ -1,29 +1,29 @@
 ﻿# ==============================================================================
-#  config.env.ps1  —  Central Configuration · CS2 Optimization Suite
+#  config.env.ps1  -  Central Configuration · frametime.cfg
 # ==============================================================================
 #
 #  SECURITY: This file is dot-sourced by every entry point (Run-Optimize, PostReboot-Setup,
 #  SafeMode-DriverClean, Cleanup, FpsCap-Calculator, Verify-Settings, GUI). Dot-sourcing
-#  executes all code in the caller's scope — if this file is tampered, arbitrary code runs
-#  as Administrator. In Phase 2/3, this file is dot-sourced from C:\CS2_OPTIMIZE\config.env.ps1
-#  (copied by Step 38).
+#  executes all code in the caller's scope - if this file is tampered, arbitrary code runs
+#  as Administrator. In Phase 2/3, this file is dot-sourced from the published
+#  immutable C:\FRAMETIME_CFG\runtime-generations\<id> payload created by Step 38.
 #
 #  Mitigations:
-#    - C:\CS2_OPTIMIZE\ is created by an admin process, inheriting C:\ ACLs (Users: Read+Execute)
+#    - C:\FRAMETIME_CFG\ is hardened to an Administrators/SYSTEM-only ACL before use
 #    - Source repo directory requires write access to modify (standard Git checkout)
-#    - No runtime integrity check is performed (accepted risk — if attacker has admin write
-#      access to C:\CS2_OPTIMIZE\, the system is already compromised at that privilege level)
+#    - A fixed payload file set is staged uniquely, SHA-256-manifest validated, and
+#      published only after an exact-set verification; Phase 2/3 validate that manifest
+#      before administrator checks or helper loading
 #
 
-$CFG_Version        = "v2.1"
-$CFG_WorkDir        = "C:\CS2_OPTIMIZE"
+$CFG_Version        = "v3.0.0-alpha.1"
+$CFG_WorkDir        = "C:\FRAMETIME_CFG"
 $CFG_LogDir         = "$CFG_WorkDir\Logs"
-$CFG_LogFile        = "$CFG_LogDir\optimize_current.log"
+$CFG_LogFile        = "$CFG_LogDir\frametime_current.log"
 $CFG_StateFile      = "$CFG_WorkDir\state.json"
 $CFG_ProgressFile   = "$CFG_WorkDir\progress.json"
 $CFG_LatencyHistoryFile = "$CFG_WorkDir\latency_history.json"
 $CFG_LogMaxFiles    = 5
-$CFG_BackupMaxVersions = 3
 # Bypass is the default because the suite runs locally and is already admin-elevated.
 # Harden further with RemoteSigned or AllSigned if you manage signed local scripts.
 $CFG_RunOnceExecutionPolicy = "Bypass"
@@ -32,7 +32,8 @@ $CFG_RunOnceExecutionPolicy = "Bypass"
 $CFG_GUID_Display   = "{4d36e968-e325-11ce-bfc1-08002be10318}"   # Display adapters (GPU)
 $CFG_GUID_Network   = "{4d36e972-e325-11ce-bfc1-08002be10318}"   # Network adapters (NIC)
 
-# ── Tool directories removed — all optimizations are now native PowerShell ────
+# No third-party optimization-tool directory is configured. The workflow still
+# invokes Windows utilities and, when selected, the NVIDIA installer.
 
 # ── Benchmark Maps ─────────────────────────────────────────────────────────────
 $CFG_Benchmark_Dust2   = "https://steamcommunity.com/sharedfiles/filedetails/?id=3240880604"
@@ -76,32 +77,28 @@ $CFG_Autostart_Remove = @(
 
 # ── Services to disable ───────────────────────────────────────────────────────
 # Xbox services: background auth/sync/networking. XboxGipSvc controls Xbox
-# wireless controllers — re-enable if using Xbox wireless peripherals.
+# wireless controllers - re-enable if using Xbox wireless peripherals.
 $CFG_XboxServices = @("XblAuthManager", "XblGameSave", "XboxNetApiSvc", "XboxGipSvc")
 
 # ── Virtual/VPN Adapter Filter ─────────────────────────────────────────────────
 # Regex for -notmatch on InterfaceDescription. Filters virtual switches, VPN
 # tunnels, and Bluetooth PAN from DNS and NIC operations. Each VPN product is
-# listed explicitly — no bare "VPN" pattern (could false-match e.g. "Killer VPN-capable").
+# listed explicitly - no bare "VPN" pattern (could false-match e.g. "Killer VPN-capable").
 # Add your VPN adapter name here if it's not already listed.
 $CFG_VirtualAdapterFilter = "Loopback|Virtual|Hyper-V|Bluetooth|TAP-Windows|WireGuard|Tailscale|OpenVPN|Cisco AnyConnect|Juniper|Fortinet|vEthernet|Docker|Mullvad|NordLynx|ProtonVPN|SoftEther|GlobalProtect|Pulse Secure"
 
 # ── NIC Tweaks ─────────────────────────────────────────────────────────────────
-# InterruptModeration: "Medium" not "Disabled".
-#   djdallmann empirical test (Intel Gigabit CT): Medium produced the lowest DPC latency
-#   variance. "Disabled" means every arriving packet fires an interrupt — under background
-#   network traffic this creates an interrupt storm that increases DPC jitter rather than
-#   reducing it. Medium coalesces packets within a short window (~50-100µs) which is
-#   imperceptible for CS2's 128 tick rate but prevents burst-mode interrupt flooding.
-#   Predictable DPC scheduling > theoretically lower single-packet latency.
+# InterruptModeration uses the driver label "Medium". Vendor drivers can map
+# labels differently, so the live step reports unsupported properties and the
+# user should compare both states on the target adapter.
 #
 # DisplayName varies by vendor:
 #   Intel:   "EEE", "FlowControl", "InterruptModeration", "ReceiveBuffers", "TransmitBuffers"
 #   Realtek: "Energy Efficient Ethernet", "Flow Control", "Interrupt Moderation", "Receive Buffers", "Transmit Buffers"
 # The application layer (Optimize-Hardware.ps1) tries each alternate name if the primary fails.
 #
-# Buffer sizing: 512 is appropriate for 1G/2.5G. 5 GbE NICs (RTL8126) benefit from 2048.
-# Detected at runtime in Optimize-Hardware.ps1 based on link speed.
+# Buffer sizing uses 512 by default and 2048 for a detected link speed of at
+# least 5 Gbit/s. This is a repository heuristic, not a measured universal value.
 $CFG_NIC_Tweaks = @{
     "EEE"                 = "Disabled"
     "FlowControl"         = "Disabled"
@@ -109,7 +106,7 @@ $CFG_NIC_Tweaks = @{
     "ReceiveBuffers"      = "512"
     "TransmitBuffers"     = "512"
 }
-# Realtek uses space-separated DisplayNames — mapped from Intel-style names at runtime
+# Realtek uses space-separated DisplayNames - mapped from Intel-style names at runtime
 $CFG_NIC_Tweaks_AltNames = @{
     "EEE"                 = "Energy Efficient Ethernet"
     "FlowControl"         = "Flow Control"
@@ -118,51 +115,50 @@ $CFG_NIC_Tweaks_AltNames = @{
     "TransmitBuffers"     = "Transmit Buffers"
 }
 
-# ── Timer Resolution ─────────────────────────────────────────────────────────
-$CFG_TimerResolution_Desired = 5000        # 0.5ms in 100ns units
-
 # ── DNS Servers ──────────────────────────────────────────────────────────────
 $CFG_DNS_Cloudflare = @("1.1.1.1", "1.0.0.1")
 $CFG_DNS_Google     = @("8.8.8.8", "8.8.4.4")
 $CFG_LatencyTargetsFile = if ($PSScriptRoot) { Join-Path $PSScriptRoot "cfgs\valve-latency-targets.json" } else { ".\cfgs\valve-latency-targets.json" }
 
-# ── CS2 Autoexec Defaults ────────────────────────────────────────────────────
+# ── CS2 generated CFG defaults ───────────────────────────────────────────────
 # Notes:
-#   rate 1000000      — actual CS2 max; 786432 shows "Extremely restricted" in UI (display bug).
-#   cl_net_buffer_ticks 0 — authoritative interp control in CS2; cl_interp_ratio/cl_interp are
-#     belt-and-suspenders. engine_low_latency_sleep_after_client_tick remains in the current
-#     public convar surface and is documented as interacting with r_low_latency; the repo keeps
-#     it enabled as a suite default without claiming fps_max 0 is what activates it.
-#   fps_max 0 — uncapped default. If you prefer a cap, set it explicitly after benchmarking or
+#   rate 1000000      - repository receive-bandwidth value; server and client limits can change.
+#   cl_net_buffer_ticks 0 - repository stable-route default. cl_interp_ratio/cl_interp
+#     are legacy compatibility entries. cl_net_buffer_ticks_use_interp and
+#     cl_tickpacket_desired_queuelength have limited public semantics and are
+#     treated as experimental.
+#   engine_low_latency_sleep_after_client_tick remains in the current public convar surface and
+#     is documented as interacting with r_low_latency; the repo keeps it enabled as a suite
+#     default without claiming fps_max 0 is what activates it.
+#   fps_max 0 - uncapped default. If you prefer a cap, set it explicitly after benchmarking or
 #     via the FPS Cap Calculator guidance.
-#   net_client_steamdatagram_enable_override 1 — forces Valve SDR routing (helps most regions).
-#     Set to 0 here if your direct connection is already clean/low-latency.
-#   speaker_config 1 — Headphones mode. The repo treats this as the current headphone-focused
+#   net_client_steamdatagram_enable_override 1 - requests Valve SDR routing and
+#     can change the selected network path. Compare 0 and 1 locally.
+#   speaker_config 1 - Headphones mode. The repo treats this as the current headphone-focused
 #     spatial baseline, but does not claim a separate snd_use_hrtf toggle exists in the current
 #     public convar surface.
-#   snd_headphone_eq 0 — Natural (unprocessed). 2026 pro study (esportfire.com, 30+ players):
-#     62.5% Natural, 37.5% Crisp. Crisp (1) boosts 2-4kHz highs for footstep clarity but
-#     causes ear fatigue over long sessions. Change to 1 to prefer Crisp.
-#   snd_spatialize_lerp 0 — current suite default for the headphone-focused spatial path.
-#     This is a community-preferred setting, not a Valve-documented competitive requirement.
-#   snd_mixahead 0.05 — conservative community-preferred audio buffer. The current public
-#     convar dump shows a much lower engine default, so the repo treats 0.05 as a stability-
-#     oriented suite default rather than as Valve's current default.
-#   mm_dedicated_search_maxping 80 — tune by region: EU → 40, SEA → 80-150.
-#   r_fullscreen_gamma 2.2 — exclusive fullscreen only (no-op in fullscreen windowed).
-#     Competitive players use 1.6-1.8 to brighten dark corners. 2.2 = system default.
-#   r_player_visibility_mode 1 — Boost Player Contrast. Community benchmarking reports low
-#     overhead on many systems, but the repo now treats it as a suite default rather than a
-#     universal rule.
-#   m_rawinput 1 — kept only as a harmless documentation/forward-compatibility stub.
-#     Current CS2 builds force raw input on already, so this line is a no-op today.
-#     Step 29 handles the Windows-side pointer-acceleration setting; m_mouseaccel1/2/customaccel 0
-#     remain the active CS2-side acceleration guards inside the generated config.
+#   snd_headphone_eq 0 - Natural is the repository default. Change to 1 for the
+#     Crisp equalizer if preferred, then compare audibility and listening comfort.
+#   snd_spatialize_lerp 0 - repository default for the headphone-focused spatial path.
+#     It is not documented here as a Valve competitive requirement.
+#   snd_mixahead 0.05 - repository audio-buffer default. It differs from observed
+#     engine defaults and must be validated after game updates.
+#   mm_dedicated_search_maxping 40 is the repository EU baseline; raise to 80-150
+#     in low-server-density regions.
+#   r_fullscreen_gamma 2.2 - repository default for exclusive fullscreen. Verify
+#     whether the value is active in the selected display mode.
+#   r_player_visibility_mode 1 - repository Boost Player Contrast preference.
+#     The repository contains no benchmark establishing a universal cost.
+#   m_rawinput 1 - retained as a legacy compatibility and intent marker.
+#     A current client may ignore unsupported legacy CVars.
+#     Step 29 handles the Windows-side pointer-acceleration setting. The generated
+#     config retains m_mouseaccel1/2/customaccel 0 as legacy intent markers that
+#     a current client can ignore.
 $CFG_CS2_Autoexec = [ordered]@{
     # ── Network / Interpolation ────────────────────────────────────────────
     # NOTE: cl_interp_ratio, cl_interp, cl_updaterate are deprecated in CS2 Source 2.
-    # The subtick system handles interpolation differently; cl_net_buffer_ticks is the
-    # actual control. These are kept as belt-and-suspenders (harmless no-ops).
+    # Current behavior must be checked in the game console. These legacy entries
+    # are retained for compatibility review.
     "cl_interp_ratio"                              = "1"
     "cl_interp"                                    = "0"
     "cl_updaterate"                                = "128"
@@ -170,24 +166,24 @@ $CFG_CS2_Autoexec = [ordered]@{
     "cl_net_buffer_ticks"                          = "0"
     "cl_net_buffer_ticks_use_interp"               = "1"
     "cl_tickpacket_desired_queuelength"            = "0"
-    "mm_dedicated_search_maxping"                  = "80"
+    "mm_dedicated_search_maxping"                  = "40"
     "mm_session_search_qos_timeout"                = "20"
     "cl_timeout"                                   = "30"
     "net_client_steamdatagram_enable_override"     = "1"
     # ── Engine / FPS ──────────────────────────────────────────────────────
     "engine_low_latency_sleep_after_client_tick"   = "1"     # Current convar exists; kept as a suite default without claiming fps_max 0 activates it
     "engine_no_focus_sleep"                        = "0"
-    "fps_max"                                      = "0"     # Uncapped default — use FPS Cap Calculator to set optimal cap (enables low_latency_sleep above)
+    "fps_max"                                      = "0"     # Uncapped default - use FPS Cap Calculator/NVCP if a cap improves frametimes
     "fps_max_ui"                                   = "200"
     "fps_max_tools"                                = "144"
     # ── Gameplay ──────────────────────────────────────────────────────────
-    "cl_predict_body_shot_fx"                      = "0"     # OFF — 95% pro consensus (ThourCS2 120-player study)
-    "cl_predict_head_shot_fx"                      = "0"     # OFF — phantom dinks cause fatal target-switching errors
+    "cl_predict_body_shot_fx"                      = "0"     # OFF - repository default
+    "cl_predict_head_shot_fx"                      = "0"     # OFF - repository default
     "cl_predict_kill_ragdolls"                     = "0"
-    "cl_disable_ragdolls"                          = "1"     # No corpse physics (CPU savings + visual clarity)
+    "cl_disable_ragdolls"                          = "1"     # Disable corpse physics
     "cl_sniper_delay_unscope"                      = "0"
-    "cl_sniper_show_inaccuracy"                    = "0"     # Oct 2025 — disable scope bloom indicator
-    "cl_crosshair_sniper_show_normal_inaccuracy"   = "0"     # Crisp scope crosshair (no standing inaccuracy blur)
+    "cl_sniper_show_inaccuracy"                    = "0"     # Disable scope inaccuracy indicator
+    "cl_crosshair_sniper_show_normal_inaccuracy"   = "0"     # Disable standing-inaccuracy blur
     "r_drawtracers_firstperson"                    = "0"
     "gameinstructor_enable"                        = "0"
     "con_enable"                                   = "1"
@@ -218,7 +214,7 @@ $CFG_CS2_Autoexec = [ordered]@{
     "cl_hud_telemetry_net_misdelivery_show"        = "0"
     "cl_hud_telemetry_net_quality_graph_show"      = "0"
     "cl_hud_telemetry_serverrecvmargin_graph_show" = "0"
-    # ── Audio — Spatial / System ───────────────────────────────────────────
+    # ── Audio - Spatial / System ───────────────────────────────────────────
     "speaker_config"                               = "1"
     "snd_mixahead"                                 = "0.05"
     "snd_headphone_eq"                             = "0"
@@ -227,7 +223,7 @@ $CFG_CS2_Autoexec = [ordered]@{
     "voice_always_sample_mic"                      = "1"
     "snd_mute_losefocus"                           = "0"
     "snd_voipvolume"                               = "0.5"
-    # ── Audio — Music muting (zero competitive downside) ──────────────────
+    # ── Audio - Repository music-volume preferences ───────────────────────
     "snd_menumusic_volume"                         = "0"
     "snd_roundstart_volume"                        = "0"
     "snd_roundend_volume"                          = "0"
@@ -236,16 +232,14 @@ $CFG_CS2_Autoexec = [ordered]@{
     "snd_mapobjective_volume"                      = "0"
     "snd_tensecondwarning_volume"                  = "0.1"
     "snd_deathcamera_volume"                       = "0"
-    # ── Mouse — raw input (bypass Windows pointer processing) ─────────────
-    # NOTE: m_rawinput is a no-op in CS2 — raw input is always forced on and cannot be disabled.
-    # Kept as belt-and-suspenders for documentation clarity and forward-compatibility.
-    # m_mouseaccel1/2: disable CS2-engine acceleration thresholds (belt-and-suspenders with Step 29).
-    # m_customaccel: disable any custom acceleration curve.
+    # ── Mouse - Compatibility values ──────────────────────────────────────
+    # These legacy input CVars are retained as intent markers. Current client
+    # behavior must be checked because unsupported CVars may be ignored.
     "m_rawinput"                                   = "1"
     "m_mouseaccel1"                                = "0"
     "m_mouseaccel2"                                = "0"
     "m_customaccel"                                = "0"
-    # ── Video — autoexec-settable (remainder is video.txt / in-game menu) ─
+    # ── Video - console-settable (remainder is video.txt / in-game menu) ──
     "r_player_visibility_mode"                     = "1"
     "r_fullscreen_gamma"                           = "2.2"
     "mat_monitorgamma_tv_enabled"                  = "0"
@@ -254,5 +248,3 @@ $CFG_CS2_Autoexec = [ordered]@{
 # ── Chipset Driver URLs ──────────────────────────────────────────────────────
 $CFG_URL_AMD_Chipset   = "https://www.amd.com/en/support/download/drivers.html"
 $CFG_URL_Intel_Chipset = "https://www.intel.com/content/www/us/en/download/19347/chipset-inf-utility.html"
-# Process Lasso — kept as alternative reference (native IFEO replaces it in Step 10)
-$CFG_URL_ProcessLasso  = "https://bitsum.com/processlasso/"
