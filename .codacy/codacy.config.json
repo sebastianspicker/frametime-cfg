@@ -5,7 +5,7 @@
     "provider": "gh",
     "organization": "sebastianspicker",
     "repositoryId": "879340",
-    "repositoryName": "cs2-opt",
+    "repositoryName": "frametime-cfg",
     "createdAt": "2026-06-06T17:41:58.141Z",
     "updatedAt": "2026-06-06T17:41:58.141Z",
     "languages": [
@@ -8982,7 +8982,6 @@
   ],
   "exclude": [
     "docs/archive/**",
-    "docs/agent/**",
     "vendor/**",
     "third_party/**",
     "third-party/**",

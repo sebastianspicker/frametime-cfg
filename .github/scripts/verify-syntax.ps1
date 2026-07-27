@@ -1,16 +1,27 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
 $errors = 0
 $excludedRoots = @(
     "docs/archive",
-    "docs/agent",
     "vendor",
     "third_party",
     "third-party",
     "3rdparty",
     "external"
 )
-$root = (Get-Location).Path
+$root = (Get-Location).Path.TrimEnd([char[]]@("\", "/"))
+$rootPrefix = "$root$([System.IO.Path]::DirectorySeparatorChar)"
 Get-ChildItem -Recurse -Filter "*.ps1" | Where-Object {
-    $relative = [System.IO.Path]::GetRelativePath($root, $_.FullName).Replace("\", "/")
+    if (-not $_.FullName.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Syntax-check path is outside the repository root: $($_.FullName)"
+    }
+
+    # Path.GetRelativePath is unavailable in the .NET Framework used by
+    # Windows PowerShell 5.1. The enumerated files are currently below
+    # $root, so removing the validated root prefix is equivalent and works in
+    # both Windows PowerShell and PowerShell 7.
+    $relative = $_.FullName.Substring($rootPrefix.Length).Replace("\", "/")
     -not ($excludedRoots | Where-Object { $relative -eq $_ -or $relative.StartsWith("$($_)/") })
 } | ForEach-Object {
     $parseErrors = $null

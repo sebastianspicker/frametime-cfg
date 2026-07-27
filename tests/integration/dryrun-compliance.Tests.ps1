@@ -31,7 +31,7 @@ Describe "Set-RegistryValue DRY-RUN compliance" {
         Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
 
-        # Track any actual write attempts — these should NEVER be called
+        # Track any actual write attempts - these should NEVER be called
         Mock Set-ItemProperty {
             $SCRIPT:MockTracker.SetItemProperty.Add(@{
                 Path = $Path; Name = $Name; Value = $Value; Type = $Type
@@ -268,7 +268,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     }
 
     It "Set-RunOnce does NOT write to RunOnce registry in DRY-RUN" {
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         $SCRIPT:MockTracker.SetItemProperty.Count | Should -Be 0
     }
@@ -276,7 +276,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     It "Set-RunOnce prints DRY-RUN or security rejection message (no writes either way)" {
         Mock Write-Warn {}
 
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         # Path validation is now host-independent; DRY-RUN should always stop
         # before any registry write and emit the preview message.
@@ -289,7 +289,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     It "Set-RunOnce reports DRY-RUN status without claiming registration was applied" {
         Mock Write-Warn {}
 
-        $result = Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "DryRun"
         $result.Applied | Should -Be $false
@@ -390,5 +390,53 @@ Describe "Backup buffer stays empty in DRY-RUN" {
         Backup-PowerPlan -StepTitle "Test"
 
         $SCRIPT:_backupPending.Count | Should -Be 0
+    }
+}
+
+Describe "Suite-owned persistence and clipboard stay untouched in DRY-RUN" {
+
+    BeforeEach {
+        Reset-IntegrationState
+        $SCRIPT:DryRun = $true
+        Mock Write-ConsoleLine {}
+        Mock Write-DebugLog {}
+        Mock Ensure-SecureWorkDir {}
+        Mock Save-JsonAtomic {}
+        Mock Set-SecureAcl {}
+        Mock Set-Clipboard {}
+        Mock Get-BackupDataRaw { throw "Backup data must not be opened in DRY-RUN." }
+    }
+
+    It "Save-SuiteState does not create or harden state" {
+        Save-SuiteState -State ([PSCustomObject]@{ mode = "DRY-RUN" })
+
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Save-JsonAtomic -Exactly 0
+        Should -Invoke Set-SecureAcl -Exactly 0
+        Test-Path -LiteralPath $CFG_StateFile | Should -BeFalse
+    }
+
+    It "Ensure-Dir cannot create suite-owned directories" {
+        $previewDirectory = Join-Path $SCRIPT:TestTempRoot "dryrun-directory-sentinel"
+
+        Ensure-Dir $previewDirectory
+
+        Test-Path -LiteralPath $previewDirectory | Should -BeFalse
+    }
+
+    It "Set-ClipboardSafe previews without changing the clipboard" {
+        "preview text" | Set-ClipboardSafe
+
+        Should -Invoke Set-Clipboard -Exactly 0
+        Should -Invoke Write-ConsoleLine -Exactly 1 -ParameterFilter { $Message -match "DRY-RUN.*clipboard" }
+    }
+
+    It "Flush-BackupBuffer never opens backup data even if pending entries exist" {
+        $SCRIPT:_backupPending.Add([PSCustomObject]@{ type = "registry" })
+
+        Flush-BackupBuffer
+
+        Should -Invoke Get-BackupDataRaw -Exactly 0
+        $SCRIPT:_backupPending.Count | Should -Be 1
     }
 }

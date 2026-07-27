@@ -509,24 +509,26 @@ Describe "Valve relay firewall blocks" {
         $result = Block-ValveRelayRegion -RegionName "Frankfurt (Germany)"
 
         $result.AddressCount | Should -Be 2
-        $result.RuleName | Should -Be "CS2 Optimize Relay Block - Frankfurt (Germany)"
+        $result.RuleName | Should -Be "frametime.cfg Relay Block - Frankfurt (Germany)"
         Should -Invoke Remove-NetFirewallRule -Exactly 1 -ParameterFilter {
-            $DisplayName -eq "CS2 Optimize Relay Block - Frankfurt (Germany)"
+            $DisplayName -eq "frametime.cfg Relay Block - Frankfurt (Germany)"
         }
         Should -Invoke New-NetFirewallRule -Exactly 1 -ParameterFilter {
-            $DisplayName -eq "CS2 Optimize Relay Block - Frankfurt (Germany)" -and
+            $DisplayName -eq "frametime.cfg Relay Block - Frankfurt (Germany)" -and
             $Direction -eq "Outbound" -and
             $Action -eq "Block" -and
             ($RemoteAddress -join ',') -eq "155.133.226.68,155.133.226.69"
         }
     }
 
-    It "removes only CS2 Optimize relay block rules when unblocking all" {
+    It "removes current and exact legacy relay block rules when unblocking all" {
         Mock Get-NetFirewallRule {
-            @(
-                [PSCustomObject]@{ DisplayName = "CS2 Optimize Relay Block - Frankfurt (Germany)" },
-                [PSCustomObject]@{ DisplayName = "CS2 Optimize Relay Block - London (England)" }
-            )
+            if ($DisplayName -like 'frametime.cfg*') {
+                return [PSCustomObject]@{ DisplayName = "frametime.cfg Relay Block - Frankfurt (Germany)" }
+            }
+            if ($DisplayName -like 'CS2 Optimize*') {
+                return [PSCustomObject]@{ DisplayName = "CS2 Optimize Relay Block - London (England)" }
+            }
         }
         Mock Remove-NetFirewallRule {}
 
@@ -534,6 +536,20 @@ Describe "Valve relay firewall blocks" {
 
         $result.Count | Should -Be 2
         Should -Invoke Remove-NetFirewallRule -Exactly 2
+    }
+
+    It "reports the region name from an exact legacy relay block rule" {
+        Mock Get-NetFirewallRule {
+            if ($DisplayName -like 'CS2 Optimize*') {
+                return [PSCustomObject]@{ DisplayName = "CS2 Optimize Relay Block - London (England)"; Enabled = 'True' }
+            }
+        }
+
+        $regions = @(Get-BlockedValveRelayRegions)
+
+        $regions.Count | Should -Be 1
+        $regions[0].RegionName | Should -Be "London (England)"
+        $regions[0].RuleName | Should -Be "CS2 Optimize Relay Block - London (England)"
     }
 
     It "can block the known Falkenstein Hetzner hosted target addresses" {
@@ -547,7 +563,7 @@ Describe "Valve relay firewall blocks" {
 
         $result.AddressCount | Should -Be 7
         Should -Invoke New-NetFirewallRule -Exactly 1 -ParameterFilter {
-            $DisplayName -eq "CS2 Optimize Relay Block - Falkenstein (Germany) - Hetzner hosted" -and
+            $DisplayName -eq "frametime.cfg Relay Block - Falkenstein (Germany) - Hetzner hosted" -and
             ($RemoteAddress -join ',') -eq "138.199.142.208,138.199.142.209,138.199.142.210,138.199.142.211,138.199.142.212,138.199.142.213,138.199.142.214"
         }
     }

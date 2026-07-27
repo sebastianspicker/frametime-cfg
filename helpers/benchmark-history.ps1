@@ -1,9 +1,9 @@
 ﻿# ==============================================================================
-#  helpers/benchmark-history.ps1  —  Iterative Benchmark Tracking
+#  helpers/benchmark-history.ps1  -  Iterative Benchmark Tracking
 # ==============================================================================
 
 $CFG_BenchmarkFile    = "$CFG_WorkDir\benchmark_history.json"
-$script:CFG_BenchmarkMaxEntries = 200   # Cap history size — prevents unbounded JSON growth
+$script:CFG_BenchmarkMaxEntries = 200   # Cap history size - prevents unbounded JSON growth
 
 function Add-BenchmarkResult {
     <#
@@ -23,13 +23,18 @@ function Add-BenchmarkResult {
         [int]$Runs = 1
     )
 
+    if ($SCRIPT:DryRun) {
+        Write-ConsoleLine "  [DRY-RUN] Would record benchmark: Avg $AvgFps FPS, 1% low $P1Fps FPS ($Runs run(s))." -ForegroundColor Magenta
+        return $null
+    }
+
     # @() wrapper ensures $history is always an array, even when Get-BenchmarkHistory
     # returns $null (empty/missing file). Without it, $null += $entry yields a bare
     # Hashtable whose .Count equals its key count, causing the trim logic to misfire.
     $history = @(Get-BenchmarkHistory)
 
     $entry = @{
-        # Local time (timezone not tracked — acceptable for gaming benchmarks)
+        # Local time (timezone not tracked - acceptable for gaming benchmarks)
         timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
         avgFps    = $AvgFps
         p1Fps     = $P1Fps
@@ -97,8 +102,8 @@ function Show-BenchmarkComparison {
         $avg = if ($null -ne $entry.avgFps) { $entry.avgFps.ToString("F1", [System.Globalization.CultureInfo]::InvariantCulture).PadLeft(7) } else { "    N/A" }
         $p1  = if ($null -ne $entry.p1Fps) { $entry.p1Fps.ToString("F1", [System.Globalization.CultureInfo]::InvariantCulture).PadLeft(7) } else { "    N/A" }
 
-        $avgDiffStr = "   —  "
-        $p1DiffStr  = "   —  "
+        $avgDiffStr = "   -  "
+        $p1DiffStr  = "   -  "
         $color = "White"
 
         if ($i -gt 0) {
@@ -123,7 +128,7 @@ function Show-BenchmarkComparison {
         $first = $history[0]
         $last  = $history[-1]
         if ($null -eq $last.avgFps -or $null -eq $first.avgFps -or $null -eq $last.p1Fps -or $null -eq $first.p1Fps) {
-            Write-Info "Cannot compute total change — some entries have missing FPS data."
+            Write-Info "Cannot compute total change - some entries have missing FPS data."
             return
         }
         $totalAvgDiff = [math]::Round($last.avgFps - $first.avgFps, 1)
@@ -136,13 +141,13 @@ function Show-BenchmarkComparison {
         Write-ConsoleLine "  1% Lows: $($first.p1Fps) -> $($last.p1Fps)  ($(if($totalP1Diff -ge 0){'+'})$totalP1Diff)" -ForegroundColor $totalColor
 
         if ($totalP1Diff -gt 5) {
-            Write-OK "Significant improvement in 1% lows!"
+            Write-OK "Recorded 1% lows increased by more than 5 FPS. Causation is not established."
         } elseif ($totalP1Diff -gt 0) {
-            Write-OK "Marginal improvement in 1% lows."
+            Write-OK "Recorded 1% lows increased. Causation is not established."
         } elseif ($totalP1Diff -eq 0) {
-            Write-Info "No change in 1% lows — within margin of error."
+            Write-Info "No recorded change in 1% lows."
         } else {
-            Write-Warn "1% lows degraded. Check recent changes."
+            Write-Warn "Recorded 1% lows decreased. Review the capture conditions and recent changes."
         }
     }
 }
@@ -155,6 +160,12 @@ function Invoke-BenchmarkCapture {
     param(
         [string]$Label = ""
     )
+
+    if ($SCRIPT:DryRun) {
+        Write-ConsoleLine "  [DRY-RUN] Would capture and parse FPSHeaven [VProf] benchmark output." -ForegroundColor Magenta
+        Write-ConsoleLine "  [DRY-RUN] Would save benchmark history, compare results, calculate the FPS cap, and copy it to the clipboard." -ForegroundColor Magenta
+        return $null
+    }
 
     # @() wrapper: PowerShell pipeline unwraps `return @()` to $null; with
     # Set-StrictMode -Version Latest, $null.Count is a terminating error.
@@ -200,7 +211,7 @@ function Invoke-BenchmarkCapture {
     if ($history.Count -gt 0) {
         $prev = $history[-1]
         if ($null -eq $prev.avgFps -or $null -eq $prev.p1Fps) {
-            Write-Info "Previous run has incomplete data — skipping comparison."
+            Write-Info "Previous run has incomplete data - skipping comparison."
         } else {
         $avgDiff = [math]::Round($result.Avg - $prev.avgFps, 1)
         $p1Diff  = [math]::Round($result.P1 - $prev.p1Fps, 1)
@@ -216,15 +227,15 @@ function Invoke-BenchmarkCapture {
         Write-ConsoleLine "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor $pColor
 
         if ($p1Diff -gt 5) {
-            Write-OK "Notable improvement in 1% lows! The last change had measurable effect."
+            Write-OK "Recorded 1% lows increased relative to the previous entry. Causation is not established."
         } elseif ($p1Diff -gt 0) {
-            Write-Info "Small improvement. Within typical variance — run 3x to confirm."
+            Write-Info "Recorded 1% lows increased by 5 FPS or less. Repeat the capture before drawing a conclusion."
         } elseif ($p1Diff -lt -5) {
-            Write-Warn "1% lows degraded significantly. Consider reverting the last change."
+            Write-Warn "Recorded 1% lows decreased by more than 5 FPS. Review capture conditions and recent changes."
         } elseif ($p1Diff -lt 0) {
-            Write-Info "Small degradation. May be variance — run 3x to confirm."
+            Write-Info "Recorded 1% lows decreased by 5 FPS or less. Repeat the capture before drawing a conclusion."
         } else {
-            Write-Info "No change. Within margin of error."
+            Write-Info "No recorded change."
         }
         } # end else (prev data valid)
     }

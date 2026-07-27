@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-#  helpers/debloat.ps1  —  Targeted Bloatware + Telemetry Removal
+#  helpers/debloat.ps1  -  Targeted Bloatware + Telemetry Removal
 # ==============================================================================
 
 function Get-GamingDebloatPackageNames {
@@ -54,12 +54,33 @@ function Get-GamingDebloatInventory {
     )
 
     $appxAvailable = [bool](Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)
+    $appxAllUsersAvailable = $appxAvailable
     $installedPackages = @()
     $provisionedPackages = @()
 
     if ($appxAvailable) {
         foreach ($pkg in $PackageNames) {
-            $apps = @(Get-AppxPackage -Name $pkg -AllUsers -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ })
+            $apps = @()
+            if ($appxAllUsersAvailable) {
+                try {
+                    $apps = @(Get-AppxPackage -Name $pkg -AllUsers -ErrorAction Stop | Where-Object { $null -ne $_ })
+                } catch {
+                    # Non-elevated preview sessions cannot enumerate every
+                    # user's packages on some Windows builds. Fall back once to
+                    # the current-user inventory so the rest of the preview can
+                    # complete without claiming full-machine coverage.
+                    $appxAllUsersAvailable = $false
+                    Write-DebugLog "All-users AppX inventory unavailable; using current-user scope: $($_.Exception.Message)"
+                }
+            }
+            if (-not $appxAllUsersAvailable) {
+                try {
+                    $apps = @(Get-AppxPackage -Name $pkg -ErrorAction Stop | Where-Object { $null -ne $_ })
+                } catch {
+                    Write-DebugLog "Current-user AppX inventory failed for '$pkg': $($_.Exception.Message)"
+                    $apps = @()
+                }
+            }
             foreach ($app in $apps) {
                 $installedPackages += [PSCustomObject]@{
                     Name            = $pkg
@@ -70,7 +91,16 @@ function Get-GamingDebloatInventory {
         }
 
         if (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue) {
-            $allProvisioned = @(Get-AppxProvisionedPackage -Online:$true -ErrorAction SilentlyContinue | Where-Object { $null -ne $_ })
+            $allProvisioned = @()
+            try {
+                $allProvisioned = @(Get-AppxProvisionedPackage -Online:$true -ErrorAction Stop | Where-Object { $null -ne $_ })
+            } catch {
+                # Provisioned-package inventory requires elevation on some
+                # Windows builds. Preview mode should still cover the remaining
+                # AppX, service, task, and registry actions when that read is
+                # unavailable.
+                Write-DebugLog "Provisioned AppX inventory unavailable: $($_.Exception.Message)"
+            }
             foreach ($pkg in $PackageNames) {
                 $provisionedMatches = @($allProvisioned | Where-Object { $_.DisplayName -eq $pkg })
                 foreach ($match in $provisionedMatches) {
@@ -124,6 +154,7 @@ function Get-GamingDebloatInventory {
 
     [PSCustomObject]@{
         AppxAvailable       = $appxAvailable
+        AppxAllUsersAvailable = $appxAllUsersAvailable
         InstalledPackages   = @($installedPackages)
         ProvisionedPackages = @($provisionedPackages)
         Services            = @($serviceStates)
@@ -140,6 +171,9 @@ function Write-GamingDebloatInventorySummary {
     if (-not $Inventory.AppxAvailable) {
         Write-Info "AppX cmdlets not available; package removal will be skipped."
     } else {
+        if ($Inventory.PSObject.Properties['AppxAllUsersAvailable'] -and -not $Inventory.AppxAllUsersAvailable) {
+            Write-Info "AppX preview inventory is limited to the current user (all-users enumeration requires elevation)."
+        }
         Write-Info "$(@($Inventory.InstalledPackages).Count) installed AppX package instance(s) matched."
         Write-Info "$(@($Inventory.ProvisionedPackages).Count) provisioned AppX package(s) matched."
         $packageNames = @()
@@ -170,7 +204,7 @@ function Write-GamingDebloatInventorySummary {
 function Invoke-GamingDebloat {
     <#
     .SYNOPSIS  Removes known bloatware AppX packages, disables telemetry services
-               and scheduled tasks. Pure PowerShell — no external tools.
+               and scheduled tasks. Pure PowerShell - no external tools.
     #>
 
     $packageNames = Get-GamingDebloatPackageNames
@@ -240,19 +274,31 @@ function Invoke-GamingDebloat {
     Write-Step "Disabling telemetry services..."
     foreach ($svc in $inventory.Services) {
         if (-not $svc.Exists) {
-            if ($svc.Optional) { Write-Info "Service '$($svc.Name)' not present (removed in newer Windows) — skipping." }
-            else { Write-Warn "Service '$($svc.Name)' not found on this system — skipping." }
+            if ($svc.Optional) { Write-Info "Service '$($svc.Name)' not present (removed in newer Windows) - skipping." }
+            else { Write-Warn "Service '$($svc.Name)' not found on this system - skipping." }
             continue
         }
-        # Skip if already disabled (idempotent — avoids redundant backup entries on re-run)
+        # Skip if already disabled (idempotent - avoids redundant backup entries on re-run)
         if (-not $svc.NeedsDisable) {
-            Write-Sub "$($svc.Label) ($($svc.Name)): already disabled — skipped."
+            Write-Sub "$($svc.Label) ($($svc.Name)): already disabled - skipped."
             continue
         }
         try {
             if (-not $SCRIPT:DryRun) {
-                Backup-ServiceState -ServiceName $svc.Name -StepTitle $SCRIPT:CurrentStepTitle
-                Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue
+                $capture = Backup-ServiceState -ServiceName $svc.Name `
+                    -StepTitle $SCRIPT:CurrentStepTitle -PassThru
+                if (-not $capture -or -not $capture.Captured) {
+                    $detail = if ($capture -and $capture.Message) { $capture.Message } else { 'No capture result was returned.' }
+                    throw "Service change blocked because its original state was not captured: $detail"
+                }
+                Flush-BackupBuffer
+                $durableBackup = Get-BackupDataRaw
+                if (@($durableBackup.entries | Where-Object {
+                    $_.type -eq 'service' -and [string]$_.step -eq [string]$SCRIPT:CurrentStepTitle -and $_.name -eq $svc.Name
+                }).Count -eq 0) {
+                    throw "Service change blocked because backup.json has no restore record for '$($svc.Name)'."
+                }
+                Stop-Service $svc.Name -Force -ErrorAction Stop
                 Set-Service $svc.Name -StartupType Disabled -ErrorAction Stop
                 Write-OK "Disabled: $($svc.Label) ($($svc.Name))"
             } else {
@@ -267,18 +313,31 @@ function Invoke-GamingDebloat {
     Write-Step "Disabling telemetry scheduled tasks..."
     foreach ($tp in $inventory.TaskPaths) {
         if (-not $tp.Exists) {
-            Write-Warn "Task path '$($tp.TaskPath)' not found on this system — skipping."
+            Write-Warn "Task path '$($tp.TaskPath)' not found on this system - skipping."
         }
     }
     foreach ($t in $inventory.Tasks) {
         # Skip already-disabled tasks (idempotent re-run)
         if (-not $t.NeedsDisable) {
-            Write-Sub "Task '$($t.TaskName)': already disabled — skipped."
+            Write-Sub "Task '$($t.TaskName)': already disabled - skipped."
             continue
         }
         if (-not $SCRIPT:DryRun) {
-            Backup-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -StepTitle $SCRIPT:CurrentStepTitle
             try {
+                $capture = Backup-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath `
+                    -StepTitle $SCRIPT:CurrentStepTitle -PassThru
+                if (-not $capture -or -not $capture.Captured) {
+                    $detail = if ($capture -and $capture.Message) { $capture.Message } else { 'No capture result was returned.' }
+                    throw "Scheduled-task change blocked because its original state was not captured: $detail"
+                }
+                Flush-BackupBuffer
+                $durableBackup = Get-BackupDataRaw
+                if (@($durableBackup.entries | Where-Object {
+                    $_.type -eq 'scheduledtask' -and [string]$_.step -eq [string]$SCRIPT:CurrentStepTitle -and
+                    $_.taskName -eq $t.TaskName -and (Get-BackupTaskPath $_) -eq $t.TaskPath
+                }).Count -eq 0) {
+                    throw "Scheduled-task change blocked because backup.json has no restore record for '$($t.TaskName)'."
+                }
                 Disable-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -ErrorAction Stop | Out-Null
                 Write-OK "Disabled task: $($t.TaskName)"
             } catch {

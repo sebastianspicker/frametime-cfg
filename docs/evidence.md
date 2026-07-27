@@ -1,175 +1,112 @@
-# Optimization Evidence & Risk Analysis
+# Evidence and Risk Boundaries
 
-> Per-optimization impact notes and risk trade-off analysis.
-> See the [README](../README.md) for the phase step tables.
+This document describes what the repository can substantiate about its
+optimization actions. It does not assign expected FPS or latency improvements.
+The repository does not contain a controlled benchmark dataset that supports
+general performance estimates across hardware, Windows builds, drivers, and CS2
+versions.
 
----
+For the implemented phase order and current profile behavior, inspect the phase
+scripts and `helpers/tier-system.ps1`. For non-mutating validation behavior, see
+[Full dry-run](dry-run.md). For recovery coverage, see
+[Backup and restore](backup-restore.md).
 
-## Optimization Evidence Table
+## Evidence categories
 
-Every optimization tracked by this suite, with estimated impact ranges from isolated benchmarks and community testing.
+The documentation uses the following evidence categories:
 
-| Optimization | Tier | Risk | 1% Low (%) | Avg FPS (%) | Confidence | Source | Note |
-|---|---|---|---|---|---|---|---|
-| Clear Shader Cache | T1 | SAFE | 0–5 | 0–1 | HIGH | Industry standard; NVIDIA/AMD docs | Only if stale shaders present |
-| Fullscreen Optimizations | T1 | SAFE | 1–5 | 0–2 | HIGH | m0NESY (G2); ThourCS2 | FSE prevents DWM compositing |
-| CS2 Optimized Power Plan | T1 | MODERATE | 2–8 | 1–5 | HIGH | fREQUENCYcs/FPSHeaven; valleyofdoom | Tiered: T1 parking/USB, T2 CPU freq (vendor), T3 C-states off |
-| FPS Cap (NVCP) | T1 | SAFE | 5–20 | −9 (intentional) | HIGH | Blur Busters; FPSHeaven methodology | Stabilizes frametimes |
-| Clean Driver Install | T1 | SAFE | 2–10 | 0–5 | HIGH | NVIDIA/AMD official recommendation | Bloat-free driver |
-| Mouse Acceleration Off | T2 | SAFE | 0 | 0 | HIGH | Universal competitive standard | Input consistency, not FPS |
-| Game DVR / Game Bar Off | T2 | SAFE | 0–3 | 0–2 | MEDIUM | Microsoft docs; community testing | Background recording overhead |
-| Disable Overlays | T2 | SAFE | 0–3 | 0–2 | MEDIUM | Community consensus | Overlay rendering overhead |
-| Autoexec CVars | T2 | SAFE | 0–2 | 0 | MEDIUM | Valve console documentation | Network interpolation tuning |
-| MSI Interrupts | T2 | MODERATE | 0–5 | 0–1 | MEDIUM | valleyofdoom/PC-Tuning | Reduces DPC latency |
-| HAGS Toggle | T2 | MODERATE | −3–5 | −2–3 | MEDIUM | ThourCS2; Blur Busters 2026; community benchmarking | Suite default leans ON on newer GPUs, but benchmark both on your own system |
-| NIC Tweaks | T2 | MODERATE | 0–3 | 0 | LOW | LatencyMon community guides | Only if NIC DPC spikes detected |
-| Debloat | T2 | MODERATE | 0–2 | 0–1 | LOW | Background process reduction | Fewer background tasks |
-| Timer Resolution | T2 | SAFE | 0–2 | 0 | MEDIUM | valleyofdoom/PC-Tuning | More precise system timer |
-| SysMain Disable | T3 | MODERATE | 0–3 | 0–1 | LOW | Community consensus | Only on HDD or low RAM |
-| Visual Effects | T3 | SAFE | 0–1 | 0–1 | LOW | DWM overhead reduction | Minimal impact |
-| VBS/Core Isolation Off | T2 | MODERATE | 2–8 | 1–5 | MEDIUM | Microsoft VBS docs; Phoronix benchmarks | Removes hypervisor overhead on OEM Win11. Skip if FACEIT/Vanguard. |
-| Windows Update Blocker | T3 | CRITICAL | 0 | 0 | N/A | Security trade-off | Disables security updates — not recommended |
+| Category | Meaning |
+|---|---|
+| Implemented | The behavior is present in the checked-in PowerShell or configuration files and is covered by repository tests where noted. |
+| Platform-documented | The mechanism is described by Microsoft, Valve, NVIDIA, AMD, or another responsible platform vendor. A vendor description does not establish a CS2 performance benefit. |
+| Community-derived | The setting or rationale comes from community testing or reverse engineering. Results may not reproduce on other systems. |
+| Experimental | The mechanism is implemented, but compatibility or outcome evidence is incomplete. It requires before-and-after validation on the target system. |
+| Informational | The step reports state or presents guidance and does not itself apply the described system change. |
 
-> **Reading this table:** "1% Low" is frametime consistency (higher = fewer stutters). "Avg FPS" is average framerate. Negative values mean intentional reduction (FPS Cap) or possible regression (HAGS on older GPUs). Confidence reflects the quality and reproducibility of the evidence.
+Repository tests primarily establish parsing, control flow, dry-run safety,
+backup handling, and command construction. They do not establish an FPS,
+frametime, input-latency, network-latency, audio, or image-quality improvement.
 
----
+## Risk labels
 
-## Risk Trade-off Analysis
+Risk labels describe mutation scope and recovery concerns. They are not a
+performance ranking.
 
-### Risk Categories Explained
+| Label | Meaning | Typical review requirement |
+|---|---|---|
+| SAFE | Read-only behavior or a limited change with a straightforward recovery path. Device-specific and software-specific exceptions can still exist. | Confirm the target and review the recorded result. |
+| MODERATE | Changes shared Windows, device, boot, driver, service, or network behavior. | Review applicability, capture current state, and test the affected device or workflow after application. |
+| AGGRESSIVE | Performs a broad or compatibility-sensitive change, such as driver or service work. | Use only with a tested recovery path and current backups. |
+| CRITICAL | Reduces a security control or servicing capability. | Avoid on general-purpose systems unless the user accepts the security and maintenance consequences. |
 
-Every step in the suite is tagged with a risk level that determines whether it runs automatically, requires confirmation, or is skipped entirely — depending on your chosen profile. This isn't just a label: each risk category reflects a real engineering trade-off.
+The runtime scripts, not this document, determine whether a profile applies,
+prompts for, skips, or only describes a step. Preparation, transition, and
+informational blocks are not necessarily profile-gated even when the related
+mutation is tiered elsewhere.
 
-| Risk Level | What It Means | Reversible? | Example | What Could Go Wrong |
-|---|---|---|---|---|
-| **SAFE** | Read-only check, or universally beneficial change with no side effects | Yes, trivially | Shader cache wipe, fullscreen optimizations, IFEO priority | Nothing — these are inherently safe operations |
-| **MODERATE** | Changes Windows behavior in a way that's beneficial for gaming but affects the whole system | Yes, with backup/restore | MSI interrupts, HAGS, NIC tweaks, registry power settings | Other apps may behave slightly differently; rare device compatibility issues |
-| **AGGRESSIVE** | Disables Windows services or modifies boot config; edge cases possible on unusual hardware | Yes, but requires knowledge | SysMain disable, aggressive debloat, driver rollback | Service-dependent apps may fail; boot config changes survive reset |
-| **CRITICAL** | Security implications; modifies system integrity | Yes, but risky to leave on | Deep driver removal in Safe Mode | Windows Update issues; driver installation complications |
+## Implementation and evidence map
 
-### Why Some "Obvious" Settings Aren't SAFE
-
-**MSI Interrupts (MODERATE):** Writing `MSISupported=1` to a device's registry key switches it from legacy line-based interrupts to Message Signaled Interrupts. This is objectively better technology — lower latency, no IRQ sharing. So why MODERATE and not SAFE? Because not all devices properly support MSI. A network adapter that claims MSI support but has a buggy firmware implementation can cause intermittent packet loss. The suite enables MSI for GPU, NIC, and Audio — all well-tested classes — but the possibility of device-specific issues makes this MODERATE.
-
-**HAGS (MODERATE):** Hardware-Accelerated GPU Scheduling hands VRAM page management from the Windows kernel (`dxgkrnl.sys`) to the GPU's own scheduler. On paper, this reduces CPU overhead. In practice, results vary wildly: +5% on some systems, −3% on others, depending on GPU generation, driver version, and game engine. You must benchmark both states on your specific hardware.
-
-**Process Priority IFEO (SAFE):** Setting `CpuPriorityClass=3` via IFEO is SAFE because High priority is the standard recommended level for games, the change is trivially reversible (delete the registry key), and it cannot cause system instability — the Windows scheduler handles High priority processes correctly by design.
-
-**Game Mode — Why We ENABLE It (Step 12):** Many optimization guides from 2020–2022 recommended *disabling* Game Mode, citing a valleyofdoom/PC-Tuning finding about "thread priority interference." This recommendation has not been reproduced in CS2-specific benchmarks, but the repo no longer presents Game Mode as a proved Windows Update suppression contract either. The narrower claim is that Game Mode remains the Windows gaming-default scheduling choice, while Step 27 separately tunes MMCSS and scheduler behavior. Critically, Game Mode and Game DVR/Bar are *separate systems* despite living in the same Windows Settings panel: Step 31 correctly disables DVR (recording overhead), while Step 12 keeps the game-priority path enabled.
-
-**Intel Power Throttling (SAFE, auto-detected):** Intel 12th gen+ CPUs (Alder Lake and newer) introduced a hybrid architecture with Performance cores and Efficiency cores. Windows' "Power Throttling" feature can migrate threads from P-cores to E-cores during brief load troughs — a problem when CS2's render thread gets briefly deprioritized and shifted to an E-core with ~40% lower IPC. Setting `PowerThrottlingOff=1` in the `Control\Power\PowerThrottling` key disables this behavior system-wide. The suite detects Intel hybrid CPUs automatically and only applies this on affected hardware.
-
-### Are Higher-Risk Categories Worth It?
-
-| Category | Typical Gain | Typical Risk | Verdict |
+| Area | Current implementation | Evidence boundary | Recovery boundary |
 |---|---|---|---|
-| **SAFE** | +10–48% 1% lows | None | **Always worth it** |
-| **MODERATE** | +2–8% 1% lows | Rarely causes issues; easily reversed | **Generally worth it** for gaming PCs |
-| **AGGRESSIVE** | +0–5% 1% lows | May cause issues on some configurations | **Only if you benchmark before/after** |
-| **CRITICAL** | 0% FPS gain | Disables security updates | **Not recommended** unless tournament PC |
+| System assessment | Reads hardware, Windows, driver, service, registry, and configuration state. | A detected condition does not by itself predict a performance problem. | Read-only checks require no restore. |
+| Shader and cache cleanup | Removes selected rebuildable cache contents. | Repository tests can verify path selection and dry-run behavior, not the benefit of clearing a specific cache. | Deleted cache data is rebuilt by the application or driver and is not restored from `backup.json`. |
+| Power plan | Creates and activates a repository-defined plan through `powercfg`, with profile-dependent settings. | The applied GUID values are inspectable. Performance and power effects remain hardware-dependent. | Prior active-plan state is recorded; review the power-plan document for setting scope. |
+| HAGS, MPO, Game Mode, scheduler, and timer settings | Applies documented Windows registry or boot configuration changes where selected. | Windows exposes the mechanisms, but the repository has no cross-system CS2 benchmark dataset for them. | Supported registry and boot changes use backup helpers; boot changes require additional care. |
+| Pagefile | Can replace automatic management with a fixed configuration on eligible systems. | A fixed pagefile is not universally beneficial. Workload and memory pressure determine the result. | Pagefile state is recorded, but restoration can require a reboot and manual completion if Windows rejects a live update. |
+| AppX and telemetry cleanup | Removes an explicit AppX allowlist and changes selected services, tasks, and policy values. | Reduced background activity does not imply a measurable CS2 improvement. | AppX packages require manual reinstallation. Service, task, and registry recovery coverage is documented separately. |
+| NIC settings and DNS | Applies selected adapter, RSS, URO, QoS, interrupt, and DNS changes when supported. | Adapter property names, driver support, routes, and results vary by device and network. | Supported adapter and DNS state is recorded. Firewall and device behavior must be checked after restoration. |
+| Driver cleanup and installation | Removes validated display-driver packages, clears selected rebuildable caches, and can install a validated NVIDIA package. AMD-wide application and registry roots are excluded to preserve non-display AMD software. | Successful installation does not establish that one driver version performs better than another. | Removed driver packages are not copied into `backup.json`; a replacement or manual reinstall is required. |
+| NVIDIA DRS profile | Writes the checked-in 42-setting alpha set through NVIDIA DRS APIs. | The alpha set is limited to identifiers supported by public NVAPI or NPI references. Ten undocumented development entries were removed. A public name still does not establish a performance benefit. | Prior DRS values are recorded where supported. Driver changes can alter setting availability. |
+| CS2 configuration | Generates repository-defined video, launch-option, audio, input, HUD, and network defaults. | Many values are preferences or community-derived choices rather than demonstrated universal improvements. | Existing files are backed up where the workflow supports it; user-edited files require review before overwrite or restore. |
+| Benchmark workflow | Stores user-supplied or parsed before-and-after benchmark results and calculates an FPS-cap suggestion. | The workflow can compare supplied measurements. The repository does not ship representative benchmark results for public performance claims. | Benchmark history is local state and is not a system mutation. |
 
-> **Bottom line:** SAFE and MODERATE optimizations cover ~90% of achievable gains with minimal risk. AGGRESSIVE adds marginal improvement. CRITICAL adds zero FPS benefit and significant security risk. Every change is automatically backed up and can be rolled back individually — see [Undo / Rollback](../README.md#undo--rollback).
+## Technical documentation rules
 
----
+When a deep-dive document describes a mechanism, distinguish these questions:
 
-## Step Decision Matrix
+1. Does the operating system, driver, game, or repository expose the setting?
+2. Does the checked-in implementation apply or inspect it as described?
+3. Is the change supported on the target device and software version?
+4. Does a repeatable before-and-after measurement show a useful result on that
+   system?
 
-Shows exactly how each step behaves under every profile. **DRY-RUN** is a modifier on top of any profile — it preserves the profile's skip/prompt/auto logic but replaces all registry, boot config, and power plan writes with preview messages. No system state changes under DRY-RUN.
+Evidence for one question does not answer the others. In particular, a registry
+value being accepted does not prove that a driver acts on it, and a community
+benchmark does not establish a result for other hardware.
 
-| Symbol | Meaning |
-|--------|---------|
-| `auto` | Applied automatically — no prompt shown |
-| `prompted` | Full info card shown (risk / improvement / side effects / undo); user confirms yes or no |
-| `skip` | Not applied at this profile level |
-| `info` | Informational display only — no system changes made |
-| `—` | Auto-completes silently (prep, reserved, or transition step) |
+## Validation expectations
 
-### Phase 1 — 38 Steps
+Before accepting a performance-sensitive change:
 
-| # | Step | Tier | Risk | SAFE | RECOMMENDED | COMPETITIVE | CUSTOM | Notes |
-|---|------|------|------|------|-------------|-------------|--------|-------|
-| 1 | Config + profile selection | — | — | `auto` | `auto` | `auto` | `auto` | Required setup; always runs |
-| 2 | XMP/EXPO check | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Read-only BIOS guide if inactive |
-| 3 | Shader cache clear | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | First CS2 launch +30–60s recompile |
-| 4 | Fullscreen Optimizations off | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Needs cs2.exe path |
-| 5 | NVIDIA driver rollback check | T2 | AGGRESSIVE | `skip` | `skip` | `prompted` | `prompted` | Only shown if NVIDIA + R570+ installed |
-| 6 | CS2 Optimized Power Plan | T1 | MODERATE | `auto`† | `auto`† | `auto`† | `prompted` | †T1 settings always; T2 added in RECOMMENDED+; T3 in COMPETITIVE+ |
-| 7 | HAGS | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | AMD/Intel GPU: informational only |
-| 8 | Pagefile fixed size | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | Auto-skipped if RAM ≥ 32 GB regardless of profile |
-| 9 | Resizable BAR / Smart Access Memory | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | BIOS guide only — no PowerShell changes |
-| 10 | Dynamic Tick | T3 | MODERATE | `skip` | `skip` | `prompted` | `prompted` | Reversible: `bcdedit /set disabledynamictick no` |
-| 11 | Disable MPO | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Eliminates DWM multiplane microstutter |
-| 12 | Enable Windows Game Mode | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Windows gaming-default scheduling path; DVR remains separately disabled |
-| 13 | Gaming Debloat | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | AppX removal is permanent |
-| 14 | Autostart cleanup | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Apps stay installed; only autostart removed |
-| 15 | Windows Update Blocker | T3 | CRITICAL | `skip` | `skip` | `skip` | `prompted` | Security risk — skipped in COMPETITIVE; CUSTOM only |
-| 16 | NIC latency stack | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | EEE/PHY power-save off, RSS, URO (Win11 24H2+), DSCP EF=46, IPv6 left enabled |
-| 17 | Baseline benchmark (CapFrameX) | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Required for before/after comparison |
-| 18 | GPU driver clean (prep) | T1 | SAFE | `—` | `—` | `—` | `—` | Informational; removal happens in Phase 2 |
-| 19 | NVIDIA driver download | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | AMD/Intel: manual download link shown |
-| 20 | NVIDIA profile (prep) | — | — | `—` | `—` | `—` | `—` | Passthrough; actual gating in Phase 3 Step 4 |
-| 21 | MSI interrupts (prep) | — | — | `—` | `—` | `—` | `—` | Passthrough; actual gating in Phase 3 Step 2 |
-| 22 | NIC interrupt affinity (prep) | — | — | `—` | `—` | `—` | `—` | Passthrough; actual gating in Phase 3 Step 3 |
-| 23 | Disable Fast Startup | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | MSI interrupt settings require cold boot — Fast Startup bypasses this |
-| 24 | Dual-channel RAM detection | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Warns + guides if single-channel detected |
-| 25 | Nagle's Algorithm disable | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Affects TCP only; no in-game latency change |
-| 26 | GameConfigStore FSE | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Supplements Step 4 fullscreen tweak |
-| 27 | System scheduling + gaming priority + latency tweaks | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Scheduler quantum, FTH disable, Maintenance disable, NTFS metadata, DisableCoInstallers, Intel PowerThrottlingOff |
-| 28 | Timer resolution | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Requires Windows 10 build 19041+ |
-| 29 | Mouse acceleration disable + mouclass queue | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | mouclass queue default→50; requires reboot |
-| 30 | CS2 GPU preference | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Critical for iGPU+dGPU laptops; no-op on desktop |
-| 31 | Xbox Game Bar / Game DVR off | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | No more Win+G recording |
-| 32 | Overlay disable | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Discord/AMD/GFE require manual steps |
-| 33 | Audio optimization | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Guide only — manual Sound settings |
-| 34 | Autoexec.cfg generator + Launch Options | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | 73 CVars; m_rawinput stub; no automatic thread_pool_option forcing |
-| 35 | Chipset driver check | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | Download link only; no auto-install |
-| 36 | Visual effects + Defender exclusions + Auto HDR off | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Defender: cs2.exe + shader cache exclusions; Win11 Auto HDR disabled |
-| 37 | SysMain + WSearch + qWave + Xbox services off | T3 | MODERATE | `skip` | `skip` | `prompted` | `prompted` | Measurable on HDD. qWave: UDP DPC noise redundant with Step 16. Xbox: skip if using Game Pass/wireless |
-| 38 | Enable Safe Mode + register P2 | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Mandatory final step — reboots to Safe Mode |
+1. Record the Windows build, firmware, hardware, driver, CS2 build, graphics
+   settings, map or workload, and background process state.
+2. Capture a repeatable baseline with the same tool and run conditions used for
+   the comparison.
+3. Change one independent variable at a time where practical.
+4. Repeat enough runs to distinguish the change from normal run-to-run variance.
+5. Check system logs, device state, connectivity, audio, and application
+   stability in addition to frame statistics.
+6. Restore the prior state when the result is neutral, negative, or unstable.
 
-**Profile totals (Phase 1):**
+The included benchmark workflow assists with local comparison but does not
+replace a controlled test design.
 
-| Profile | Auto | Prompted | Skipped |
-|---------|------|----------|---------|
-| SAFE | 23 | 0 | 11 |
-| RECOMMENDED | 9 | 18 | 7 |
-| COMPETITIVE | 9 | 24 | 1 |
-| CUSTOM | 1 | 33 | 0 |
+## Known evidence gaps
 
-### Phase 2 — Safe Mode (3 steps)
+- No committed raw benchmark corpus covers the supported hardware and Windows
+  combinations.
+- No committed latency trace establishes an input, DPC, network, or audio result
+  for every applied setting.
+- NVIDIA DRS identifiers can change availability or behavior between driver
+  branches.
+- CS2 console variables and accepted launch options can change without a stable
+  compatibility guarantee.
+- Network buffer behavior depends on current engine implementation and cannot be
+  converted to a fixed millisecond cost from an assumed server tick rate.
+- Accessibility, High Contrast, scaling, and native WPF behavior require manual
+  validation on Windows.
+- AppX removal, removed driver packages, and some file changes do not have a
+  complete automated rollback path.
 
-Phase 2 runs automatically from `RunOnce`. **No profile interaction — all steps execute unconditionally.**
-
-| Step | Action | Notes |
-|------|--------|-------|
-| 2.1 | Remove Safe Mode boot flag | `bcdedit /deletevalue safeboot` |
-| 2.2 | Native GPU driver removal | PowerShell-based removal (stops services, removes drivers, cleans registry) |
-| 2.3 | Register Phase 3 via RunOnce | Registers `PostReboot-Setup.ps1` for next normal boot |
-
-### Phase 3 — 13 Steps
-
-| # | Step | Tier | Risk | SAFE | RECOMMENDED | COMPETITIVE | CUSTOM | Notes |
-|---|------|------|------|------|-------------|-------------|--------|-------|
-| 1 | Install NVIDIA driver (clean) | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | AMD/Intel: manual install guide shown |
-| 2 | MSI Interrupts | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | Run LatencyMon beforehand recommended |
-| 3 | NIC interrupt affinity | T3 | MODERATE | `skip` | `skip` | `prompted` | `prompted` | Only useful with LatencyMon-confirmed NIC DPC |
-| 4 | NVIDIA CS2 profile (native) | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | 52 DWORD settings applied natively via DRS |
-| 5 | FPS cap info | — | — | `info` | `info` | `info` | `info` | — |
-| 6 | Launch options + video settings | — | — | `info` | `info` | `info` | `info` | — |
-| 7 | VBS / Core Isolation disable | T2 | MODERATE | `skip` | `prompted` | `prompted` | `prompted` | Disables HVCI; skip if FACEIT/Vanguard |
-| 8 | AMD GPU settings guide | T2 | SAFE | `auto` | `prompted` | `prompted` | `prompted` | AMD GPU only |
-| 9 | DNS server configuration | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | Not for corporate/managed networks |
-| 10 | Process priority / CCD affinity | T3 | SAFE | `skip` | `skip` | `prompted` | `prompted` | IFEO PerfOptions + scheduled task for X3D CCD |
-| 11 | VRAM leak awareness | — | — | `info` | `info` | `info` | `info` | CS2-specific VRAM leak warning |
-| 12 | Final checklist + summary | — | — | `info` | `info` | `info` | `info` | — |
-| 13 | Final benchmark + FPS cap calc | T1 | SAFE | `auto` | `auto` | `auto` | `prompted` | Compares against Phase 1 Step 17 baseline |
-
-### Power Plan Step 6 — Internal Decision Matrix
-
-Step 6 is T1 (always runs), but `Apply-PowerPlan` applies three separate tiers of settings internally based on profile:
-
-| Setting Group | SAFE | RECOMMENDED | COMPETITIVE | CUSTOM |
-|---------------|------|-------------|-------------|--------|
-| **T1** — CPU max, no parking, USB/disk off, sleep off, active cooling, PCIe ASPM off (9 settings) | Applied | Applied | Applied | Applied |
-| **T2** — EPP=0, boost 254/255, max idle C1, NVMe/USB-C off, GPU pref=4, vendor CPU min (15–16 settings) | Skipped | Applied | Applied | Applied |
-| **T3** — C-states off, duty cycling off, perf history=1, fast ramp (5 settings) | Skipped | Skipped | Applied | Applied |
+These gaps are acceptable only when they are stated as limitations and the user
+can inspect, decline, measure, and restore the relevant change.

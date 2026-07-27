@@ -1,20 +1,20 @@
 ﻿# ==============================================================================
-#  Optimize-RegistryTweaks.ps1  —  Steps 23-33: Fast Startup, RAM, Nagle,
+#  Optimize-RegistryTweaks.ps1  -  Steps 23-33: Fast Startup, RAM, Nagle,
 #                                   FSE, Scheduler, Timer, Mouse, GPU Pref,
 #                                   Game DVR, Overlay, Audio
 # ==============================================================================
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 23 — DISABLE FAST STARTUP  [T2]
+# STEP 23 - DISABLE FAST STARTUP  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 23) {
-    Write-Section "Step 23 — Disable Fast Startup (Hybrid Boot)"
-    Invoke-TieredStep -Tier 2 -Title "Disable Fast Startup (HiberbootEnabled=0)" `
-        -Why "Fast Startup writes a hibernation snapshot on shutdown and resumes from it on boot, preserving driver state from the previous session. MSI interrupt registry changes and NIC affinity settings only fully take effect after a cold boot — Fast Startup bypasses this." `
-        -Evidence "valleyofdoom/PC-Tuning: confirmed that MSI interrupt settings can fail to persist when Fast Startup is active. Multiple forum reports of MSI registry writes being present but not applied until cold reboot. HiberbootEnabled=0 disables only the hybrid shutdown — full hibernate mode is unaffected." `
-        -Caveat "Boot time increases by 5-15 seconds (no hibernation resume shortcut). Hibernate mode (Sleep) is not affected by this change — only the 'Shut Down' behavior changes." `
+    Write-Section "Step 23 - Disable Fast Startup (Hybrid Boot)"
+    $null = Invoke-TieredStep -Tier 2 -Title "Disable Fast Startup (HiberbootEnabled=0)" `
+        -Why "Disables Windows hybrid shutdown so a shutdown is followed by a cold boot instead of resuming the hiberboot image." `
+        -Evidence "HiberbootEnabled controls Fast Startup. This repository includes no hardware-specific startup-time or driver-behavior benchmark." `
+        -Caveat "Startup can take longer. Sleep and full hibernation are separate Windows features." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Ensures MSI interrupts, NIC affinity, and all driver-level registry changes take effect on the next boot" `
+        -Improvement "Uses a cold-boot path after shutdown" `
         -SideEffects "Slightly longer shutdown and startup time (cold boot instead of hybrid boot)" `
         -Undo "Set HiberbootEnabled = 1 in HKLM:\SYSTEM\...\Power (or re-enable in Power Options -> Choose what the power buttons do)" `
         -Action {
@@ -22,7 +22,7 @@ if ($startStep -le 23) {
                 "HiberbootEnabled" 0 "DWord" "Disable Fast Startup (hybrid boot)"
             if (-not $SCRIPT:DryRun) {
                 Write-OK "Fast Startup disabled. Changes take effect on next shutdown + cold boot."
-                Write-Info "Note: Hibernate / Sleep mode is NOT affected — only 'Shut Down' behavior."
+                Write-Info "Note: Hibernate / Sleep mode is NOT affected - only 'Shut Down' behavior."
             }
             Complete-Step $PHASE 23 "HiberbootEnabled"
         } `
@@ -30,16 +30,16 @@ if ($startStep -le 23) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 24 — DUAL-CHANNEL RAM DETECTION  [T1]
+# STEP 24 - DUAL-CHANNEL RAM DETECTION  [T1]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 24) {
-    Write-Section "Step 24 — Dual-Channel RAM Detection"
-    Invoke-TieredStep -Tier 1 -Title "Check dual-channel RAM" `
-        -Why "Single-channel halves memory bandwidth — devastating for CS2 CPU-bound scenarios." `
-        -Evidence "T1: Memory bandwidth directly measurable. Dual-channel = ~2x throughput. Gamer Nexus / Hardware Unboxed confirmed." `
+    Write-Section "Step 24 - Dual-Channel RAM Detection"
+    $null = Invoke-TieredStep -Tier 1 -Title "Check dual-channel RAM" `
+        -Why "Memory channel population can affect available bandwidth. The effect is hardware- and workload-specific." `
+        -Evidence "The check reads installed memory topology. This repository contains no local CS2 benchmark for channel configuration." `
         -Risk "SAFE" -Depth "CHECK" `
-        -Improvement "Identifies single-channel bottleneck (20-40% FPS loss if found)" `
-        -SideEffects "None — read-only detection" `
+        -Improvement "Identifies a single-channel memory configuration" `
+        -SideEffects "None; this is a read-only detection step" `
         -Undo "N/A (check only)" `
         -SkipAction { Skip-Step $PHASE 24 "DualChannel" } `
         -Action {
@@ -49,18 +49,18 @@ if ($startStep -le 24) {
             } elseif ($dc.DualChannel) {
                 Write-OK "$($dc.Reason)"
             } else {
-                Write-Err "SINGLE-CHANNEL RAM DETECTED!"
+                Write-Warn "MEMORY CHANNEL POPULATION REQUIRES MANUAL REVIEW"
                 Write-Blank
                 Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Red
                 Write-Host "  │  $($dc.Reason)$((' ' * [math]::Max(0, 60 - $dc.Reason.Length)))│" -ForegroundColor Red
                 Write-Host "  │                                                              │" -ForegroundColor Red
-                Write-Host "  │  Single-channel halves memory bandwidth.                    │" -ForegroundColor Yellow
-                Write-Host "  │  In CS2 (CPU-bound) this can mean 20-40% less FPS.         │" -ForegroundColor Yellow
+                Write-Host "  │  A single-module layout can reduce available memory        │" -ForegroundColor Yellow
+                Write-Host "  │  bandwidth. The effect varies by platform and workload.    │" -ForegroundColor Yellow
                 Write-Host "  │                                                              │" -ForegroundColor Red
-                Write-Host "  │  SOLUTION:                                                  │" -ForegroundColor White
-                Write-Host "  │  -> Buy a second identical RAM stick                        │" -ForegroundColor White
-                Write-Host "  │  -> Insert in slot 2 or 4 (check motherboard manual)       │" -ForegroundColor White
-                Write-Host "  │  -> Typical: Slot A2 + B2 for dual-channel                 │" -ForegroundColor White
+                Write-Host "  │  REVIEW:                                                    │" -ForegroundColor White
+                Write-Host "  │  Consult the motherboard population guide and memory QVL. │" -ForegroundColor White
+                Write-Host "  │  Use a validated matched configuration if changing RAM.   │" -ForegroundColor White
+                Write-Host "  │  Verify channel mode and run stability tests afterwards.  │" -ForegroundColor White
                 Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Red
                 Write-Blank
                 if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  [Enter] to continue" }
@@ -70,17 +70,17 @@ if ($startStep -le 24) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 25 — NAGLE'S ALGORITHM DISABLE  [T2]
+# STEP 25 - NAGLE'S ALGORITHM DISABLE  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 25) {
-    Write-Section "Step 25 — Disable Nagle's Algorithm"
-    Invoke-TieredStep -Tier 2 -Title "Disable TCP Nagle delay (TcpNoDelay + TcpAckFrequency)" `
-        -Why "Nagle's Algorithm bundles small TCP packets -> increases latency for TCP connections (Steam API, matchmaking — CS2 game ticks use UDP, unaffected by Nagle)." `
-        -Evidence "Known since Quake/CS1.6. Reduces TCP packet bundling latency. Measurable in network captures." `
-        -Caveat "May minimally increase bandwidth. No effect if CS2 uses pure UDP (most game traffic)." `
+    Write-Section "Step 25 - Disable Nagle's Algorithm"
+    $null = Invoke-TieredStep -Tier 2 -Title "Disable TCP Nagle delay (TcpNoDelay + TcpAckFrequency)" `
+        -Why "Changes TCP acknowledgment frequency and Nagle behavior for the active interface. CS2 gameplay traffic is not assumed to use these TCP controls." `
+        -Evidence "The registry values are deterministic. This repository includes no application-level latency benchmark for the change." `
+        -Caveat "These values affect TCP applications on the selected interface. They do not control UDP game datagrams." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Reduced TCP packet delay — measurable in network captures" `
-        -SideEffects "Minimal bandwidth increase from smaller packets" `
+        -Improvement "Requests immediate TCP acknowledgments and disables Nagle coalescing on the selected interface" `
+        -SideEffects "Can change TCP packet and acknowledgment frequency for other applications on the selected interface" `
         -Undo "Delete TcpNoDelay + TcpAckFrequency values from NIC interface key" `
         -Action {
             $nicGuid = Get-ActiveNicGuid
@@ -100,10 +100,10 @@ if ($startStep -le 25) {
                     Write-DebugLog "Wi-Fi adapter detection failed during Nagle guidance: $($_.Exception.Message)"
                 }
                 if ($wifiOnly) {
-                    Write-Warn "Wi-Fi connection detected — Nagle disable targets wired Ethernet adapters only."
+                    Write-Warn "Wi-Fi connection detected - Nagle disable targets wired Ethernet adapters only."
                     Write-Info "For Wi-Fi: Settings -> Network -> Wi-Fi -> Hardware properties -> note the adapter GUID."
                 } else {
-                    Write-Warn "Active network adapter not found — set manually in regedit."
+                    Write-Warn "Active network adapter not found - set manually in regedit."
                 }
                 Write-Info "HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{NIC-GUID}"
                 Write-Info "TcpNoDelay = 1 (DWord) | TcpAckFrequency = 1 (DWord)"
@@ -114,17 +114,17 @@ if ($startStep -le 25) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 26 — GAMECONFIGSTORE FSE REGISTRY  [T2]
+# STEP 26 - GAMECONFIGSTORE FSE REGISTRY  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 26) {
-    Write-Section "Step 26 — GameConfigStore FSE Registry"
-    Invoke-TieredStep -Tier 2 -Title "Set GameConfigStore fullscreen-exclusive keys" `
-        -Why "Supplements Step 4 (FSO). Forces true fullscreen-exclusive via GameConfigStore." `
-        -Evidence "Known Windows registry keys controlling FSE behavior. Supplement to AppCompatFlags." `
-        -Caveat "Only relevant in fullscreen mode. No effect in windowed/borderless." `
+    Write-Section "Step 26 - GameConfigStore FSE Registry"
+    $null = Invoke-TieredStep -Tier 2 -Title "Set GameConfigStore fullscreen-exclusive keys" `
+        -Why "Applies the repository GameConfigStore values associated with fullscreen behavior." `
+        -Evidence "The registry state is verifiable. Presentation behavior still depends on Windows, the driver, and the game." `
+        -Caveat "The values may be ignored outside applicable fullscreen presentation paths." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Ensures true fullscreen-exclusive — supplements Step 4" `
-        -SideEffects "None — only affects fullscreen rendering behavior" `
+        -Improvement "Applies the documented GameConfigStore policy values" `
+        -SideEffects "Can change fullscreen presentation behavior" `
         -Undo "Delete GameDVR_DXGIHonorFSEWindowsCompatible, GameDVR_FSEBehavior, GameDVR_FSEBehaviorMode, GameDVR_HonorUserFSEBehaviorMode from HKCU:\System\GameConfigStore" `
         -Action {
             $gcsPath = "HKCU:\System\GameConfigStore"
@@ -139,16 +139,16 @@ if ($startStep -le 26) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 27 — SYSTEMRESPONSIVENESS + GAMING PRIORITY  [T2]
+# STEP 27 - SYSTEMRESPONSIVENESS + GAMING PRIORITY  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 27) {
-    Write-Section "Step 27 — System Scheduling, Gaming Priority + Latency Tweaks"
-    Invoke-TieredStep -Tier 2 -Title "Multimedia SystemProfile + scheduler + system latency tweaks (FTH, NTFS, Maintenance)" `
-        -Why "Reserves less CPU for MMCSS multimedia scheduling. Win32PrioritySeparation=0x2A gives the foreground app (CS2) a 3x scheduler quantum boost with fixed quantum on thread wakeup — djdallmann confirmed via WinDbg kernel analysis. NoLazyMode=1 shifts MMCSS from idle-detection to realtime-only operation, eliminating periodic idle-switching overhead. DisablePagingExecutive keeps kernel/driver code in physical RAM. Intel 12th gen+: PowerThrottlingOff prevents E-core mismatch frametime spikes. NetworkThrottlingIndex is deliberately NOT set — see Caveat. Fault Tolerant Heap (FTH): Windows silently patches CS2 heap allocations after any crash event, slowing subsequent allocations 10-15% until process restart — disabled preemptively. Automatic Maintenance fires RunFullMemoryDiagnostic at scheduled intervals with 12-14% measured CPU consumption mid-game (djdallmann xperf). NTFS: DisableLastAccessUpdate stops per-read metadata writes; Disable8dot3NameCreation eliminates legacy 8.3 alias generation overhead. DisableCoInstallers: prevents third-party co-installer DLLs from executing during PnP device enumeration events." `
-        -Evidence "Microsoft-documented: SystemResponsiveness 0-100. Win32PrioritySeparation 0x2A = short, fixed quantum, max foreground boost (2025 Blur Busters: fixed gives better 1% lows than variable 0x26; djdallmann WinDbg confirmed PspForegroundQuantum and PsPrioritySeparation). NoLazyMode: djdallmann GamingPCSetup MMCSS research. DisablePagingExecutive: standard Windows Server tuning. PowerThrottlingOff: confirmed by Hardware Unboxed for Intel 12th gen+. FTH: djdallmann xperf analysis — heap patching confirmed measurable overhead. Maintenance: djdallmann — RunFullMemoryDiagnostic measured 12-14% CPU mid-game. NTFS: valleyofdoom/PC-Tuning — DisableLastAccessUpdate reduces filesystem write I/O; Disable8dot3NameCreation standard Windows Server tuning. DisableCoInstallers: valleyofdoom/PC-Tuning." `
-        -Caveat "NetworkThrottlingIndex 0xFFFFFFFF is a common guide recommendation that djdallmann xperf analysis found INCREASES DPC latency on Intel NICs — deliberately left at default (10). NoLazyMode=1 may slightly increase background CPU cycles. PowerThrottlingOff: Intel 12th gen+ only (auto-detected). FTH: heap allocation errors that FTH would have silently handled may surface as crashes in rare cases. Maintenance: automatic system maintenance tasks won't run automatically — trigger manually from Task Scheduler if needed." `
+    Write-Section "Step 27 - System Scheduling, Gaming Priority + Latency Tweaks"
+    $null = Invoke-TieredStep -Tier 2 -Title "Multimedia SystemProfile + scheduler + system latency tweaks (FTH, NTFS, Maintenance)" `
+        -Why "Applies the repository's MMCSS, foreground scheduling, memory, maintenance, NTFS, and device-installer policy values. NetworkThrottlingIndex is deliberately not changed." `
+        -Evidence "Windows defines the registry values and their control surfaces. This repository does not include isolated benchmark artifacts for the combined policy set." `
+        -Caveat "NoLazyMode may increase background CPU activity. PowerThrottlingOff is limited to detected Intel hybrid CPUs. Disabling FTH can expose heap errors. Automatic maintenance must be run manually. Disabling 8.3 names can break legacy applications." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Foreground 3x scheduler quantum; MMCSS realtime scheduling; kernel in RAM; Intel E-core fix; FTH heap slowdown prevented; no 12-14% maintenance CPU spikes mid-game; NTFS metadata write elimination" `
+        -Improvement "Applies the documented repository policy values and records them for restoration" `
         -SideEffects "Background media apps get slightly less priority. NoLazyMode: marginally higher CPU cycles. FTH disabled: rare heap errors may not be silently suppressed. Maintenance won't run automatically. NTFS: 8.3 filename aliases removed (breaks legacy 16-bit app compatibility)." `
         -Undo "Set SystemResponsiveness=20, Win32PrioritySeparation=2, delete Games/NoLazyMode keys; FTH\Enabled=1; MaintenanceDisabled=0; Delete NtfsDisableLastAccessUpdate or set to 2 (system-managed enabled); NtfsDisable8dot3NameCreation=0; DisableCoInstallers=0" `
         -Action {
@@ -166,7 +166,7 @@ if ($startStep -le 27) {
             # NoLazyMode: shifts MMCSS from periodic idle-detection to realtime-only operation.
             # djdallmann GamingPCSetup: "shifts from idle-detection modes to realtime-only operation"
             Set-RequiredRegistryValue $mmPath "NoLazyMode" 1 "DWord" "MMCSS realtime-only (no idle detection)"
-            # NOTE: NetworkThrottlingIndex deliberately NOT set — djdallmann xperf shows 0xFFFFFFFF increases DPC latency
+            # NOTE: NetworkThrottlingIndex deliberately NOT set - djdallmann xperf shows 0xFFFFFFFF increases DPC latency
             $gamesPath = "$mmPath\Tasks\Games"
             Set-RequiredRegistryValue $gamesPath "Priority"              6      "DWord"  "Gaming priority 6"
             Set-RequiredRegistryValue $gamesPath "Scheduling Category"   "High" "String" "High scheduling"
@@ -174,53 +174,51 @@ if ($startStep -le 27) {
 
             # Foreground scheduler quantum: short interval, FIXED, max priority separation (PsPrioritySeparation=2)
             # 0x2A = binary 00 10 10 10 = Interval:Short(2), Length:Fixed(2), PrioritySeparation:2(Max boost)
-            # Previous: 0x26 (Variable quantum). 2025 Blur Busters + Overclock.net benchmarks showed
-            # Fixed quantum (0x2A) gives measurably lower input latency and better 1% lows than Variable.
-            # Fixed = foreground always gets the full boosted quantum length, no scheduler-decided variation.
+            # Previous repository value: 0x26 (variable quantum).
+            # The current policy selects a fixed foreground quantum. The repository does not
+            # include an isolated benchmark comparing these two values.
             Set-RequiredRegistryValue "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" `
                 "Win32PrioritySeparation" 0x2A "DWord" "Short quantum, fixed, max foreground boost (0x2A)"
 
-            # Keep kernel + driver code in physical RAM — reduces latency on page fault paths
+            # Request that pageable kernel and driver code remain resident. The repository
+            # does not contain a trace establishing a frame-time result from this policy.
             $memMgmt = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
             Set-RequiredRegistryValue $memMgmt "DisablePagingExecutive" 1 "DWord" "Keep kernel code in RAM"
 
-            # Intel 12th gen+ hybrid: disable OS Power Throttling to prevent E-core thread migration
+            # Repository heuristic for detected Intel hybrid CPUs: disable the
+            # operating-system Power Throttling policy.
             $intelHybridName = Get-IntelHybridCpuName
             if ($intelHybridName) {
                 $ptPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling"
-                # Set-RegistryValue creates the key path if missing — no need for standalone New-Item
-                Set-RequiredRegistryValue $ptPath "PowerThrottlingOff" 1 "DWord" "Disable Intel Power Throttling (E-core mismatch)"
-                Write-ActionOK "Intel hybrid CPU ($intelHybridName) — Power Throttling disabled."
+                # Set-RegistryValue creates the key path if missing - no need for standalone New-Item
+                Set-RequiredRegistryValue $ptPath "PowerThrottlingOff" 1 "DWord" "Disable Intel Power Throttling policy"
+                Write-ActionOK "Intel hybrid CPU ($intelHybridName) - Power Throttling disabled."
             } else {
                 Write-Sub "Power Throttling: not applicable (non-Intel-hybrid CPU)"
             }
 
             # ── Fault Tolerant Heap disable ───────────────────────────────────────
-            # Windows FTH silently patches CS2's heap allocator after any crash/hang event.
-            # This "fix" slows ALL memory allocations 10-15% until the process is restarted.
-            # Disabling FTH globally prevents this silent performance regression.
-            # Source: djdallmann/GamingPCSetup xperf analysis.
+            # Fault Tolerant Heap is a Windows compatibility mitigation. This
+            # global policy can affect applications other than CS2.
             Set-RequiredRegistryValue "HKLM:\SOFTWARE\Microsoft\FTH" "Enabled" 0 "DWord" `
-                "Disable Fault Tolerant Heap (prevents post-crash heap slowdown)"
+                "Disable the Fault Tolerant Heap compatibility mitigation"
 
             # ── DisableCoInstallers ──────────────────────────────────────────────────
-            # Prevents third-party co-installer DLLs from running during PnP device
-            # enumeration events (e.g., driver re-installation, device plug-in).
-            # These DLLs can spike CPU briefly and are unnecessary post-setup.
-            # Source: valleyofdoom/PC-Tuning.
+            # Request disabled third-party co-installer execution during PnP
+            # device installation. This can affect later device setup.
             Set-RequiredRegistryValue "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer" `
                 "DisableCoInstallers" 1 "DWord" "Disable PnP co-installer DLLs"
 
             # ── Automatic Maintenance disable ────────────────────────────────────────
-            # Windows schedules RunFullMemoryDiagnostic + disk defrag + scan during gaming.
-            # djdallmann xperf captured 12-14% CPU consumption when maintenance fires mid-game.
+            # This policy disables automatic maintenance scheduling. Maintenance tasks then
+            # need to be initiated manually.
             $maintPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance"
             Set-RequiredRegistryValue $maintPath "MaintenanceDisabled" 1 "DWord" `
                 "Disable Windows Automatic Maintenance scheduler"
 
             # ── NTFS metadata write elimination ──────────────────────────────────────
             # NtfsDisableLastAccessUpdate=1: stops NTFS from updating the "last access"
-            # timestamp on every file read — eliminating a metadata write from each file I/O.
+            # timestamp on every file read - eliminating a metadata write from each file I/O.
             # NtfsDisable8dot3NameCreation=1: stops NTFS from maintaining legacy 8.3 aliases
             # (e.g., "PROGRA~1") alongside every full-length filename. Removes per-create
             # overhead and slightly reduces directory entry sizes.
@@ -228,7 +226,7 @@ if ($startStep -le 27) {
             $fsPath = "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem"
             # 0x80000001 = user-managed + disabled. On Win10 1803+, value 1 alone means
             # "user-managed + ENABLED" (the opposite of intent). The high bit signals user-managed mode.
-            # NOTE: Do NOT cast to [uint32] — in Windows PowerShell 5.1, 0x80000001 is parsed
+            # NOTE: Do NOT cast to [uint32] - in Windows PowerShell 5.1, 0x80000001 is parsed
             # as Int32 (-2147483647) and [uint32] rejects negative values. Passing the raw hex
             # literal works: Set-ItemProperty -Type DWord writes the correct bit pattern regardless
             # of signed/unsigned interpretation.
@@ -245,17 +243,17 @@ if ($startStep -le 27) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 28 — TIMER RESOLUTION  [T2]
+# STEP 28 - TIMER RESOLUTION  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 28) {
-    Write-Section "Step 28 — Timer Resolution"
-    Invoke-TieredStep -Tier 2 -Title "Enable global timer resolution (Win10 2004+)" `
-        -Why "Reduces system timer from ~15.6ms to the highest requested resolution. CS2 benefits from more precise scheduling." `
-        -Evidence "Microsoft-documented since Win10 2004. GlobalTimerResolutionRequests = 1 allows apps to lower timer resolution." `
-        -Caveat "Minimally increases power consumption (CPU wakes more often). Desktop PCs only, not laptops on battery." `
+    Write-Section "Step 28 - Timer Resolution"
+    $null = Invoke-TieredStep -Tier 2 -Title "Enable global timer resolution (Win10 2004+)" `
+        -Why "Enables the Windows policy that allows application timer-resolution requests to be handled globally." `
+        -Evidence "The registry state is verifiable. This repository includes no isolated CS2 scheduling benchmark." `
+        -Caveat "Higher timer resolution can increase wake frequency and power use. Avoid on battery unless measured and required." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "More precise system timer — better thread scheduling for CS2" `
-        -SideEffects "Minimal CPU power increase (CPU wakes more frequently)" `
+        -Improvement "Enables global handling of application timer-resolution requests" `
+        -SideEffects "Can increase CPU wake frequency and power use" `
         -Undo "Delete GlobalTimerResolutionRequests from kernel registry key" `
         -Action {
             $buildRaw = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "CurrentBuildNumber" -ErrorAction SilentlyContinue).CurrentBuildNumber
@@ -266,7 +264,7 @@ if ($startStep -le 28) {
                     "GlobalTimerResolutionRequests" 1 "DWord" "Timer resolution: allow highest request"
                 Write-ActionOK "Timer resolution enabled (Build $build >= 19041)."
             } else {
-                Write-Warn "Windows build $build < 19041 — feature not available."
+                Write-Warn "Windows build $build < 19041 - feature not available."
                 Write-Info "Requires Windows 10 version 2004 or newer."
             }
             Complete-Step $PHASE 28 "TimerResolution"
@@ -275,16 +273,16 @@ if ($startStep -le 28) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 29 — MOUSE ACCELERATION DISABLE  [T2]
+# STEP 29 - MOUSE ACCELERATION DISABLE  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 29) {
-    Write-Section "Step 29 — Disable Mouse Acceleration"
-    Invoke-TieredStep -Tier 2 -Title "Disable mouse acceleration + reduce mouclass kernel queue depth" `
-        -Why "Mouse acceleration scales pointer speed with movement speed -> inconsistent aim. mouclass kernel queue: Windows allocates a nonpaged pool buffer for 100 mouse events by default. At 1kHz polling this means the kernel can buffer up to ~100ms of input events before being forced to flush. Reducing to 50 bounds the worst-case kernel-side input buffering to ~50ms. Source: djdallmann/GamingPCSetup mouclass.sys kernel analysis. NOTE: 2025 testing showed zero measurable impact — buffer drains faster than it fills at 1kHz." `
-        -Evidence "100% of CS pros play without acceleration (prosettings.net). Consistent aim requires 1:1 input. mouclass queue: djdallmann — mouclass.sys analysis of kernel input event buffer depth vs. polling rate and frame latency. Queue of 50 is a safe conservative reduction (values below 30 can cause skipping on some hardware)." `
-        -Caveat "Desktop navigation feels 'slower'. In CS2: acceleration only relevant if raw_input 0. mouclass queue: values below 30 can cause mouse skipping on some hardware — 50 is conservative." `
+    Write-Section "Step 29 - Disable Mouse Acceleration"
+    $null = Invoke-TieredStep -Tier 2 -Title "Disable mouse acceleration + reduce mouclass kernel queue depth" `
+        -Why "Disables Windows pointer acceleration and changes MouseDataQueueSize from the Windows default to the repository value of 50." `
+        -Evidence "The pointer and queue registry values are deterministic. This repository includes no isolated input-latency benchmark for the queue change." `
+        -Caveat "Raw-input applications may bypass pointer acceleration. Queue behavior is driver-dependent, and unsuitable values can cause input loss." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "1:1 mouse input for consistent aim; mouclass queue bounds kernel-side input buffering latency" `
+        -Improvement "Applies linear Windows pointer settings and the repository queue-size value" `
         -SideEffects "Desktop mouse movement feels 'slower' (linear instead of accelerated). mouclass change requires reboot." `
         -Undo "Control Panel -> Mouse -> Pointer Options -> Enable 'Enhance pointer precision'; delete MouseDataQueueSize from HKLM:\SYSTEM\...\mouclass\Parameters" `
         -Action {
@@ -328,16 +326,16 @@ if ($startStep -le 29) {
             # Default queue of 100 events allows Windows to buffer up to ~100ms of mouse
             # input at 1kHz polling before flushing to the user-mode message queue.
             # Reducing to 50 bounds worst-case kernel-side buffering to ~50ms.
-            # NOTE: 2025 Overclock.net + Blur Busters testing found zero measurable impact
-            # from this tweak (buffer drains faster than it fills at 1kHz). Values below 30
-            # can cause mouse skipping on some hardware. 50 is a safe conservative reduction.
-            # Source: djdallmann/GamingPCSetup — mouclass.sys kernel input buffer analysis.
+            # The repository does not include an isolated benchmark for this value. Values
+            # that are too low can cause input loss on some hardware, so 50 is retained as
+            # the repository default.
+            # Source: djdallmann/GamingPCSetup - mouclass.sys kernel input buffer analysis.
             $mouPath = "HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters"
             Set-RegistryValue $mouPath "MouseDataQueueSize" 50 "DWord" `
                 "mouclass kernel queue depth (50 events, down from default 100)"
             if (-not $SCRIPT:DryRun) {
                 Write-OK "mouclass: kernel mouse event queue = 50 (default: 100). Reboot required."
-                Write-Sub "Conservative reduction — values below 30 can cause skipping on some hardware."
+                Write-Sub "Conservative reduction - values below 30 can cause skipping on some hardware."
             }
 
             Complete-Step $PHASE 29 "MouseAccel"
@@ -346,28 +344,42 @@ if ($startStep -le 29) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 30 — CS2 GPU PREFERENCE  [T2]
+# STEP 30 - CS2 GPU PREFERENCE  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 30) {
-    Write-Section "Step 30 — CS2 GPU Preference (Hybrid GPU)"
-    Invoke-TieredStep -Tier 2 -Title "Fix CS2 to high-performance GPU" `
-        -Why "Laptops/hybrid GPU systems sometimes use integrated GPU instead of dedicated." `
-        -Evidence "Windows Graphics Settings API. GpuPreference=2 forces high-performance GPU." `
-        -Caveat "Only relevant for laptops with iGPU + dGPU. Desktop with single GPU: no effect." `
+    Write-Section "Step 30 - CS2 GPU Preference (Hybrid GPU)"
+    $null = Invoke-TieredStep -Tier 2 -Title "Fix CS2 to high-performance GPU" `
+        -Why "Sets the Windows per-application high-performance GPU preference for the resolved cs2.exe path." `
+        -Evidence "The UserGpuPreferences value is verifiable. Windows and the driver retain final device-selection control." `
+        -Caveat "The preference can be ignored on unsupported or single-GPU systems." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Ensures CS2 uses dedicated GPU — critical for laptop users" `
-        -SideEffects "None — only sets GPU preference for cs2.exe" `
+        -Improvement "Applies the per-application high-performance GPU preference" `
+        -SideEffects "Can change GPU selection and power use for cs2.exe" `
         -Undo "Delete cs2.exe entry from UserGpuPreferences registry key" `
         -Action {
             $cs2Path = Get-CS2InstallPath
             if ($cs2Path) {
                 $cs2Exe = "$cs2Path\game\bin\win64\cs2.exe"
                 $regPath = "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences"
-                Set-RegistryValue $regPath $cs2Exe "GpuPreference=2;" "String" "CS2 GPU preference: High Performance"
-                Write-ActionOK "GPU Preference = High Performance for: $cs2Exe"
+                $gpuPreferenceWriteResult = Set-RegistryValue $regPath $cs2Exe `
+                    "GpuPreference=2;" "String" "CS2 GPU preference: High Performance" -PassThru
+                if (-not $gpuPreferenceWriteResult) {
+                    throw "CS2 GPU preference registry write returned no result."
+                }
+                if ($SCRIPT:DryRun -and $gpuPreferenceWriteResult.Status -eq "DryRun") {
+                    Write-Info "CS2 GPU preference registry write previewed for: $cs2Exe"
+                } elseif (-not $SCRIPT:DryRun -and
+                    $gpuPreferenceWriteResult.Status -eq "Success" -and
+                    $gpuPreferenceWriteResult.Applied) {
+                    Write-ActionOK "GPU Preference = High Performance for: $cs2Exe"
+                } else {
+                    throw "CS2 GPU preference registry write did not complete: $($gpuPreferenceWriteResult.Message)"
+                }
             } else {
-                Write-Warn "CS2 not found — manual: Windows Settings -> System -> Display -> Graphics settings"
+                Write-Warn "CS2 not found - manual: Windows Settings -> System -> Display -> Graphics settings"
                 Write-Info "Add cs2.exe -> Options -> High performance"
+                Skip-Step $PHASE 30 "GpuPreference"
+                return
             }
             Complete-Step $PHASE 30 "GpuPreference"
         } `
@@ -375,16 +387,16 @@ if ($startStep -le 30) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 31 — XBOX GAME BAR / GAME DVR DISABLE  [T2]
+# STEP 31 - XBOX GAME BAR / GAME DVR DISABLE  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 31) {
-    Write-Section "Step 31 — Disable Xbox Game Bar + Game DVR"
-    Invoke-TieredStep -Tier 2 -Title "Disable Game Bar, Game DVR and App Capture" `
-        -Why "Game Bar / DVR records in the background consuming GPU resources (encoder + VRAM)." `
-        -Evidence "Multiple benchmark tests show 2-5% less avg FPS with active Game DVR." `
+    Write-Section "Step 31 - Disable Xbox Game Bar + Game DVR"
+    $null = Invoke-TieredStep -Tier 2 -Title "Disable Game Bar, Game DVR and App Capture" `
+        -Why "Game Bar / DVR can perform background capture and use encoder or VRAM resources when enabled." `
+        -Evidence "The registry values control capture and Game Bar behavior. This repository includes no isolated performance benchmark." `
         -Caveat "Gaming Debloat (Step 13) partially already disables this. Explicit registry safety here." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "+2-5% avg FPS by removing background recording overhead" `
+        -Improvement "Disables Windows background game capture and the Game Bar entry points" `
         -SideEffects "No more Game Bar screenshots/recording (Win+G). Use Steam/external tools instead." `
         -Undo "Windows Settings -> Gaming -> Game Bar -> ON" `
         -Action {
@@ -399,16 +411,16 @@ if ($startStep -le 31) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 32 — OVERLAY DISABLE  [T2]
+# STEP 32 - OVERLAY DISABLE  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 32) {
-    Write-Section "Step 32 — Disable Overlays"
-    Invoke-TieredStep -Tier 2 -Title "Steam Overlay + overlay tips" `
-        -Why "Overlays (Steam, Discord, GeForce) inject code into the render loop -> frame pacing disruptions." `
-        -Evidence "Known effect since Source 1. Steam Overlay is measurably 1-3% overhead." `
+    Write-Section "Step 32 - Disable Overlays"
+    $null = Invoke-TieredStep -Tier 2 -Title "Steam Overlay + overlay tips" `
+        -Why "Overlays add in-process or companion UI while a game is running." `
+        -Evidence "The Steam registry value controls its overlay. This repository includes no isolated performance benchmark for overlays." `
         -Caveat "Steam Overlay needed for screenshots (F12) and Shift+Tab. Discord/GFE: disable manually." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "+1-3% by removing render loop injection from overlays" `
+        -Improvement "Disables the Steam overlay and documents manual controls for other overlays" `
         -SideEffects "No Steam overlay (Shift+Tab, F12 screenshots). Discord/GFE overlays need manual disable." `
         -Undo "Steam -> Settings -> In-Game -> Enable Steam Overlay" `
         -Action {
@@ -432,16 +444,16 @@ if ($startStep -le 32) {
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# STEP 33 — AUDIO OPTIMIZATION  [T2]
+# STEP 33 - AUDIO OPTIMIZATION  [T2]
 # ══════════════════════════════════════════════════════════════════════════════
 if ($startStep -le 33) {
-    Write-Section "Step 33 — Audio Optimization"
-    Invoke-TieredStep -Tier 2 -Title "Optimize audio (24-bit/48kHz, ducking off, Spatial Sound off)" `
-        -Why "Wrong audio settings create DPC latency spikes. Bluetooth headsets: 40-200ms latency. Audio ducking reduces other app volumes when 'communication' is detected — prevents unexpected volume changes during gameplay." `
-        -Evidence "DPC latency from audio stack measurable via LatencyMon. 24-bit/48kHz = CS2 native format. UserDuckingPreference=3 disables automatic volume reduction." `
+    Write-Section "Step 33 - Audio Optimization"
+    $null = Invoke-TieredStep -Tier 2 -Title "Optimize audio (24-bit/48kHz, ducking off, Spatial Sound off)" `
+        -Why "Disables Windows communications ducking and provides manual format and spatial-sound guidance." `
+        -Evidence "UserDuckingPreference=3 controls automatic volume reduction. The repository includes no cross-device audio-latency benchmark." `
         -Caveat "Some settings (format, spatial sound) must be set manually in Sound settings. Audio ducking registry key is applied automatically." `
         -Risk "SAFE" -Depth "REGISTRY" `
-        -Improvement "Reduced audio DPC latency + no unexpected volume changes during gameplay" `
+        -Improvement "Prevents Windows communications ducking and documents the repository audio configuration" `
         -SideEffects "Windows will no longer auto-reduce game/music volume when VoIP is detected" `
         -Undo "Set UserDuckingPreference=0 in HKCU:\Software\Microsoft\Multimedia\Audio; or Sound -> Communications -> change to 'Reduce by 80%'" `
         -Action {
@@ -462,8 +474,8 @@ if ($startStep -le 33) {
                     if ($btAudio) {
                         Write-Blank
                         Write-Host "  ⚠  BLUETOOTH AUDIO DETECTED!" -ForegroundColor Red
-                        Write-Host "  Bluetooth headsets have 40-200ms audio latency." -ForegroundColor Yellow
-                        Write-Host "  For CS2 ALWAYS use a wired headset!" -ForegroundColor Yellow
+                        Write-Host "  Wireless audio latency varies by device, codec, and radio conditions." -ForegroundColor Yellow
+                        Write-Host "  Compare with a wired path if latency is a concern." -ForegroundColor Yellow
                         Write-Blank
                     }
                 }

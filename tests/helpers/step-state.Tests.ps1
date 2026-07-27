@@ -78,6 +78,21 @@ Describe "Complete-Step / Test-StepDone round-trip" {
     }
 }
 
+Describe "Show-ResumePrompt DRY-RUN isolation" {
+    BeforeEach { Reset-TestState }
+
+    It "starts from step 1 without reading or changing persisted progress" {
+        $SCRIPT:DryRun = $true
+        Mock Load-Progress { throw "Progress must not be loaded for a preview." }
+        Mock Clear-Progress { throw "Progress must not be cleared for a preview." }
+
+        Show-ResumePrompt -phase 1 -totalSteps 38 | Should -Be 1
+
+        Should -Invoke Load-Progress -Exactly 0
+        Should -Invoke Clear-Progress -Exactly 0
+    }
+}
+
 # ── Phase key format collision avoidance ─────────────────────────────────────
 Describe "Phase key format (P{phase}:{step})" {
 
@@ -130,6 +145,7 @@ Describe "Skip-Step" {
         Skip-Step -phase 1 -stepNum 4 -stepName "Skipped"
 
         Test-StepDone -phase 1 -stepNum 4 | Should -Be $true
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -Be $false
     }
 
     It "does not add skipped step to completedSteps" {
@@ -144,7 +160,7 @@ Describe "Skip-Step" {
         Skip-Step -phase 1 -stepNum 4 -stepName "Skipped"
 
         $prog = Load-Progress
-        # Skip-Step no longer advances lastCompletedStep — it tracks lastSkippedStep separately
+        # Skip-Step no longer advances lastCompletedStep - it tracks lastSkippedStep separately
         $prog.lastCompletedStep | Should -Be 3
         $prog.lastSkippedStep | Should -Be 4
     }
@@ -165,6 +181,26 @@ Describe "Skip-Step" {
         $prog = Load-Progress
         @($prog.skippedSteps | Where-Object { $_ -eq "P1:4" }).Count | Should -Be 1
     }
+
+    It "replaces a skipped state with completed state after a successful retry" {
+        Skip-Step -phase 1 -stepNum 4 -stepName "Skipped"
+        Complete-Step -phase 1 -stepNum 4 -stepName "Retried"
+
+        $prog = Load-Progress
+        $prog.skippedSteps | Should -Not -Contain "P1:4"
+        $prog.completedSteps | Should -Contain "P1:4"
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -BeTrue
+    }
+
+    It "replaces a completed state when the current run explicitly skips it" {
+        Complete-Step -phase 1 -stepNum 4 -stepName "Completed"
+        Skip-Step -phase 1 -stepNum 4 -stepName "Skipped on rerun"
+
+        $prog = Load-Progress
+        $prog.completedSteps | Should -Not -Contain "P1:4"
+        $prog.skippedSteps | Should -Contain "P1:4"
+        Test-StepCompleted -phase 1 -stepNum 4 | Should -BeFalse
+    }
 }
 
 # ── Clear-Progress ───────────────────────────────────────────────────────────
@@ -183,7 +219,7 @@ Describe "Clear-Progress" {
             $prog.completedSteps.Count | Should -Be 0
             $prog.lastCompletedStep    | Should -Be 0
         } else {
-            # File was deleted — verify it no longer exists
+            # File was deleted - verify it no longer exists
             Test-Path $CFG_ProgressFile | Should -Be $false
         }
     }

@@ -1,10 +1,11 @@
 # Storage Health
 
-This repo now exposes SSD TRIM state as a **maintenance/correctness** surface, not as a claimed competitive-performance meta tweak.
+This repository exposes SSD TRIM state as a maintenance and correctness check,
+not as a claimed CS2 performance optimization.
 
 ## What the Feature Does
 
-The Analyze footer can:
+The Assess footer can:
 
 - read current `DisableDeleteNotify` state
 - show whether TRIM is enabled for NTFS/ReFS where Windows reports it
@@ -14,10 +15,10 @@ The Analyze footer can:
 
 ## What the Feature Does Not Claim
 
-This repo does **not** claim:
+This repo does not claim:
 
 - a guaranteed FPS increase from enabling TRIM
-- that ReTrim is a 2026 CS2 meta optimization
+- that ReTrim is a CS2 performance optimization
 - that storage-maintenance actions should be part of the normal Phase 1/2/3 tuning path
 
 The right framing is:
@@ -31,7 +32,7 @@ The right framing is:
 TRIM is usually already enabled on a healthy modern Windows install. When it is not, the correct action is remediation, not "optimization." That makes it a better fit for:
 
 - `Verify-Settings.ps1`
-- the GUI Analyze footer
+- the GUI Assess footer
 - manual maintenance sessions
 
 instead of the competitive tuning sequence.

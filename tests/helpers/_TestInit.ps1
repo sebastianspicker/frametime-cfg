@@ -27,7 +27,7 @@ $SCRIPT:_OriginalCfgProgressFile = $CFG_ProgressFile
 $SCRIPT:_OriginalCfgLatencyHistoryFile = $CFG_LatencyHistoryFile
 
 # Create a per-run temp directory for all test artifacts
-$SCRIPT:TestTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cs2opt-tests-$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"
+$SCRIPT:TestTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "frametime-tests-$([System.Guid]::NewGuid().ToString('N').Substring(0,8))"
 New-Item -ItemType Directory -Path $SCRIPT:TestTempRoot -Force | Out-Null
 
 # Redirect all working paths to temp
@@ -55,7 +55,7 @@ $SCRIPT:CurrentStepTitle = $null
 # ── Cross-platform stubs for Windows-only cmdlets ───────────────────────────
 # On macOS/Linux, cmdlets like Get-CimInstance, Get-Service, Get-ScheduledTask
 # do not exist. Define no-op stubs so that Pester Mock can intercept them.
-# These stubs are intentionally minimal — tests MUST mock them with real return values.
+# These stubs are intentionally minimal - tests MUST mock them with real return values.
 if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $IsWindows -eq $false) {
     if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
         function global:Get-CimInstance { param($ClassName, $Filter) $null }
@@ -65,6 +65,34 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     }
     if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
         function global:Get-ScheduledTask { param($TaskName, $TaskPath) $null }
+    }
+    # AppX stubs use the union of parameters exercised across the suite so
+    # Pester mock binding is independent of test-file discovery order.
+    if (-not (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxPackage {
+            param($Name, [switch]$AllUsers, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command Remove-AppxPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxPackage {
+            param([Parameter(ValueFromPipeline)]$InputObject, $Package, [switch]$AllUsers,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            process { $InputObject }
+        }
+    }
+    if (-not (Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Get-AppxProvisionedPackage {
+            param([switch]$Online, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
+    if (-not (Get-Command Remove-AppxProvisionedPackage -ErrorAction SilentlyContinue)) {
+        function global:Remove-AppxProvisionedPackage {
+            param([Parameter(ValueFromPipeline)]$InputObject, [string]$PackageName, [switch]$Online,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            process { if ($null -ne $InputObject) { $InputObject } else { $PackageName } }
+        }
     }
     if (-not (Get-Command Enable-ScheduledTask -ErrorAction SilentlyContinue)) {
         function global:Enable-ScheduledTask { param($TaskName, $TaskPath) $null }
@@ -143,7 +171,7 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     }
     if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
         function global:New-NetFirewallRule {
-            param($DisplayName, $Description, $Direction, $Action, $RemoteAddress, $Protocol, $Profile, $Enabled, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            param($DisplayName, $Description, $Direction, $Action, $RemoteAddress, $Protocol, [Alias("Profile")]$FirewallProfile, $Enabled, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
             $null
         }
     }
@@ -213,7 +241,7 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     if ($originalSetItemProperty -and -not $originalSetItemProperty.Parameters.ContainsKey('Type')) {
         function global:Set-ItemProperty {
             param($Path, $Name, $Value, $Type, $ErrorAction)
-            # No-op on non-Windows — tests will mock this
+            # No-op on non-Windows - tests will mock this
         }
     }
     # Same for Remove-ItemProperty with -ErrorAction
@@ -309,6 +337,30 @@ function New-TestBackupFile {
     return $CFG_BackupFile
 }
 
+function Add-TestServiceBackupCapture {
+    param([string]$ServiceName, [string]$StepTitle)
+    if (-not (Test-Path -LiteralPath $CFG_BackupFile)) { New-TestBackupFile -Entries @() | Out-Null }
+    $entry = [ordered]@{
+        type = "service"; name = $ServiceName; originalStartType = "Manual"
+        delayedAutoStart = $false; originalStatus = "Running"
+        step = $StepTitle; timestamp = "2026-01-01"
+    }
+    $SCRIPT:_backupPending.Add($entry)
+    return [PSCustomObject]@{ Captured = $true; Entry = $entry; Message = "captured" }
+}
+
+function Add-TestScheduledTaskBackupCapture {
+    param([string]$TaskName, [string]$StepTitle, [string]$ScriptPath = "", [string]$TaskPath = "\")
+    if (-not (Test-Path -LiteralPath $CFG_BackupFile)) { New-TestBackupFile -Entries @() | Out-Null }
+    $entry = [ordered]@{
+        type = "scheduledtask"; taskName = $TaskName; taskPath = $TaskPath
+        existed = $true; wasEnabled = $true; scriptPath = $ScriptPath
+        step = $StepTitle; timestamp = "2026-01-01"
+    }
+    $SCRIPT:_backupPending.Add($entry)
+    return [PSCustomObject]@{ Captured = $true; Entry = $entry; Message = "captured" }
+}
+
 # ── Helper: Reset script state between tests ─────────────────────────────────
 function Reset-TestState {
     <#  Resets script-scope variables and cleans test temp files.
@@ -320,8 +372,18 @@ function Reset-TestState {
     $SCRIPT:Profile  = "RECOMMENDED"
     $SCRIPT:Mode     = "CONTROL"
     $SCRIPT:LogLevel = "MINIMAL"
+    $SCRIPT:LogPersistenceEnabled = $false
+    $SCRIPT:FullDryRun = $false
+    $SCRIPT:FullDryRunRequested = $false
+    $SCRIPT:RequestedDryRunGpu = "2"
+    $SCRIPT:DryRunPreviewIssues = 0
     $SCRIPT:CurrentStepTitle = $null
     $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
+    if ($SCRIPT:_backupLockStream) {
+        try { $SCRIPT:_backupLockStream.Dispose() } catch {}
+        $SCRIPT:_backupLockStream = $null
+    }
+    $SCRIPT:_backupLockToken = $null
 
     # Remove test JSON files so each test starts clean
     if ($PSCmdlet.ShouldProcess($SCRIPT:TestTempRoot, "Remove test state files")) {

@@ -1,12 +1,17 @@
-# Debloat & Telemetry — Deep Dive
+# Debloat and Telemetry Deep Dive
 
 > Covers Phase 1 Step 13 (debloat via `helpers/debloat.ps1`) and Step 14 (autostart cleanup in `Optimize-Hardware.ps1`).
 
-"Debloat" is an imprecise term that covers a range of actions from aggressive (removing core Windows components) to conservative (removing third-party apps pre-installed by OEMs). The suite is conservative: it removes known Microsoft bloatware AppX packages, disables two telemetry services, disables telemetry scheduled tasks, and disables consumer features — nothing that is load-bearing for Windows functionality. Autostart cleanup is handled separately by Step 14.
+"Debloat" is an imprecise term. In this repository it means removing an explicit
+AppX package allowlist, disabling two services and selected scheduled tasks, and
+setting two Windows CloudContent policy values. These actions can remove apps a
+user relies on or conflict with managed-device policy. Review the inventory
+before applying them. Autostart cleanup is handled separately by Step 14.
 
-For a fresh machine, start from an official Microsoft Windows 11 25H2 image and
-apply this suite after Windows Update, Microsoft Store updates, and chipset/GPU/NIC
-drivers are current. Do not use prebuilt debloated ISOs as the default baseline.
+For a fresh machine, start from an official Microsoft Windows image supported by
+the repository and apply the suite only after Windows Update, Microsoft Store
+updates, and chipset, GPU, and NIC drivers are installed. Do not use a modified
+image unless you have reviewed its component and policy changes.
 See [Fresh Windows Baseline](fresh-windows-baseline.md).
 
 ---
@@ -16,44 +21,50 @@ See [Fresh Windows Baseline](fresh-windows-baseline.md).
 Step 13 prints a preflight inventory before it changes anything. The inventory
 lists matched installed AppX packages, provisioned AppX packages, telemetry
 services that need disabling, and telemetry scheduled tasks that need disabling.
-DRY-RUN prints the same inventory and then previews the actions without removing
-packages, changing services, disabling tasks, or writing registry values.
+Strict Full DRY-RUN does not enumerate installed AppX state. It renders the
+configured package, service, task, and registry operation plan without removing
+or changing anything. Live execution performs the preflight inventory before
+asking or applying changes.
 
 ### AppX Packages
 
-| Package | App | Why Removed |
-|---------|-----|-------------|
-| `Microsoft.BingNews` | Microsoft News | Background network activity; content update polling |
-| `Microsoft.BingWeather` | Weather | Background location queries and content updates |
-| `Microsoft.GetHelp` | Get Help / Virtual Agent | Background service; no competitive gaming use |
-| `Microsoft.Getstarted` | Tips | Background tips service; no competitive gaming use |
-| `Microsoft.MicrosoftOfficeHub` | Office Hub | Office upsell app; background telemetry |
-| `Microsoft.MicrosoftSolitaireCollection` | Solitaire | Background game telemetry; not relevant to gaming rig |
-| `Microsoft.People` | People | Contact sync background service |
-| `Microsoft.Todos` | Microsoft To Do | Background sync |
-| `Microsoft.WindowsFeedbackHub` | Feedback Hub | Telemetry upload; Windows diagnostic submission |
-| `Microsoft.YourPhone` | Phone Link (legacy package name) | Background phone connection daemon |
-| `Microsoft.Windows.PhoneLink` | Phone Link (Win11 23H2+ package name) | Same app, renamed package — both are removed to cover all Windows versions |
-| `Microsoft.WindowsMaps` | Maps | Background map data updates |
-| `Microsoft.ZuneMusic` | Groove Music / Media Player | Superseded by Windows 11's native Media Player |
-| `Microsoft.ZuneVideo` | Movies & TV | Background store connectivity |
-| `Clipchamp.Clipchamp` | Clipchamp | Video editor; background rendering service |
-| `Microsoft.549981C3F5F10` | Cortana | Background voice assistant daemon; always-on audio monitoring |
-| `Microsoft.MixedReality.Portal` | Mixed Reality Portal | VR setup app; irrelevant for gaming-only system |
-| `Microsoft.SkypeApp` | Skype | Background communication daemon |
-| `Microsoft.WindowsCommunicationsApps` | Mail & Calendar | Background email sync |
-| `Microsoft.OutlookForWindows` | New Outlook for Windows | Mail/Calendar replacement; user-visible but not needed on a dedicated CS2 machine |
-| `Microsoft.Windows.DevHome` | Dev Home | Developer dashboard; deprecated/no longer supported and not useful for gaming |
-| `MSTeams` | Microsoft Teams (new) | Communication app; background login/update surface and no CS2 dependency |
-| `Microsoft.BingSearch` | Bing Search integration | Web search package behind Windows search suggestions |
-| `Microsoft.PowerAutomateDesktop` | Power Automate Desktop | Desktop automation tool; no gaming use and not required by Windows servicing |
+| Package | App | Functional scope removed |
+|---------|-----|--------------------------|
+| `Microsoft.BingNews` | Microsoft News | News application |
+| `Microsoft.BingWeather` | Weather | Weather application and its location-based features |
+| `Microsoft.GetHelp` | Get Help / Virtual Agent | Windows support application |
+| `Microsoft.Getstarted` | Tips | Windows tips application |
+| `Microsoft.MicrosoftOfficeHub` | Office Hub | Microsoft 365 hub application |
+| `Microsoft.MicrosoftSolitaireCollection` | Solitaire | Microsoft Solitaire Collection |
+| `Microsoft.People` | People | People and contact application |
+| `Microsoft.Todos` | Microsoft To Do | To Do application and account-backed task access |
+| `Microsoft.WindowsFeedbackHub` | Feedback Hub | Feedback Hub and its submission interface |
+| `Microsoft.YourPhone` | Phone Link (legacy package name) | Phone Link features represented by this package identity |
+| `Microsoft.Windows.PhoneLink` | Phone Link package name | Phone Link features represented by this package identity |
+| `MicrosoftCorporationII.PhoneLink` | Phone Link package name | Phone Link features represented by this package identity |
+| `Microsoft.WindowsMaps` | Maps | Windows Maps application and offline map UI |
+| `Microsoft.ZuneMusic` | Groove Music / Media Player | Media application represented by this package identity |
+| `Microsoft.ZuneVideo` | Movies & TV | Movies & TV application |
+| `Clipchamp.Clipchamp` | Clipchamp | Clipchamp video editor |
+| `Microsoft.549981C3F5F10` | Cortana | Cortana application package |
+| `Microsoft.MixedReality.Portal` | Mixed Reality Portal | Mixed Reality Portal setup application |
+| `Microsoft.SkypeApp` | Skype | Skype application |
+| `Microsoft.WindowsCommunicationsApps` | Mail & Calendar | Mail and Calendar applications |
+| `Microsoft.OutlookForWindows` | New Outlook for Windows | New Outlook application |
+| `Microsoft.Windows.DevHome` | Dev Home | Dev Home application |
+| `MSTeams` | Microsoft Teams (new) | Microsoft Teams application |
+| `Microsoft.BingSearch` | Bing Search integration | Bing-backed Windows search integration package |
+| `Microsoft.PowerAutomateDesktop` | Power Automate Desktop | Power Automate Desktop application |
 
 Installed packages are removed via `Remove-AppxPackage -AllUsers`, affecting all
 user accounts on the system, not just the current user. Matching provisioned
-packages are also removed via `Remove-AppxProvisionedPackage -Online` so they do
-not reappear for new user profiles after feature updates.
+packages are also removed via `Remove-AppxProvisionedPackage -Online`, removing
+them from the current image's provisioning set for new user profiles. Later
+Windows servicing or Store activity can add packages again.
 
-**What does not get removed:** Core Windows components, Windows Store itself, Xbox app (addressed by Step 37 services separately), DirectX runtime packages, .NET packages, or any Microsoft package not on this explicit list.
+The step does not remove core Windows components, the Microsoft Store, the Xbox
+app, DirectX runtime packages, .NET packages, or any Microsoft package outside
+the explicit list. Step 37 handles selected Xbox services separately.
 
 ### Telemetry Services
 
@@ -62,14 +73,17 @@ not reappear for new user profiles after feature updates.
 | `DiagTrack` | Connected User Experiences and Telemetry | Collects Windows usage data and uploads to Microsoft |
 | `dmwappushservice` | Device Management WAP Push | Handles WAP push messages for MDM/Intune |
 
-Both are set to Disabled and stopped. `dmwappushservice` is irrelevant on non-enterprise home systems. `DiagTrack` runs as a continuous background daemon; stopping it eliminates its periodic CPU and network wakeups.
+Both are set to Disabled and stopped when present. `dmwappushservice` can be
+required for mobile-device management, so this action is not suitable for an
+enrolled or organization-managed PC. The repository has no committed trace that
+quantifies the performance effect of disabling either service.
 
 ### Telemetry Scheduled Tasks
 
-Tasks under these paths are disabled (not deleted — the task scheduler entries remain but won't execute):
+Tasks under these paths are disabled (not deleted - the task scheduler entries remain but won't execute):
 
-- `\Microsoft\Windows\Application Experience\` — compatibility telemetry, program usage reports
-- `\Microsoft\Windows\Customer Experience Improvement Program\` — CEIP data collection tasks
+- `\Microsoft\Windows\Application Experience\` - compatibility telemetry, program usage reports
+- `\Microsoft\Windows\Customer Experience Improvement Program\` - CEIP data collection tasks
 
 Disabling rather than deleting makes these easier to re-enable if needed.
 
@@ -81,7 +95,8 @@ HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent
     DisableSoftLanding             = 1
 ```
 
-Prevents Windows from automatically installing "suggested apps" (third-party apps like Spotify, Disney+, Candy Crush) via the cloud content mechanism. These installs can happen silently after major Windows updates.
+These values request the documented CloudContent policies. Effective behavior
+depends on the Windows edition, version, and any organization-managed policy.
 
 ### Advertising ID
 
@@ -90,14 +105,17 @@ HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo
     Enabled = 0
 ```
 
-Disables the Windows advertising identifier. Apps use this ID to correlate user behavior for targeted advertising. No impact on gaming performance; privacy benefit.
+Requests that the Windows advertising identifier be disabled for the current
+user. This can affect applications that rely on that identifier. The repository
+does not establish a gaming-performance effect.
 
 ---
 
 ## What Debloat Does NOT Do
 
 - Does not remove the Windows Store or any framework packages
-- Does not modify Group Policy or Windows Update settings (that's Step 15)
+- Does not invoke the Local Group Policy editor or change Windows Update policy;
+  it does write the two CloudContent policy registry values listed above
 - Does not remove drivers or hardware-related packages
 - Does not remove Windows Defender, Windows Update, WinSxS, Edge, WebView2, App Installer, DirectX, or .NET runtimes
 - Does not touch any Microsoft package not explicitly in the list
@@ -106,23 +124,14 @@ Disables the Windows advertising identifier. Apps use this ID to correlate user 
 
 ---
 
-## External Debloat Tool Position
+## External debloat tools
 
-This suite does not require WinUtil, AtlasOS, tiny11builder, MicroWin, or any
-other third-party debloat tool. Do not stack external debloat tools with this
-suite unless you have reviewed the exact overlapping AppX, service, task, policy,
-and image-component changes.
+The suite does not require a third-party debloat tool. Combining tools makes the
+origin and recovery path of a change difficult to determine. Review overlapping
+AppX, service, task, policy, and image-component changes before using another
+tool on the same installation.
 
-| Option | Recommendation | Reason |
-|--------|----------------|--------|
-| Official Windows 11 25H2 + this suite | Default | Official servicing path, predictable drivers, explicit repo-owned changes |
-| WinUtil / Win11 Creator | Reference only | Useful comparison source, but its image creator removes 40+ apps and changes OOBE/security defaults |
-| Raphire Win11Debloat | Reference only | Good AppX/package comparison source; this repo owns its smaller allowlist |
-| AtlasOS | Not default | Full OS modification; current docs require supported Windows builds/editions and reinstall-based install |
-| tiny11builder | Lab or VM only | Regular script keeps serviceability but removes broad components; core script is explicitly not for regular use |
-| MicroWin .NET | Do not recommend | Upstream calls it beta/buggy and for users who understand Windows systems management |
-
-References used for this policy:
+Upstream references for comparison:
 
 - Microsoft Windows 11 download: https://www.microsoft.com/en-us/software-download/windows11
 - Microsoft Dev Home support note: https://learn.microsoft.com/en-us/previous-versions/windows/dev-home/
@@ -134,13 +143,14 @@ References used for this policy:
 
 ---
 
-## Impact on Gaming Performance
+## Evidence boundary
 
-The direct FPS impact of these removals is small on a modern system with 16+ GB RAM — background processes on an idle system typically consume 1–3% CPU and a few hundred MB of RAM, neither of which meaningfully constrains CS2.
-
-The real benefit is scheduling noise reduction: fewer background threads competing for CPU scheduler time and fewer network I/O events generating NIC interrupts and NDIS DPC activity during CS2 sessions.
-
-djdallmann's classification (GamingPCSetup): "Debloat provides low-confidence improvements for systems with adequate RAM; the primary benefit is reducing scheduling noise floor rather than recovering meaningfully constrained resources."
+The repository does not include before-and-after process traces or CS2 benchmark
+artifacts that isolate the effect of this step. The implemented behavior reduces
+the number of selected installed apps, services, and scheduled tasks. Whether
+that changes frame performance depends on whether those components were active
+and contending for resources on the target system. Treat privacy and system
+scope as the primary reasons to accept or reject the step.
 
 ---
 
@@ -148,18 +158,16 @@ djdallmann's classification (GamingPCSetup): "Debloat provides low-confidence im
 
 AppX packages removed by the suite can be reinstalled from the Microsoft Store manually by searching for the app name. The Windows Store itself is not removed.
 
-Telemetry services can be re-enabled:
-```powershell
-Set-Service DiagTrack -StartupType Automatic
-Start-Service DiagTrack
-```
+Service and scheduled-task state should be restored through the suite's Recovery
+flow when corresponding backup entries exist. A manual restore must use each
+service's recorded original start type and running state. Do not assume the same
+start type for `DiagTrack` and `dmwappushservice`.
 
 Telemetry scheduled tasks can be re-enabled via Task Scheduler (taskschd.msc) → navigate to the task path → right-click → Enable.
 
 Autostart entries (Step 14) are backed up by the suite's backup system and can be restored via START.bat → [7] Restore / Rollback → select Step 14.
 
-Consumer features and Advertising ID can be reverted:
-```powershell
-Remove-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" -Name DisableWindowsConsumerFeatures
-Set-ItemProperty "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name Enabled -Value 1
-```
+The CloudContent and AdvertisingInfo values are captured before mutation and
+restored through the Recovery flow. Use the values recorded in `backup.json`
+when manual recovery is necessary. Do not assume that deleting a value or
+setting Advertising ID to `1` reproduces the machine's prior state.

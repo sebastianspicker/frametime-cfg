@@ -206,6 +206,18 @@ Describe "Add-BenchmarkResult" {
         $entry.timestamp | Should -Not -BeNullOrEmpty
         $entry.timestamp | Should -Match '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$'
     }
+
+    It "does not read or write benchmark history during DRY-RUN" {
+        $SCRIPT:DryRun = $true
+        Mock Get-BenchmarkHistory { throw "DRY-RUN must not read history before recording" }
+        Mock Save-JsonAtomic { throw "DRY-RUN must not persist history" }
+
+        $result = Add-BenchmarkResult -AvgFps 500 -P1Fps 300 -Label "preview" -Runs 3
+
+        $result | Should -BeNullOrEmpty
+        Should -Invoke Get-BenchmarkHistory -Exactly 0
+        Should -Invoke Save-JsonAtomic -Exactly 0
+    }
 }
 
 # ── Show-BenchmarkComparison ───────────────────────────────────────────────
