@@ -1,13 +1,13 @@
 ﻿# ==============================================================================
-#  helpers/gui-panels.ps1  —  GUI Panel Functions & Event Handlers
+#  helpers/gui-panels.ps1  -  Shared GUI panel controllers and event handlers
 # ==============================================================================
 #
-#  Extracted from CS2-Optimize-GUI.ps1 to keep the main file under 800 lines.
-#  Dot-sourced into the same scope — all functions have access to $Window, El(),
+#  Extracted from frametime-gui.ps1 to keep the main file under 800 lines.
+#  Dot-sourced into the same scope - all functions have access to $Window, El(),
 #  $Script:UISync, $Script:Root, and all helper modules.
 #
-#  Panels: Dashboard, Analyze, Optimize, Backup, Benchmark, Video, Settings
-#  Shared: Launch-Terminal, Save-SettingsToState
+#  Controllers: Overview, Assess, Setup and verify, Recovery, Benchmark
+#  Shared: terminal launch and persisted profile settings
 
 $Script:DashboardLastLoad = [datetime]::MinValue
 
@@ -40,7 +40,7 @@ function Get-StateDataSafe {
 
 function Save-StateDataSafe {
     param([Parameter(Mandatory)]$State)
-    Save-SuiteState -State $State
+    Save-SuiteState -State $State -AllowDryRunPersistence
 }
 
 function New-DefaultState {
@@ -76,6 +76,28 @@ function Set-UISyncValue {
         return
     }
     $Store | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+}
+
+function Enter-GuiBackupOperation {
+    <# Atomically acquires the backup lock for a GUI recovery operation.  The
+       preliminary check gives a useful message for the common case, while the
+       caught CreateNew failure closes the race with another contender. #>
+    if (Test-BackupLock) {
+        [System.Windows.MessageBox]::Show(
+            "Another frametime.cfg process is running. Wait for it to finish first.",
+            "Locked", "OK", "Warning") | Out-Null
+        return $false
+    }
+    try {
+        Set-BackupLock
+        return $true
+    } catch {
+        Write-DebugLog "Backup lock acquisition lost to another process: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show(
+            "Another frametime.cfg process acquired the recovery lock first. Wait for it to finish, then try again.",
+            "Locked", "OK", "Warning") | Out-Null
+        return $false
+    }
 }
 
 function Should-SkipStartupDriftCheck {
@@ -308,7 +330,7 @@ function Load-Dashboard {
                 GpuName  = $gpuN; GpuDriver = $gpuD; GpuVendor = (Get-ChipsetVendor)
                 RamGb    = if ($ram) { "$($ram.TotalGB) GB" } else { "?" }
                 RamSpeed = if ($ram) { "$($ram.ActiveMhz) MT/s$(if (-not $ram.AtRatedSpeed) {' (below rated)'})" } else { "" }
-                RamXmp   = if ($ram) { if ($ram.AtRatedSpeed) { "✓ Running at rated speed" } else { "⚠ Below rated speed — enable XMP/EXPO" } } else { "" }
+                RamXmp   = if ($ram) { if ($ram.AtRatedSpeed) { "✓ Running at rated speed" } else { "⚠ Below rated speed - enable XMP/EXPO" } } else { "" }
                 RamXmpOk = if ($ram) { $ram.AtRatedSpeed } else { $false }
                 DualCh   = if ($dc) { $dc.Reason } else { "" }
                 DualChOk = if ($dc) { $dc.DualChannel } else { $false }
@@ -406,7 +428,7 @@ function Start-Analysis {
             (El "AnalyzeScanTime").Text = "Last scan: $(Get-Date -Format 'HH:mm  dd-MMM-yyyy')  ·  $($res.Count) checks"
         }
         if ($warn + $err -gt 0) {
-            (El "DashIssueHint").Text = "⚠  $($warn+$err) item(s) need attention — see Assess"
+            (El "DashIssueHint").Text = "⚠  $($warn+$err) item(s) need attention - see Assess"
         }
         Refresh-StorageHealthCard
         # Clear for next run
@@ -440,7 +462,7 @@ function Start-Analysis {
     if (-not $res) { return }
     $dlg = [Microsoft.Win32.SaveFileDialog]::new()
     $dlg.Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*"
-    $dlg.FileName = "cs2-analyze-$(Get-Date -Format 'yyyyMMdd-HHmm').csv"
+    $dlg.FileName = "frametime-analysis-$(Get-Date -Format 'yyyyMMdd-HHmm').csv"
     if ($dlg.ShowDialog() -eq $true) {
         try {
             $res | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
@@ -520,7 +542,7 @@ function Load-Optimize {
         $isObserved = $stepKey -in $observed
 
         $statusKey   = if ($s.CheckOnly) { "Check" } elseif ($isDone) { "Done" } elseif ($isSkip) { "Skipped" } elseif ($isObserved) { "Observed" } else { "Pending" }
-        $statusLabel = if ($s.CheckOnly) { "—  Check" } elseif ($isDone) { "✓  Done" } elseif ($isSkip) { "—  Skipped" } elseif ($isObserved) { "◦  Observed" } else { "○  Pending" }
+        $statusLabel = if ($s.CheckOnly) { "-  Check" } elseif ($isDone) { "✓  Done" } elseif ($isSkip) { "-  Skipped" } elseif ($isObserved) { "◦  Observed" } else { "○  Pending" }
         $statusColor = if ($s.CheckOnly) { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($isDone) { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($isSkip) { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($isObserved) { Get-GuiSemanticBrush "Info" "#38BDF8" } else { Get-GuiSemanticBrush "Warning" "#FBBF24" }
 
         $tierColor = switch ($s.Tier) { 1 { Get-GuiSemanticBrush "Success" "#22C55E" } 2 { Get-GuiSemanticBrush "Warning" "#FBBF24" } 3 { Get-GuiSemanticBrush "Accent" "#E8520A" } default { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } }
@@ -702,8 +724,8 @@ function Start-InlineVerify {
 }
 
 (El "BtnOptPhase1"   ).Add_Click({ Launch-Terminal "Run-Optimize.ps1" })
-(El "BtnOptPhase2"   ).Add_Click({ Launch-Terminal "SafeMode-DriverClean.ps1" })
-(El "BtnOptPhase3"   ).Add_Click({ Launch-Terminal "PostReboot-Setup.ps1" })
+(El "BtnOptPhase2"   ).Add_Click({ Start-PublishedPhaseRuntime "SafeMode-DriverClean.ps1" })
+(El "BtnOptPhase3"   ).Add_Click({ Start-PublishedPhaseRuntime "PostReboot-Setup.ps1" })
 (El "BtnOptFullSetup").Add_Click({ Launch-Terminal "Run-Optimize.ps1" })
 (El "BtnOptVerify"   ).Add_Click({ Start-InlineVerify })
 
@@ -713,7 +735,45 @@ if (-not $env:SAFEBOOT_OPTION) {
     (El "BtnOptPhase2").ToolTip   = "Phase 2 requires Safe Mode (use 'Boot to Safe Mode' first)"
 }
 
-# Boot to Safe Mode / Normal Mode button — context-aware failsafe
+function Invoke-GuiSafeModeExit {
+    <#  Remove SafeBoot and verify its absence before allowing the GUI to
+        restart. A successful delete exit code alone is not authoritative: an
+        enum failure or a remaining BCD element must keep the current Safe Mode
+        session alive for manual recovery.  #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if (-not $PSCmdlet.ShouldProcess("Safe Mode boot configuration", "Remove SafeBoot and restart into Normal Mode")) {
+        return $false
+    }
+
+    $safeBootResult = Clear-SafeBootVerified
+    if (-not $safeBootResult.Verified) {
+        [System.Windows.MessageBox]::Show(
+            "Safe Mode could not be verified disabled.`n`n$($safeBootResult.Message)`n`nReboot aborted - remain in this session and run the documented manual recovery commands.",
+            "Safe Mode Recovery Failed", "OK", "Error") | Out-Null
+        return $false
+    }
+
+    $global:LASTEXITCODE = $null
+    try {
+        $shutdownOutput = shutdown /r /t 5 /f 2>&1
+        $shutdownExitCode = $LASTEXITCODE
+    } catch {
+        $shutdownOutput = $_
+        $shutdownExitCode = $null
+    }
+    if ($null -eq $shutdownExitCode -or $shutdownExitCode -ne 0) {
+        $exitText = if ($null -eq $shutdownExitCode) { "not available" } else { [string]$shutdownExitCode }
+        [System.Windows.MessageBox]::Show(
+            "Safe Mode was disabled, but Windows rejected the restart request (exit code: $exitText).`n`n$shutdownOutput`n`nRestart manually when ready; the next boot will use Normal Mode.",
+            "Restart Failed", "OK", "Error") | Out-Null
+        return $false
+    }
+    return $true
+}
+
+# Boot to Safe Mode / Normal Mode button - context-aware failsafe
 if ($env:SAFEBOOT_OPTION) {
     # In Safe Mode: offer to exit back to Normal Mode
     (El "BtnBootSafeMode").Content = "Boot to Normal Mode"
@@ -723,14 +783,7 @@ if ($env:SAFEBOOT_OPTION) {
             "This will remove the Safe Mode boot flag and restart into Normal Mode.`n`nRestart now?",
             "Boot to Normal Mode", "YesNo", "Question")
         if ($confirm -eq "Yes") {
-            $bcdOut = bcdedit /deletevalue safeboot 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                [System.Windows.MessageBox]::Show(
-                    "Failed to remove Safe Mode flag (bcdedit exit $LASTEXITCODE).`n`n$($bcdOut | Out-String)`nReboot aborted — you are still in Safe Mode.",
-                    "bcdedit Error", "OK", "Error")
-                return
-            }
-            shutdown /r /t 5 /f
+            $null = Invoke-GuiSafeModeExit
         }
     })
 } else {
@@ -824,20 +877,14 @@ function Load-Backup {
     if (-not (Test-Path $src)) { [System.Windows.MessageBox]::Show("backup.json not found.","Export"); return }
     $dlg = [Microsoft.Win32.SaveFileDialog]::new()
     $dlg.Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*"
-    $dlg.FileName = "cs2-backup-$(Get-Date -Format 'yyyyMMdd-HHmm').json"
+    $dlg.FileName = "frametime-backup-$(Get-Date -Format 'yyyyMMdd-HHmm').json"
     if ($dlg.ShowDialog() -eq $true) { Copy-Item $src $dlg.FileName -Force; [System.Windows.MessageBox]::Show("Exported to:`n$($dlg.FileName)","Export Complete") }
 })
 
 (El "BtnRestoreAll").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
-    $r = [System.Windows.MessageBox]::Show("Restore ALL backed-up settings?`nThis will undo every change the suite made.","Restore All","YesNo","Warning")
+    $r = [System.Windows.MessageBox]::Show("Restore all recorded supported settings?`nChanges without a backup record are not covered.","Restore All","YesNo","Warning")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         $Script:CriticalOperation = "Recovery"
         (El "BackupSummary").Text = "Restoring all recorded changes…"
         foreach ($name in "BtnBackupRefresh", "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
@@ -851,12 +898,10 @@ function Load-Backup {
             try {
                 $bd = Get-BackupData
                 if ($bd.entries -and $bd.entries.Count -gt 0) {
-                    $stepNames = @(($bd.entries | Group-Object -Property step).Name)
-                    $failures = 0
-                    foreach ($sn in $stepNames) {
-                        if (-not (Restore-StepChanges -StepTitle $sn)) { $failures++ }
+                    $restoreResult = Restore-AllChanges
+                    if (-not $restoreResult.Succeeded) {
+                        throw "$($restoreResult.Failed) backup entry restore(s) failed."
                     }
-                    if ($failures -gt 0) { throw "$failures step group(s) had restore failures." }
                 }
             } catch {
                 $UISync["RestoreError"] = $_.Exception.Message
@@ -866,7 +911,7 @@ function Load-Backup {
             if ($restoreError) {
                 [System.Windows.MessageBox]::Show("Restore error: $restoreError", "Restore Failed", "OK", "Error")
             } else {
-                [System.Windows.MessageBox]::Show("All settings restored successfully.", "Restore Complete")
+                [System.Windows.MessageBox]::Show("All recorded supported settings were restored.", "Restore Complete")
             }
         } -OnFinally {
             Set-UISyncValue -Store $Script:UISync -Name "RestoreError" -Value $null
@@ -878,18 +923,12 @@ function Load-Backup {
 })
 
 (El "BtnRestoreStep").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
     $sel = (El "BackupGrid").SelectedItem
     if (-not $sel) { [System.Windows.MessageBox]::Show("Select a row first.","Restore Step"); return }
     $stepTitle = $sel.Step
-    $r = [System.Windows.MessageBox]::Show("Restore all changes from:`n`"$stepTitle`"?","Restore Step","YesNo","Question")
+    $r = [System.Windows.MessageBox]::Show("Restore recorded supported changes from:`n`"$stepTitle`"?","Restore Step","YesNo","Question")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         $Script:CriticalOperation = "Recovery"
         (El "BackupSummary").Text = "Restoring $stepTitle…"
         foreach ($name in "BtnBackupRefresh", "BtnBackupExport", "BtnRestoreAll", "BtnRestoreStep", "BtnClearBackup") {
@@ -930,15 +969,9 @@ function Load-Backup {
 })
 
 (El "BtnClearBackup").Add_Click({
-    if (Test-BackupLock) {
-        [System.Windows.MessageBox]::Show(
-            "Another CS2 Optimization process is running. Wait for it to finish first.",
-            "Locked", "OK", "Warning")
-        return
-    }
     $r = [System.Windows.MessageBox]::Show("Delete all backup data?`nThis cannot be undone.","Clear Backups","YesNo","Warning")
     if ($r -eq "Yes") {
-        Set-BackupLock
+        if (-not (Enter-GuiBackupOperation)) { return }
         try {
             Save-BackupData (New-BackupDataObject)
             Load-Backup
@@ -962,18 +995,18 @@ function Load-Benchmark {
 
         $rows = for ($i = 0; $i -lt $hist.Count; $i++) {
             $h = $hist[$i]
-            $dAvg = if ($i -eq 0) { "—" } else {
+            $dAvg = if ($i -eq 0) { "-" } else {
                 $prev = $hist[$i - 1]
                 $d = if ($prev.avgFps -gt 0) { [math]::Round(($h.avgFps - $prev.avgFps) / $prev.avgFps * 100, 1) } else { 0 }
                 if ($d -gt 0) { "+$d%" } else { "$d%" }
             }
-            $dP1 = if ($i -eq 0) { "—" } else {
+            $dP1 = if ($i -eq 0) { "-" } else {
                 $prev = $hist[$i - 1]
                 $d = if ($prev.p1Fps -gt 0) { [math]::Round(($h.p1Fps - $prev.p1Fps) / $prev.p1Fps * 100, 1) } else { 0 }
                 if ($d -gt 0) { "+$d%" } else { "$d%" }
             }
-            $dc = if ($i -eq 0 -or $dAvg -eq "—") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($dAvg.StartsWith("+")) { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($dAvg -eq "0%" -or $dAvg -eq "0.0%") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } else { Get-GuiSemanticBrush "Danger" "#F87171" }
-            $dp1c = if ($i -eq 0 -or $dP1 -eq "—") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($dP1.StartsWith("+")) { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($dP1 -eq "0%" -or $dP1 -eq "0.0%") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } else { Get-GuiSemanticBrush "Danger" "#F87171" }
+            $dc = if ($i -eq 0 -or $dAvg -eq "-") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($dAvg.StartsWith("+")) { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($dAvg -eq "0%" -or $dAvg -eq "0.0%") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } else { Get-GuiSemanticBrush "Danger" "#F87171" }
+            $dp1c = if ($i -eq 0 -or $dP1 -eq "-") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } elseif ($dP1.StartsWith("+")) { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($dP1 -eq "0%" -or $dP1 -eq "0.0%") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } else { Get-GuiSemanticBrush "Danger" "#F87171" }
             $dateStr = try { [datetime]::ParseExact($h.timestamp,"yyyy-MM-dd HH:mm:ss",$null).ToString("dd-MMM HH:mm") } catch { $h.timestamp }
             [PSCustomObject]@{
                 Index        = $i + 1
@@ -1071,7 +1104,7 @@ function Draw-BenchChart {
 
     # Legend
     $leg = [System.Windows.Controls.TextBlock]::new()
-    $leg.Text = "— Avg FPS   - - 1% Low"; $leg.FontSize = 10; $leg.Foreground = Get-GuiSemanticBrush "TextMuted" "#9AA5B4"
+    $leg.Text = "- Avg FPS   - - 1% Low"; $leg.FontSize = 10; $leg.Foreground = Get-GuiSemanticBrush "TextMuted" "#9AA5B4"
     [System.Windows.Controls.Canvas]::SetLeft($leg, $w - 120)
     [System.Windows.Controls.Canvas]::SetTop( $leg, -16)
     $canvas.Children.Add($leg) | Out-Null
@@ -1121,481 +1154,9 @@ function Get-BenchmarkResultLabel {
     }
 })
 
-# ══════════════════════════════════════════════════════════════════════════════
-# NETWORK
-# ══════════════════════════════════════════════════════════════════════════════
-function Get-NetSelectedRegion {
-    $selected = (El "NetDiagRegionPicker").SelectedItem
-    if ($selected) { return [string]$selected }
-    return ""
-}
-
-function Get-NetSortMode {
-    $selected = (El "NetDiagSortPicker").SelectedItem
-    if ($selected) { return [string]$selected }
-    return "Ping"
-}
-
-function Initialize-NetSortPicker {
-    $picker = El "NetDiagSortPicker"
-    if ($picker.Items.Count -gt 0) { return }
-    foreach ($mode in @("Ping", "Region", "Delta", "Timeouts", "Blocked")) {
-        [void]$picker.Items.Add($mode)
-    }
-    $picker.SelectedItem = "Ping"
-}
-
-function Update-NetRegionPicker {
-    param($ComparisonRows)
-
-    $picker = El "NetDiagRegionPicker"
-    $current = Get-NetSelectedRegion
-    $regions = @($ComparisonRows | ForEach-Object { $_.TargetLabel } | Where-Object { $_ } | Select-Object -Unique)
-
-    $Script:NetworkRegionPickerUpdating = $true
-    try {
-        $picker.Items.Clear()
-        foreach ($region in $regions) {
-            [void]$picker.Items.Add($region)
-        }
-
-        if ($regions.Count -eq 0) {
-            $picker.SelectedIndex = -1
-            return ""
-        }
-
-        if ($current -and $current -in $regions) {
-            $picker.SelectedItem = $current
-            return $current
-        }
-
-        $picker.SelectedIndex = 0
-        return [string]$regions[0]
-    } finally {
-        $Script:NetworkRegionPickerUpdating = $false
-    }
-}
-
-function Update-NetRegionSummary {
-    param(
-        [string]$SelectedRegion,
-        $ComparisonRows
-    )
-
-    if ([string]::IsNullOrWhiteSpace($SelectedRegion)) {
-        (El "NetDiagRegionSummary").Text = "Run a baseline test to choose a region."
-        return
-    }
-
-    $row = @($ComparisonRows | Where-Object { $_.TargetLabel -eq $SelectedRegion } | Select-Object -First 1)
-    if (-not $row) {
-        (El "NetDiagRegionSummary").Text = "Selected region is not present in the latest run."
-        return
-    }
-
-    $baseline = if ($null -ne $row.BaselineAvgMs) { "$($row.BaselineAvgMs) ms" } else { "timeout" }
-    $post = if ($null -ne $row.PostAvgMs) { "$($row.PostAvgMs) ms" } else { "not run" }
-    $delta = if ($null -ne $row.DeltaMs) {
-        $sign = if ($row.DeltaMs -gt 0) { "+" } else { "" }
-        "  ·  Delta: $sign$($row.DeltaMs) ms"
-    } else { "" }
-    (El "NetDiagRegionSummary").Text = "$SelectedRegion  ·  Baseline: $baseline  ·  Post: $post$delta"
-}
-
-function Update-NetFirewallSummary {
-    try {
-        $blocked = @(Get-BlockedValveRelayRegions)
-        if ($blocked.Count -gt 0) {
-            (El "NetDiagFirewallSummary").Text = "Blocked: $(@($blocked.RegionName) -join ', ')"
-        } else {
-            (El "NetDiagFirewallSummary").Text = "No CS2 network blocks active."
-        }
-    } catch {
-        (El "NetDiagFirewallSummary").Text = "Firewall state unavailable."
-    }
-}
-
-function Load-NetworkDiagnostics {
-    Initialize-NetSortPicker
-    $summary = Get-NetworkDiagnosticSummary
-    if (-not $summary.AdapterFound) {
-        (El "NetDiagAdapterSummary").Text = "Adapter: no active adapter found"
-        (El "NetDiagDnsSummary").Text = "DNS: unavailable"
-    } else {
-        $dnsText = if (@($summary.DnsServers).Count -gt 0) { @($summary.DnsServers) -join ', ' } else { "automatic / DHCP" }
-        (El "NetDiagAdapterSummary").Text = "Adapter: $($summary.AdapterName)  ·  $($summary.AdapterType)"
-        (El "NetDiagDnsSummary").Text = "DNS: $($summary.DnsProvider)  ·  $dnsText"
-    }
-
-    $comparisonRows = @(Get-ValveLatencyComparisonRows -SortBy (Get-NetSortMode))
-    $selectedRegion = Update-NetRegionPicker -ComparisonRows $comparisonRows
-    Update-NetRegionSummary -SelectedRegion $selectedRegion -ComparisonRows $comparisonRows
-
-    $historyRows = @(Get-LatencyHistoryRows -SelectedRegion $selectedRegion)
-    (El "NetDiagHistoryGrid").ItemsSource = $historyRows
-    (El "NetDiagComparisonGrid").ItemsSource = $comparisonRows
-    (El "NetDiagHistorySummary").Text = if ($historyRows.Count -gt 0) {
-        $latest = $historyRows[-1]
-        $latestRegion = if ($latest.PSObject.Properties['SelectedRegion'] -and $latest.SelectedRegion) { [string]$latest.SelectedRegion } else { $selectedRegion }
-        $latestRegionRtt = if ($latest.PSObject.Properties['RegionRttMs']) { $latest.RegionRttMs } else { $null }
-        $rtt = if ($null -ne $latestRegionRtt) { "$latestRegionRtt ms" } else { "timeout" }
-        "Latest run: $($latest.Timestamp)  ·  $($latest.Kind)  ·  ${latestRegion}: $rtt"
-    } else {
-        "No latency diagnostics recorded yet."
-    }
-    Update-NetFirewallSummary
-}
-
-function Invoke-GuiValveRelayBlock {
-    param(
-        [ValidateSet("block", "unblock", "unblockAll")][string]$Action
-    )
-
-    try {
-        if ($Action -eq "unblockAll") {
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Remove all firewall rules created by CS2 Optimize for Valve network blocking?",
-                "Valve Network Blocks", "YesNo", "Question")
-            if ($confirm -ne "Yes") { return }
-            $result = Unblock-AllValveRelayRegions
-            Load-NetworkDiagnostics
-            [System.Windows.MessageBox]::Show("Removed $($result.Count) network block rule(s).", "Valve Network Blocks")
-            return
-        }
-
-        $region = Get-NetSelectedRegion
-        if ([string]::IsNullOrWhiteSpace($region)) {
-            [System.Windows.MessageBox]::Show("Select a focus region first.", "Valve Network Blocks", "OK", "Warning")
-            return
-        }
-
-        if ($Action -eq "block") {
-            $confirm = [System.Windows.MessageBox]::Show(
-                "Block outbound traffic to Valve relay/server targets for:`n$region`n`nThis may prevent CS2 from using that region until you unblock it.",
-                "Block Focus Region", "YesNo", "Warning")
-            if ($confirm -ne "Yes") { return }
-            $result = Block-ValveRelayRegion -RegionName $region
-            Load-NetworkDiagnostics
-            [System.Windows.MessageBox]::Show("Blocked $($result.AddressCount) address(es) for $region.", "Valve Network Blocks")
-        } else {
-            $result = Unblock-ValveRelayRegion -RegionName $region
-            Load-NetworkDiagnostics
-            if ($result.Changed) {
-                [System.Windows.MessageBox]::Show("Unblocked $region.", "Valve Network Blocks")
-            } else {
-                [System.Windows.MessageBox]::Show("$region was not blocked by CS2 Optimize.", "Valve Network Blocks")
-            }
-        }
-    } catch {
-        [System.Windows.MessageBox]::Show("Firewall update failed:`n$($_.Exception.Message)`n`nRun the GUI as Administrator and make sure Windows Firewall is available.", "Valve Network Blocks", "OK", "Error")
-    }
-}
-
-function Start-LatencyDiagnostic {
-    [CmdletBinding(SupportsShouldProcess)]
-    param(
-        [ValidateSet("baseline", "post")][string]$Kind
-    )
-
-    if ($Script:LatencyInFlight) { return }
-    if (-not $PSCmdlet.ShouldProcess("network diagnostics panel", "Start $Kind latency diagnostic")) { return }
-    $Script:LatencyInFlight = $true
-    $buttonName = if ($Kind -eq "baseline") { "BtnNetBaseline" } else { "BtnNetPost" }
-    (El "BtnNetBaseline").IsEnabled = $false
-    (El "BtnNetPost").IsEnabled = $false
-    (El $buttonName).Content = if ($Kind -eq "baseline") { "Running…" } else { "Retesting…" }
-    Set-UISyncValue -Store $Script:UISync -Name "LatencyError" -Value $null
-    Set-UISyncValue -Store $Script:UISync -Name "LatencyRun" -Value $null
-
-    Invoke-Async -Work {
-        param($ScriptRoot, $UISync, $RunKind)
-        . "$ScriptRoot\config.env.ps1"
-        . "$ScriptRoot\helpers.ps1"
-        try {
-            $UISync["LatencyRun"] = Invoke-ValveRegionLatencyDiagnostic -Kind $RunKind
-        } catch {
-            $UISync["LatencyError"] = $_.Exception.Message
-        }
-    } -WorkArgs @($Script:Root, $Script:UISync, $Kind) -OnDone {
-        $err = Get-UISyncValue -Store $Script:UISync -Name "LatencyError"
-        Load-NetworkDiagnostics
-        if ($err) {
-            [System.Windows.MessageBox]::Show("Latency diagnostic failed:`n$err", "Network Diagnostic", "OK", "Error")
-        } else {
-            $run = Get-UISyncValue -Store $Script:UISync -Name "LatencyRun"
-            $okRegions = @($run.Results | Where-Object { $null -ne $_.AvgRttMs }).Count
-            [System.Windows.MessageBox]::Show("Saved $($run.Kind) run at $($run.Timestamp).`nResponsive regions: $okRegions / $(@($run.Results).Count)", "Network Diagnostic")
-        }
-        Set-UISyncValue -Store $Script:UISync -Name "LatencyRun" -Value $null
-        Set-UISyncValue -Store $Script:UISync -Name "LatencyError" -Value $null
-    } -OnError {
-        param($asyncError)
-        [System.Windows.MessageBox]::Show("Latency diagnostic failed: $asyncError", "Network Diagnostic", "OK", "Error")
-    } -OnFinally {
-        $Script:LatencyInFlight = $false
-        (El "BtnNetBaseline").IsEnabled = $true
-        (El "BtnNetPost").IsEnabled = $true
-        (El "BtnNetBaseline").Content = "Run baseline test"
-        (El "BtnNetPost").Content = "Run post-change retest"
-    }
-}
-
-function Invoke-GuiDnsProfileChange {
-    param(
-        [ValidateSet("Cloudflare", "Google", "DHCP")][string]$Provider
-    )
-
-    try {
-        $result = Set-NetworkDiagnosticDnsProfile -Provider $Provider
-        Load-NetworkDiagnostics
-        if ($result.Changed) {
-            [System.Windows.MessageBox]::Show("DNS updated on $($result.AdapterName): $Provider", "DNS Updated")
-        } else {
-            [System.Windows.MessageBox]::Show("DNS is already set to $Provider on $($result.AdapterName).", "DNS Unchanged")
-        }
-    } catch {
-        [System.Windows.MessageBox]::Show("DNS update failed:`n$($_.Exception.Message)", "DNS Error", "OK", "Error")
-    }
-}
-
-(El "BtnNetRefresh").Add_Click({ Load-NetworkDiagnostics })
-(El "NetDiagSortPicker").Add_SelectionChanged({ Load-NetworkDiagnostics })
-(El "NetDiagRegionPicker").Add_SelectionChanged({
-    if (-not $Script:NetworkRegionPickerUpdating) { Load-NetworkDiagnostics }
-})
-(El "BtnNetBaseline").Add_Click({ Start-LatencyDiagnostic -Kind baseline })
-(El "BtnNetPost").Add_Click({ Start-LatencyDiagnostic -Kind post })
-(El "BtnNetBlockRegion").Add_Click({ Invoke-GuiValveRelayBlock -Action block })
-(El "BtnNetUnblockRegion").Add_Click({ Invoke-GuiValveRelayBlock -Action unblock })
-(El "BtnNetUnblockAllRegions").Add_Click({ Invoke-GuiValveRelayBlock -Action unblockAll })
-(El "BtnNetDnsCloudflare").Add_Click({ Invoke-GuiDnsProfileChange -Provider Cloudflare })
-(El "BtnNetDnsGoogle").Add_Click({ Invoke-GuiDnsProfileChange -Provider Google })
-(El "BtnNetDnsDhcp").Add_Click({ Invoke-GuiDnsProfileChange -Provider DHCP })
-(El "BtnNetDnsRestore").Add_Click({
-    try {
-        $ok = Restore-LatestDnsBackup
-        Load-NetworkDiagnostics
-        if ($ok) {
-            [System.Windows.MessageBox]::Show("Restored the latest GUI DNS backup.", "DNS Restore")
-        } else {
-            [System.Windows.MessageBox]::Show("No GUI DNS backup was found.", "DNS Restore", "OK", "Warning")
-        }
-    } catch {
-        [System.Windows.MessageBox]::Show("DNS restore failed:`n$($_.Exception.Message)", "DNS Restore", "OK", "Error")
-    }
-})
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VIDEO
-# ══════════════════════════════════════════════════════════════════════════════
-$Script:VideoTxtPath = $null
-$Script:VideoSteamPath = $null
-
-function Test-CurrentVideoTxtPathTrusted {
-    if (-not $Script:VideoTxtPath) { return $false }
-    $steamPath = if ($Script:VideoSteamPath) { $Script:VideoSteamPath } else { Get-SteamPath }
-    return (Test-TrustedVideoTxtPath -Path $Script:VideoTxtPath -SteamPath $steamPath)
-}
-
-function Load-Video {
-    # Populate tier picker
-    if ((El "VideoTierPicker").Items.Count -eq 0) {
-        foreach ($t in @("Auto","HIGH","MID","LOW")) { (El "VideoTierPicker").Items.Add($t) | Out-Null }
-        (El "VideoTierPicker").SelectedIndex = 0
-    }
-
-    $steamPath = Get-SteamPath
-    $vtxt = if ($steamPath) {
-        Get-ChildItem "$steamPath\userdata\*\730\local\cfg\video.txt" -ErrorAction SilentlyContinue |
-            Where-Object { Test-TrustedVideoTxtPath -Path $_.FullName -SteamPath $steamPath } |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    }
-
-    if ($vtxt) {
-        $Script:VideoTxtPath = $vtxt.FullName
-        $Script:VideoSteamPath = $steamPath
-        (El "VideoTxtPath").Text = $vtxt.FullName
-        (El "BtnVideoWrite").IsEnabled = $true
-        (El "BtnVideoWriteFooter").IsEnabled = $true
-    } else {
-        $Script:VideoTxtPath = $null
-        $Script:VideoSteamPath = $null
-        (El "VideoTxtPath").Text = "video.txt not found — launch CS2 once to generate it"
-        (El "BtnVideoWrite").IsEnabled = $false
-        (El "BtnVideoWriteFooter").IsEnabled = $false
-        return
-    }
-
-    Refresh-VideoGrid
-}
-
-# Single source of truth for video tier presets (V=value, N=note for display)
-$Script:VideoPresets = @{
-    "HIGH" = @{
-        "setting.msaa_samples"              = @{ V="4";  N="4x MSAA — high-end default; benchmark vs 2x/CMAA2" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh low-latency default" }
-        "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen — bypasses DWM compositor" }
-        "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On — saves 3-4ms input latency" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — native clarity default" }
-        "setting.shaderquality"             = @{ V="1";  N="High — quality default when GPU has headroom" }
-        "setting.r_texturefilteringquality" = @{ V="5";  N="AF16x — near-zero cost on modern GPUs" }
-        "setting.r_csgo_cmaa_enable"        = @{ V="0";  N="Off — MSAA handles AA" }
-        "setting.r_aoproxy_enable"          = @{ V="0";  N="AO off — purely cosmetic, up to 6% FPS cost" }
-        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance — suite default; compare visually" }
-        "setting.r_particle_max_detail_level"=@{ V="0";  N="Low particles — no competitive disadvantage" }
-        "setting.csm_enabled"               = @{ V="1";  N="Shadows ON — keep tactical shadow cues" }
-        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All — current competitive cue default" }
-    }
-    "MID" = @{
-        "setting.msaa_samples"              = @{ V="4";  N="4x — or 2x if FPS budget is tight" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh default" }
-        "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen" }
-        "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — native clarity default" }
-        "setting.shaderquality"             = @{ V="0";  N="Low — saves GPU headroom on mid-tier" }
-        "setting.r_texturefilteringquality" = @{ V="5";  N="AF16x" }
-        "setting.r_csgo_cmaa_enable"        = @{ V="0";  N="Off — MSAA handles AA" }
-        "setting.r_aoproxy_enable"          = @{ V="0";  N="AO off" }
-        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance — suite default" }
-        "setting.r_particle_max_detail_level"=@{ V="0";  N="Low" }
-        "setting.csm_enabled"               = @{ V="1";  N="Shadows ON" }
-        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All" }
-    }
-    "LOW" = @{
-        "setting.msaa_samples"              = @{ V="0";  N="None + CMAA2 — free AA alternative" }
-        "setting.mat_vsync"                 = @{ V="0";  N="Off — fixed-refresh default" }
-        "setting.fullscreen"                = @{ V="1";  N="Exclusive fullscreen — critical for FPS" }
-        "setting.r_low_latency"             = @{ V="1";  N="NVIDIA Reflex On" }
-        "setting.r_csgo_fsr_upsample"       = @{ V="0";  N="FSR OFF — lower resolution first" }
-        "setting.shaderquality"             = @{ V="0";  N="Low" }
-        "setting.r_texturefilteringquality" = @{ V="0";  N="Bilinear — legacy for max FPS" }
-        "setting.r_csgo_cmaa_enable"        = @{ V="1";  N="CMAA2 ON — near-zero cost AA when MSAA=0" }
-        "setting.r_aoproxy_enable"          = @{ V="0";  N="AO off" }
-        "setting.sc_hdr_enabled_override"   = @{ V="3";  N="Performance" }
-        "setting.r_particle_max_detail_level"=@{ V="0";  N="Low" }
-        "setting.csm_enabled"               = @{ V="1";  N="Shadows ON — keep even on low-end" }
-        "setting.videocfg_dynamic_shadows"  = @{ V="1";  N="Dynamic Shadows All — lower other shadow quality first" }
-    }
-}
-
-function Get-ResolvedVideoTier {
-    # Auto tier: HIGH for NVIDIA (detected via driver version), MID for AMD/Intel
-    # The suite is NVIDIA-focused; AMD/Intel users should select tier manually
-    param([string]$TierSel)
-    if ($TierSel -eq "Auto") {
-        $nv = Get-NvidiaDriverVersion
-        if ($nv) { return "HIGH" }
-        return "MID"
-    }
-    return $TierSel
-}
-
-function Refresh-VideoGrid {
-    $tier = Get-ResolvedVideoTier (El "VideoTierPicker").SelectedItem
-    $recommended = $Script:VideoPresets[$tier]
-
-    $current = @{}
-    if ((Test-CurrentVideoTxtPathTrusted) -and (Test-Path $Script:VideoTxtPath)) {
-        Get-Content $Script:VideoTxtPath | ForEach-Object {
-            if ($_ -match '^\s*"([^"]+)"\s+"([^"]*)"') { $current[$Matches[1]] = $Matches[2] }
-        }
-    }
-
-    $rows = foreach ($kv in $recommended.GetEnumerator() | Sort-Object Key) {
-        $cur  = $current[$kv.Key]
-        $rec  = $kv.Value.V
-        $note = $kv.Value.N
-        $st   = if ($null -eq $cur) { "—  Missing" } elseif ($cur -eq $rec) { "✓  OK" } else { "⚠  Differs" }
-        $sc   = if ($st -match "OK") { Get-GuiSemanticBrush "Success" "#22C55E" } elseif ($st -match "Missing") { Get-GuiSemanticBrush "TextMuted" "#9AA5B4" } else { Get-GuiSemanticBrush "Warning" "#FBBF24" }
-        [PSCustomObject]@{
-            Setting     = $kv.Key -replace "^setting\.",""
-            YourValue   = if ($null -eq $cur) { "(not set)" } else { $cur }
-            Recommended = $rec
-            StatusLabel = $st
-            StatusColor = $sc
-            Notes       = $note
-        }
-    }
-
-    (El "VideoGrid").ItemsSource = $rows
-    $diffs = @($rows | Where-Object { $_.StatusLabel -notmatch "OK" }).Count
-    (El "VideoSummary").Text = "$diffs setting(s) need attention for $tier-tier recommendation"
-}
-
-(El "VideoTierPicker").Add_SelectionChanged({ if ((El "VideoTierPicker").SelectedItem) { Refresh-VideoGrid } })
-
-$writeVideo = {
-    if (-not $Script:VideoTxtPath) { [System.Windows.MessageBox]::Show("video.txt not found.","Write"); return }
-    if (-not (Test-CurrentVideoTxtPathTrusted)) {
-        [System.Windows.MessageBox]::Show("video.txt path is outside the trusted Steam userdata tree.","Write","OK","Error")
-        return
-    }
-
-    $tier = Get-ResolvedVideoTier (El "VideoTierPicker").SelectedItem
-
-    # Derive values-only hashtable from shared presets
-    $managed = @{}
-    foreach ($kv in $Script:VideoPresets[$tier].GetEnumerator()) { $managed[$kv.Key] = $kv.Value.V }
-
-    # Read existing file — preserve unmanaged keys (resolution, Hz, etc.)
-    $existing = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
-    if (Test-Path $Script:VideoTxtPath) {
-        Get-Content $Script:VideoTxtPath | ForEach-Object {
-            if ($_ -match '^\s*"([^"]+)"\s+"([^"]*)"') { $existing[$Matches[1]] = $Matches[2] }
-        }
-    }
-
-    # Merge: apply managed overrides onto existing keys
-    foreach ($kv in $managed.GetEnumerator()) { $existing[$kv.Key] = $kv.Value }
-
-    $summary = ($managed.Keys | ForEach-Object { "$($_ -replace '^setting\.',''): $($managed[$_])" }) -join "`n"
-    $r = [System.Windows.MessageBox]::Show(
-        "Write optimized video.txt ($tier tier)?`n`nOriginal → video.txt.bak`n`nSettings:`n$summary",
-        "Confirm Write","YesNo","Question")
-    if ($r -ne "Yes") { return }
-
-    try {
-        $bakPath = "$Script:VideoTxtPath.bak"
-        # Only create backup if one doesn't already exist — preserve the original
-        $bakMade = $false
-        if ((Test-Path $Script:VideoTxtPath) -and -not (Test-Path $bakPath)) {
-            Copy-Item $Script:VideoTxtPath $bakPath -Force
-            $bakMade = $true
-        }
-
-        $dir = Split-Path $Script:VideoTxtPath
-        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue | Out-Null }
-
-        $lines = @(
-            '"VideoConfig"'
-            '{'
-            "    // CS2-Optimize Suite — $(Get-Date -Format 'yyyy-MM-dd HH:mm')  Tier: $tier"
-            "    // Original backed up as video.txt.bak"
-            ""
-        )
-        foreach ($kv in $existing.GetEnumerator() | Sort-Object Key) {
-            $lines += "    `"$($kv.Key)`"`t`"$($kv.Value)`""
-        }
-        $lines += "}"
-        # Steam Cloud can set video.txt read-only — clear the flag before writing
-        if ((Test-Path $Script:VideoTxtPath) -and (Get-Item $Script:VideoTxtPath).IsReadOnly) {
-            try { (Get-Item $Script:VideoTxtPath).IsReadOnly = $false }
-            catch {
-                [System.Windows.MessageBox]::Show(
-                    "video.txt is read-only (Steam Cloud may be syncing).`n`nTry disabling Steam Cloud sync for CS2:`nSteam → CS2 → Properties → General → Steam Cloud",
-                    "Read-Only File", "OK", "Warning")
-                return
-            }
-        }
-        [System.IO.File]::WriteAllLines($Script:VideoTxtPath, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
-
-        $backupMsg = if ($bakMade) { "Original saved as video.txt.bak" } else { "Backup preserved as video.txt.bak (from first run)" }
-        [System.Windows.MessageBox]::Show("video.txt written ($tier tier).`n$backupMsg`n`n$Script:VideoTxtPath","Done")
-        Load-Video
-    } catch { [System.Windows.MessageBox]::Show("Error: $($_.Exception.Message)","Write Failed") }
-}
-(El "BtnVideoWrite"      ).Add_Click($writeVideo)
-(El "BtnVideoWriteFooter").Add_Click($writeVideo)
+# Load panel-specific controllers after the shared GUI helpers are available.
+. "$Script:Root\helpers\gui-network.ps1"
+. "$Script:Root\helpers\gui-video.ps1"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PROFILE AND PREVIEW MODE
@@ -1633,7 +1194,7 @@ function Save-SettingsToState {
         if (-not $state) { $state = [PSCustomObject]@{ mode = $mode; profile = $prof } }
         $state | Add-Member -NotePropertyName "profile" -NotePropertyValue $prof -Force
         $state | Add-Member -NotePropertyName "mode"    -NotePropertyValue $mode -Force
-        Save-SuiteState -State $state
+        Save-SuiteState -State $state -AllowDryRunPersistence
     } catch {
         Write-DebugLog "Settings state save failed: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show(
@@ -1667,4 +1228,39 @@ function Launch-Terminal {
     $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File $fileArg"
     if ($ScriptArgs) { $allArgs += " `"$ScriptArgs`"" }
     Start-Process powershell -ArgumentList $allArgs
+}
+
+function Start-PublishedPhaseRuntime {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][ValidateSet("SafeMode-DriverClean.ps1", "PostReboot-Setup.ps1")][string]$Script)
+
+    try {
+        $runtimeRoot = Get-PhaseRuntimeRoot -DestinationRoot $CFG_WorkDir
+    } catch {
+        [System.Windows.MessageBox]::Show(
+            "The published runtime pointer is invalid.`n`n$_`n`nRun Phase 1 again to publish a verified generation.",
+            "Runtime pointer invalid", "OK", "Error") | Out-Null
+        return $false
+    }
+    $runtimeScript = Join-Path $runtimeRoot $Script
+    if (-not (Test-Path -LiteralPath $runtimeScript -PathType Leaf)) {
+        [System.Windows.MessageBox]::Show(
+            "The verified Phase 2/3 runtime payload is missing.`n`nRun Phase 1 again to publish a fresh immutable runtime generation, then retry.",
+            "Runtime payload missing", "OK", "Warning") | Out-Null
+        return $false
+    }
+    $payloadValidation = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+    if (-not $payloadValidation.Valid) {
+        [System.Windows.MessageBox]::Show(
+            "The Phase 2/3 runtime payload failed integrity validation.`n`n$($payloadValidation.Message)`n`nRun Phase 1 again to republish it, then retry.",
+            "Runtime payload invalid", "OK", "Error") | Out-Null
+        return $false
+    }
+    $fileArg = "`"$runtimeScript`""
+    $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File $fileArg"
+    if (-not $PSCmdlet.ShouldProcess($runtimeScript, "Start verified published Phase runtime")) {
+        return $false
+    }
+    Start-Process powershell -ArgumentList $allArgs
+    return $true
 }

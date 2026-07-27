@@ -2,11 +2,13 @@ BeforeAll {
     Set-StrictMode -Version Latest
 
     $script:RepoRoot = Split-Path $PSScriptRoot -Parent
-    $script:ProductPath = Join-Path $script:RepoRoot "PRODUCT.md"
-    $script:DesignPath = Join-Path $script:RepoRoot "DESIGN.md"
-    $script:XamlPath = Join-Path $script:RepoRoot "ui/CS2-Optimize-GUI.xaml"
-    $script:GuiScriptPath = Join-Path $script:RepoRoot "CS2-Optimize-GUI.ps1"
+    $script:ProductPath = Join-Path $script:RepoRoot "docs/product.md"
+    $script:DesignPath = Join-Path $script:RepoRoot "docs/ui-design.md"
+    $script:XamlPath = Join-Path $script:RepoRoot "ui/frametime-gui.xaml"
+    $script:GuiScriptPath = Join-Path $script:RepoRoot "frametime-gui.ps1"
     $script:GuiPanelsPath = Join-Path $script:RepoRoot "helpers/gui-panels.ps1"
+    $script:GuiNetworkPath = Join-Path $script:RepoRoot "helpers/gui-network.ps1"
+    $script:GuiVideoPath = Join-Path $script:RepoRoot "helpers/gui-video.ps1"
 
 function script:Get-DesignColor {
     param(
@@ -17,7 +19,7 @@ function script:Get-DesignColor {
     $escapedName = [regex]::Escape($Name)
     $match = [regex]::Match($Source, "(?m)^  ${escapedName}: `"(#[0-9A-Fa-f]{6})`"$")
     if (-not $match.Success) {
-        throw "Design color '$Name' is missing from DESIGN.md frontmatter."
+        throw "Design color '$Name' is missing from docs/ui-design.md frontmatter."
     }
     return $match.Groups[1].Value
 }
@@ -61,32 +63,33 @@ function script:Get-NormalizedText {
     $script:XamlSource = Get-NormalizedText -Path $script:XamlPath
     $script:GuiScriptSource = Get-NormalizedText -Path $script:GuiScriptPath
     $script:GuiPanelsSource = Get-NormalizedText -Path $script:GuiPanelsPath
+    $script:GuiNetworkSource = Get-NormalizedText -Path $script:GuiNetworkPath
+    $script:GuiVideoSource = Get-NormalizedText -Path $script:GuiVideoPath
     $script:XamlDocument = [xml]$script:XamlSource
 }
 
 Describe "GUI product and design contracts" {
 
-    It "defines the product register and required strategic sections" {
-        $script:ProductSource | Should -Match '(?ms)^## Register\s+product\s*$'
+    It "defines the product purpose and operational constraints" {
         foreach ($heading in @(
+                "Purpose",
                 "Users",
-                "Product Purpose",
-                "Brand Personality",
-                "Anti-references",
-                "Design Principles",
-                "Accessibility & Inclusion")) {
+                "Operational model",
+                "Interface constraints",
+                "Accessibility requirements",
+                "Non-goals")) {
             $script:ProductSource | Should -Match "(?m)^## $([regex]::Escape($heading))$"
         }
     }
 
-    It "uses the required DESIGN.md section order" {
+    It "uses the required UI design section order" {
         $positions = foreach ($heading in @(
                 "Overview",
                 "Colors",
                 "Typography",
                 "Elevation",
                 "Components",
-                "Do's and Don'ts")) {
+                "Usage rules")) {
             $script:DesignSource.IndexOf("## $heading", [StringComparison]::Ordinal)
         }
 
@@ -125,20 +128,40 @@ Describe "GUI product and design contracts" {
         }
     }
 
-    It "records the selected desktop accessibility and anti-slop constraints" {
-        $script:ProductSource | Should -Match 'WCAG 2\.2 AA-equivalent'
+    It "records the selected desktop accessibility and presentation constraints" {
+        $script:ProductSource | Should -Match 'Windows UI\s+Automation labels'
         $script:ProductSource | Should -Match '960 by 540 effective pixels'
-        $script:DesignSource | Should -Match 'The Match Engineer'
-        $script:DesignSource | Should -Match 'RGB or neon gaming-launcher styling'
-        $script:DesignSource | Should -Match 'generic SaaS card grids'
+        $script:ProductSource | Should -Match 'manual validation on Windows before compatibility'
+        $script:DesignSource | Should -Match 'RGB or neon styling'
+        $script:DesignSource | Should -Match 'decorative metrics'
+    }
+
+    It "uses the frametime.cfg wordmark and amber frame trace without a slogan" {
+        $script:ProductSource | Should -Match 'frametime\.cfg provides a Windows PowerShell workflow'
+        $script:XamlSource | Should -Match 'Text="frametime\.cfg"'
+        $script:XamlSource | Should -Match 'Text="WINDOWS CONFIGURATION STATUS"'
+        $script:XamlSource | Should -Not -Match 'FLAT FRAMETIMES\. CLEAN ROUNDS\.'
+        $script:XamlSource | Should -Match '<Polyline[^>]+Points="0,7 34,7 39,3 44,10 49,7 144,7"'
+        Get-DesignColor -Source $script:DesignSource -Name "accent" | Should -Be '#D6A43B'
+        Get-DesignColor -Source $script:DesignSource -Name "accent-hover" | Should -Be '#E2B24B'
+        Get-DesignColor -Source $script:DesignSource -Name "accent-pressed" | Should -Be '#B98527'
     }
 
     It "loads a maintainable external XAML layout with native window chrome" {
-        $script:GuiScriptSource | Should -Match 'ui\\CS2-Optimize-GUI\.xaml'
+        $script:GuiScriptSource | Should -Match 'ui\\frametime-gui\.xaml'
         $script:GuiScriptSource | Should -Not -Match '(?m)^\[xml\]\$XAML = @'
         $script:XamlSource | Should -Match 'WindowStyle="SingleBorderWindow"'
         $script:XamlSource | Should -Not -Match 'x:Name="TitleBar"'
         $script:XamlSource | Should -Not -Match 'x:Key="WinBtn'
+    }
+
+    It "loads the network and video controllers only through the GUI panel controller" {
+        Test-Path -LiteralPath $script:GuiNetworkPath -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath $script:GuiVideoPath -PathType Leaf | Should -BeTrue
+        $script:GuiPanelsSource | Should -Match '\. "\$Script:Root\\helpers\\gui-network\.ps1"'
+        $script:GuiPanelsSource | Should -Match '\. "\$Script:Root\\helpers\\gui-video\.ps1"'
+        (Get-NormalizedText -Path (Join-Path $script:RepoRoot "helpers.ps1")) |
+            Should -Not -Match 'gui-(network|video)\.ps1'
     }
 
     It "keeps every literal GUI element reference backed by a named XAML element" {
@@ -148,7 +171,9 @@ Describe "GUI product and design contracts" {
         $names = @($script:XamlDocument.SelectNodes("//*[@x:Name]", $namespaceManager) |
             ForEach-Object { $_.GetAttribute("Name", "http://schemas.microsoft.com/winfx/2006/xaml") })
 
-        $references = @([regex]::Matches(($script:GuiScriptSource + $script:GuiPanelsSource), '\(El\s+"([^"]+)"\)') |
+        $guiControllerSource = $script:GuiScriptSource + $script:GuiPanelsSource +
+            $script:GuiNetworkSource + $script:GuiVideoSource
+        $references = @([regex]::Matches($guiControllerSource, '\(El\s+"([^"]+)"\)') |
             ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
         foreach ($reference in $references) {
             $names | Should -Contain $reference -Because "literal El references must resolve after XAML extraction"
@@ -170,9 +195,25 @@ Describe "GUI product and design contracts" {
             Should -Match 'Stop-AsyncOperation -Operation \$Script:AnalysisOperation'
     }
 
+    It "initializes event-handler state before StrictMode reads it" {
+        foreach ($stateName in @(
+                "AnalysisInFlight",
+                "AnalysisOperation",
+                "VerifyInFlight",
+                "LatencyInFlight",
+                "NetworkRegionPickerUpdating",
+                "CriticalOperation")) {
+            $script:GuiScriptSource | Should -Match "(?m)^\`$Script:$stateName\s*=\s*\`$(?:false|null)$"
+        }
+    }
+
+    It "shows legacy handoff startup failures even though the launcher is hidden" {
+        $script:GuiScriptSource | Should -Match '(?s)try\s*\{\s*Assert-NoLegacyPhaseHandoff\s*\}\s*catch\s*\{.*?MessageBox\]::Show\(.*?Startup blocked.*?throw'
+    }
+
     It "keeps verification, latency, and recovery cleanup outside success-only callbacks" {
         $script:GuiPanelsSource | Should -Match '(?s)function Start-InlineVerify.*?-OnFinally'
-        $script:GuiPanelsSource | Should -Match '(?s)function Start-LatencyDiagnostic.*?-OnFinally'
+        $script:GuiNetworkSource | Should -Match '(?s)function Start-LatencyDiagnostic.*?-OnFinally'
         $script:GuiPanelsSource | Should -Match '(?s)Restoring all recorded changes.*?Invoke-Async.*?-OnFinally'
         $script:GuiPanelsSource | Should -Match '(?s)Restoring \$stepTitle.*?Invoke-Async.*?-OnFinally'
         $script:GuiScriptSource | Should -Match '(?s)Add_Closing.*?CriticalOperation.*?Cancel = \$true'

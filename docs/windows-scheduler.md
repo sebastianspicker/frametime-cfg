@@ -1,263 +1,210 @@
-# Windows Scheduler Optimizations — Deep Dive
+# Windows Scheduling and Input Settings
 
-> Covers Phase 1 Steps 7, 10, 11, 12, 23, 27, 28, 31, 36.
+This document covers the scheduling, presentation, timer, maintenance, and input
+values applied in Phase 1.
 
-CS2's 1% low problems are almost always a scheduling problem, not a raw performance problem. When your 1% low is 40% of your average FPS, it means that 1% of your frames are taking 2.5× longer than average to render. That extra time is almost never spent on actual rendering — it's spent waiting for a CPU core to become available, waiting for a DPC to finish, or waiting for the OS to reschedule a thread that got preempted by something else.
+## Evidence boundary
 
-The optimizations in this category reduce the frequency and severity of these scheduling interruptions.
+The repository can verify registry paths, requested values, dry-run behavior,
+and backup capture. It does not contain a committed ETW, DPC, input-latency, or
+frame-time dataset that isolates these values across supported systems.
 
----
+Windows scheduling and presentation behavior changes between builds. A registry
+value being present does not prove that a driver or current Windows component
+acts on it. Treat performance rationales as hypotheses to test on the target
+system. Review compatibility and restore the prior value if results regress.
 
-## HAGS — Hardware-Accelerated GPU Scheduling (Step 7)
+## Implemented steps
 
-### What it is
+| Phase 1 step | Area | Current behavior |
+|---:|---|---|
+| 4 | Fullscreen compatibility | Sets the per-executable compatibility value used by the suite. |
+| 7 | Hardware-accelerated GPU scheduling | Presents a tiered NVIDIA path and writes `HwSchMode` when selected; AMD and Intel paths are informational. |
+| 10 | Dynamic tick | Optionally writes the `disabledynamictick` BCD value. The repository does not set `useplatformtick`. |
+| 11 | Multiplane Overlay | Writes DWM `OverlayTestMode=5` when the T3 step is selected. |
+| 12 | Game Mode | Sets the two current-user Game Bar values used by the suite. |
+| 23 | Fast Startup | Sets `HiberbootEnabled` to zero. |
+| 26 | GameConfigStore | Writes four current-user fullscreen behavior values. |
+| 27 | Scheduler and system policy | Applies MMCSS, foreground scheduling, memory-manager, maintenance, NTFS, co-installer, FTH, and selected Intel power-throttling values. |
+| 28 | Timer requests | Enables `GlobalTimerResolutionRequests` on supported Windows builds. |
+| 29 | Mouse input | Disables Windows pointer acceleration and sets `MouseDataQueueSize` to 50. |
+| 31 | Game DVR | Disables selected capture values and policy. |
 
-Normally, the Windows kernel (`dxgkrnl.sys`) manages GPU memory page tables and decides when to submit work to the GPU. HAGS transfers a significant portion of this management to a small firmware scheduler that runs **on the GPU itself**. The GPU's own memory controller directly manages VRAM paging, bypassing the CPU-based kernel scheduler for memory management decisions.
+Risk and profile gating are defined by the runtime scripts. Several values
+affect the whole system, not only CS2.
 
-The theoretical benefit: fewer CPU-to-GPU context switches, lower DPC overhead from the display kernel, faster VRAM allocation.
+## Dynamic tick and Multiplane Overlay
 
-### Why the results were inconsistent (pre-2026)
+Step 10 is an experimental comparison path for the BCD
+`disabledynamictick=yes` value. Microsoft documents related platform timer
+options for debugging, and this repository has no isolated CS2 result for the
+change. It does not set `useplatformtick` or `useplatformclock`. The BCD value is
+captured before mutation and requires a reboot to evaluate.
 
-HAGS requires three things working correctly in concert: the GPU hardware (adequate hardware queue support), the driver (WDDM 2.7+ with proper HAGS implementation), and the game engine (using the GPU memory APIs correctly).
+Step 11 writes `OverlayTestMode=5` under
+`HKLM:\SOFTWARE\Microsoft\Windows\Dwm` to request an MPO-disabled state.
+Desktop, video, and multi-monitor composition can change. Restore the recorded
+value and reboot before comparing the default state.
 
-One commonly reported variable in HAGS-related stutter reports was **Multi-Plane Overlay (MPO)** interaction with DWM compositing. The repo no longer treats "24H2 removed MPO by default" as an established Microsoft-documented fact; treat HAGS results as build-, driver-, and hardware-dependent.
+## Hardware-accelerated GPU scheduling
 
-### 2026 evidence
+HAGS moves part of GPU scheduling into a hardware-supported scheduling path.
+The outcome depends on Windows, GPU architecture, driver, presentation mode,
+and application behavior. The suite presents a profile-dependent choice for
+NVIDIA systems and does not claim one state is generally faster.
 
-**RTX 40/50 + AMD RX 9000:** the suite currently leans HAGS ON on the basis of recent community benchmarking. Treat this as a benchmark-driven default, not as a vendor-backed universal rule.
+The implementation writes `HwSchMode` under:
 
-**RTX 30 / RDNA2:** Neutral to slightly positive. Test both on your specific system.
-
-**RTX 20 and older:** HAGS can still reduce 1% lows by 3–8% because the hardware queue implementation is less complete. Benchmark before committing.
-
-### The suite's recommendation
-
-The suite defaults HAGS ON for RTX 40/50 and OFF for X3D CPUs (per the X3D tuning guide). Other configurations are prompted with evidence. If you enable HAGS and your 1% lows get worse in the Phase 3 benchmark compared to baseline, disable it.
-
-**Important:** HAGS must also be enabled if you want to use DLSS Frame Generation (DLSS 3+). If you use a GPU that supports it and want frame generation in other games, enable HAGS regardless of CS2 results.
-
----
-
-## Game Mode — Why We Enable It, Not Disable It (Step 12)
-
-This step often surprises users familiar with older optimization guides (2020–2022), which uniformly recommended *disabling* Game Mode.
-
-### The original argument for disabling
-
-valleyofdoom/PC-Tuning documented that Windows Game Mode could interfere with "process and thread priority boosts" for foreground applications. The mechanism: Game Mode has its own scheduling layer that occasionally conflicts with MMCSS and IFEO priority assignments, causing unexpected thread priority inversions.
-
-### Why this recommendation was outdated
-
-**First,** the priority interference concern is resolved by Phase 3 Step 10's IFEO PerfOptions (`CpuPriorityClass=3`). IFEO is a kernel mechanism applied at process creation — it assigns the process priority before any MMCSS or Game Mode scheduling decisions run. IFEO supersedes Game Mode scheduling. There is no interference in practice when both are active.
-
-**Second,** the suite still prefers enabling Game Mode, but the reasoning is now narrower. Official Microsoft material supports the general idea that Game Mode prioritizes gaming activity; it does not give a strong enough contract to present "suppresses Windows Update installations during gameplay" here as a proved guarantee.
-
-**Third,** Game Mode activates the MMCSS `Games` scheduling path for threads that register under that category — the same CPU priority boost configured in Step 27.
-
-### Game Mode vs Game DVR — different systems
-
-Game Mode (`AutoGameModeEnabled=1`) and Game DVR (`AppCaptureEnabled=0`) are separate Windows systems that happen to live in the same Settings panel. Step 12 enables Game Mode; Step 31 disables Game DVR (background recording overhead). These are independent choices, not contradictory.
-
----
-
-## Fast Startup Disable (Step 23)
-
-### Why this matters for MSI interrupt persistence
-
-Windows Fast Startup (hybrid boot) is the default shutdown behavior in Windows 11. When you click Shut Down, it:
-1. Logs out user sessions
-2. **Saves the kernel session state to a hibernation file** (`hiberfil.sys`)
-3. Powers off
-
-On next boot, Windows resumes the saved kernel state rather than fully reinitializing the hardware. This is why Windows 11 boots in ~10 seconds vs. the 30–60 seconds of a true cold boot.
-
-The problem: MSI (Message Signaled Interrupt) mode, configured in Phase 3 Step 2, requires a cold boot to activate. The NIC and GPU drivers read their MSI configuration during device initialization. Fast Startup skips this initialization — it resumes the saved driver state from before Step 2 was applied.
-
-**Without disabling Fast Startup, MSI interrupt settings do not persist across shutdowns.** Phase 3 Step 2 would appear to work but silently revert every time you shut down instead of restarting. Restart (vs. Shut Down) always does a cold boot — but players shut down between sessions, not restart.
-
-### What it does not affect
-
-Hibernate and Sleep remain fully functional. Fast Startup only affects "Shut Down." The change is:
-- **Before:** Shut Down → hybrid hibernation snapshot → fast resume
-- **After:** Shut Down → full hardware teardown → full cold boot
-
-Boot time increases by ~5–15 seconds. MSI interrupts persist correctly.
-
----
-
-## MPO Disable (Step 11)
-
-### What MPO is
-
-Multi-Plane Overlay (MPO) is a Windows display subsystem feature that allows the Desktop Window Manager (DWM) to send multiple independent layers to the GPU for compositing, rather than pre-compositing them in software. When MPO is active, the GPU overlay hardware assembles the final frame from 2–4 independent planes.
-
-### Why it causes microstutter in CS2
-
-MPO was designed for media applications that display video overlays (video player behind a browser, PiP modes). In a gaming context, MPO can cause **DWM flickering** and **frame discontinuities** when:
-
-1. The game runs in fullscreen exclusive mode
-2. Windows Ink or tablet mode features request additional overlay planes
-3. HDR mode transitions occur
-
-The most common symptom is a brief frame drop or stutter visible only in fulltime measurements (CapFrameX frametime graph shows isolated spikes of 2–5ms that appear nowhere in CPU/GPU profiling — they're in the DWM layer).
-
-### The fix
-
-```
-HKLM:\SOFTWARE\Microsoft\Windows\Dwm
-    OverlayTestMode = 5  (DWORD)
+```text
+HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers
 ```
 
-Value 5 disables MPO globally. This is a T3 / COMPETITIVE+ setting because on some monitors (particularly ultrawide multi-plane displays) and some GPU/driver combinations, this can itself cause rendering artifacts. The fix is straightforward: delete the key and reboot.
+A reboot and a supported driver are required before the active state can be
+evaluated. Compare both states on the same driver and workload.
 
----
+## Game Mode and Game DVR
 
-## System Scheduling Tweaks (Step 27)
+Game Mode and Game DVR are separate controls. Step 12 enables the suite's Game
+Mode preference:
 
-### MMCSS SystemResponsiveness
-
-MMCSS reserves a percentage of CPU time for registered multimedia threads. Default is 20%.
-
-Setting 10% gives CS2 more CPU headroom during high-load scenes — the engine's render thread and game thread compete with fewer reserved MMCSS slots. Setting 0% is documented by Microsoft as unsupported and can cause audio dropouts under MMCSS.
-
-The suite sets 10% — half the default, audio-safe.
-
-**NetworkThrottlingIndex is NOT set.** This value appears in almost every gaming optimization guide (typically as `0xFFFFFFFF`). djdallmann's controlled xperf measurement found that `0xFFFFFFFF` increases NDIS DPC latency compared to the default value of 10. The "10 Mbps cap" story that motivated this recommendation is Windows Vista era and doesn't apply to modern NIC drivers. The default value of 10 is correct.
-
-### Win32PrioritySeparation
-
-Controls how the scheduler allocates CPU time slices to foreground vs. background threads.
-
-```
-HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl
-    Win32PrioritySeparation = 0x2A
+```text
+HKCU:\SOFTWARE\Microsoft\GameBar
+    AllowAutoGameMode = 1
+    AutoGameModeEnabled = 1
 ```
 
-The value `0x2A` decodes as: short quantum (bits 4-5 = 10), fixed length (bits 2-3 = 10), maximum foreground priority separation (bits 0-1 = 10). "Fixed" means every thread gets the same quantum length regardless of foreground/background state — the foreground advantage comes entirely from the scheduler's priority-based preemption (PsPrioritySeparation = 2), not from dynamic quantum adjustment. The previous value `0x26` used variable quantum, where the foreground thread received a 3× longer time slice than background threads (`PspForegroundQuantum = {6,12,18}`). 2025 Blur Busters testing showed that fixed quantum (`0x2A`) produces lower 1% low variance than variable (`0x26`) — the elimination of dynamic quantum resizing makes thread scheduling more predictable.
+This is a Windows gaming-policy choice. The repository does not claim that it
+suppresses Windows Update or guarantees foreground scheduling behavior.
 
-### MMCSS Tasks\Games
+Step 31 separately disables selected Game DVR and capture values. This removes
+the corresponding Windows capture workflow and can affect users who rely on
+Game Bar recording.
 
-These entries set the scheduling parameters when a thread calls `AvSetMmThreadCharacteristics("Games")`:
+## Fast Startup
 
-```
-Priority = 6, Scheduling Category = "High", GPU Priority = 8
-```
+Step 23 writes:
 
-GPU Priority 8 (max) is a DXGI hint to the GPU command queue scheduler — when CS2's render thread submits work, the GPU scheduler processes it ahead of lower-priority submissions from background processes (Chrome GPU process, video decode, etc.).
-
-### DisablePagingExecutive
-
-```
-HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management
-    DisablePagingExecutive = 1
+```text
+HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power
+    HiberbootEnabled = 0
 ```
 
-Locks kernel executable code, driver code, and system DLLs in physical RAM. On systems with 32 GB+ RAM and NVMe storage, you'll never notice this — the kernel rarely pages on such systems anyway. On systems with 8–12 GB RAM or SATA SSD, it eliminates rare but catastrophic latency spikes when the kernel must fault in its own code from disk during high I/O moments.
+This disables hybrid shutdown. It is used so a shutdown performs a full device
+initialization path after interrupt and driver changes. It increases startup
+time on some systems. Full hibernation is a separate capability.
 
-Windows Server has this enabled by default. Client OS defaults to 0 as a power-saving measure. Safety: zero risk. It's a hint to the memory manager.
+## Fullscreen compatibility values
 
-### Intel PowerThrottlingOff (auto-detected)
+Step 4 writes the per-application compatibility setting. Step 26 supplements it
+with these current-user GameConfigStore values:
 
-Intel 12th gen+ (Alder Lake, Raptor Lake, Meteor Lake, Arrow Lake) introduced P-cores and E-cores. Windows' Power Throttling mechanism can migrate threads from P-cores to E-cores when a thread appears briefly idle. The heuristic is based on recent CPU usage history.
-
-The problem in CS2: the render thread must wait for a GPU vsync signal or a frame limiter sync point before submitting the next frame's work. During this wait, the thread is idle — brief, but measurably idle. Power Throttling can classify this as "background behavior" and migrate the thread to an E-core. The next frame's render work then runs on an E-core with ~40% lower IPC and no large L3 cache, producing a frametime spike.
-
-`PowerThrottlingOff = 1` in `HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerThrottling` disables this migration system-wide.
-
-The suite detects Intel hybrid CPUs via `Win32_Processor.Name` pattern matching and applies this setting **only on affected hardware**. AMD CPUs and pre-12th gen Intel do not have E-cores and are unaffected by this key.
-
----
-
-## FTH Disable — The Silent Regression Trap (Step 27)
-
-The Fault Tolerant Heap is a Windows compatibility shim that activates silently after CS2 crashes:
-
-1. CS2 crashes (happens — driver updates, shader compilation edge cases, anti-cheat updates)
-2. Windows marks CS2 as a "problematic" process
-3. On the next CS2 launch, FTH activates its patched heap allocator
-4. Every heap allocation in CS2 is now 10–15% slower — permanently, with no indication to the player
-
-`HKLM:\SOFTWARE\Microsoft\FTH\Enabled = 0` disables FTH globally. The only theoretical downside: heap allocation errors that FTH would have silently papered over could surface as visible crashes. On a well-maintained system that isn't hitting heap corruption bugs, this path is never reached.
-
-**How to check if FTH is active on your system:**
-
-```powershell
-Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\FTH\State" -ErrorAction SilentlyContinue |
-    Select-Object -Property *
+```text
+HKCU:\System\GameConfigStore
+    GameDVR_DXGIHonorFSEWindowsCompatible = 1
+    GameDVR_FSEBehavior = 2
+    GameDVR_FSEBehaviorMode = 2
+    GameDVR_HonorUserFSEBehaviorMode = 1
 ```
 
-If you see `cs2.exe` or `steamwebhelper.exe` listed in the state, FTH has been activated for those processes. Step 27 clears this.
+Presentation behavior still depends on the current Windows compositor, game,
+driver, overlays, and display configuration. The repository does not assign a
+fixed latency improvement to these values.
 
----
+## Step 27 system policy
 
-## Automatic Maintenance Disable (Step 27)
+Step 27 groups several independent system-wide mutations behind one tiered
+confirmation. Review each one before applying the group.
 
-Windows Task Scheduler's Automatic Maintenance umbrella includes:
-- Disk defragmentation (TRIM on SSDs)
-- Full Defender scan
-- `RunFullMemoryDiagnostic` — scans RAM for bit errors
-- Diagnostic data collection and upload
+### MMCSS and foreground scheduling
 
-By design these run at 3 AM. In practice, if the system was off at 3 AM, Windows reschedules them to "the next idle moment." A CS2 session qualifies as an idle moment for some of these tasks.
+The suite writes `SystemResponsiveness = 10` and deliberately does not set
+`NetworkThrottlingIndex`. It also writes `Win32PrioritySeparation = 0x2A` and
+the repository's Games task values.
 
-djdallmann measured `RunFullMemoryDiagnostic` consuming 12–14% CPU during active gameplay. This appears in frametime traces as a sustained ~5ms frametime increase for 30–60 seconds.
+These values change Windows multimedia and foreground scheduling policy.
+Background media, capture, streaming, or communication workloads can behave
+differently. The bit-level policy exists, but the repository has no committed
+trace proving a CS2 improvement from `0x2A` or `SystemResponsiveness = 10`.
 
-`MaintenanceDisabled = 1` prevents these from starting automatically. You can still trigger maintenance manually from Task Scheduler. This is standard on any system where timing predictability matters.
+### Memory manager
 
----
+`DisablePagingExecutive = 1` requests that pageable kernel and driver code stay
+resident. This can increase physical memory use and is not a substitute for
+adequate RAM or a correctly configured pagefile.
 
-## Timer Resolution (Step 28)
+### Intel power throttling
 
-The Windows multimedia timer (`timeBeginPeriod`) defaults to a 15.6ms resolution — the system clock "ticks" 64 times per second. Sleep calls, thread scheduling quanta, and timeout calculations are all rounded to this resolution.
+On the detected Intel hybrid-CPU branch, the suite writes
+`PowerThrottlingOff = 1`. This changes system-wide Windows power-throttling
+policy. It can increase power use and heat. No value is written by this branch
+for other detected CPU vendors.
 
-CS2 internally calls `timeBeginPeriod(1)` to request 1ms timer resolution when it launches. However, this request is per-process and affects only the requesting process's timer behavior.
+### Fault Tolerant Heap
 
-Step 28 enables the registry path that allows applications to request the lowest supported timer resolution (works on Windows 10 build 19041+ via `HKLM:\...\Control\Session Manager\kernel → GlobalTimerResolutionRequests = 1`). It does not itself force a permanent global 1ms timer.
+The suite writes `HKLM:\SOFTWARE\Microsoft\FTH\Enabled = 0`. FTH is a Windows
+application-compatibility mechanism. Disabling it globally can expose crashes
+that Windows would otherwise attempt to mitigate. The repository does not
+contain a heap trace demonstrating that FTH is active for a given CS2 install.
 
-**What timer resolution actually affects in CS2:** Thread sleep accuracy in the frame limiter, audio buffer timing, and the granularity of scheduler quantum transitions. The improvement is measured in frametime variance reduction, not raw FPS. On systems already at 1ms due to other applications (audio apps often request this), the setting has no additional effect.
+### Automatic Maintenance
 
----
+The suite sets `MaintenanceDisabled = 1`. This prevents automatic maintenance
+from running through that policy and can delay maintenance work. Users must
+decide when to run required maintenance manually.
 
-## Mouse Acceleration and mouclass Queue (Step 29)
+### NTFS and device co-installers
 
-### Mouse acceleration
+The suite writes:
 
-`MouseSpeed=0` + `MouseThreshold1=0` + `MouseThreshold2=0` in `HKCU:\Control Panel\Mouse` disables Windows pointer acceleration globally. This is the most universally applied competitive gaming setting — it ensures that moving the mouse 10cm always translates to the same cursor movement regardless of speed.
-
-Current CS2 builds already force raw input on, so the generated `m_rawinput 1` line in Step 34 is mainly a documentation/forward-compatibility stub. Step 29 still matters because it keeps Windows pointer acceleration disabled for the desktop, menus, and any non-CS2 input path, while the CS2-side `m_mouseaccel*` guards keep the in-game config explicit.
-
-### mouclass kernel queue
-
-More interesting: the mouclass driver (the Windows kernel mouse class driver) maintains an internal FIFO buffer of unprocessed mouse events. The default size is **100 events**.
-
-At 1000 Hz polling (standard for modern competitive mice), 100 events = 100ms of buffering capacity. If the kernel is slow processing events (DPC congestion, high interrupt load), it can build up a 100ms backlog before dropping events.
-
-The suite sets this to 50 events:
-
+```text
+NtfsDisableLastAccessUpdate = 0x80000001
+NtfsDisable8dot3NameCreation = 1
+DisableCoInstallers = 1
 ```
-HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters
-    MouseDataQueueSize = 50  (DWORD)
+
+Disabling 8.3 name creation can affect legacy software. Disabling device
+co-installers can affect vendor device setup or optional software. These are
+compatibility-sensitive system policies, not CS2-only values.
+
+## Timer-resolution requests
+
+Step 28 writes `GlobalTimerResolutionRequests = 1` on supported Windows builds.
+This permits applications to make the relevant timer-resolution request. It
+does not itself force a permanent one-millisecond global timer.
+
+Timer behavior is observable with platform tracing tools. The repository does
+not claim that the value changes frame rate or latency when the game, driver, or
+another application already requests the same effective resolution.
+
+## Mouse input
+
+Step 29 writes these current-user pointer values:
+
+```text
+MouseSpeed = 0
+MouseThreshold1 = 0
+MouseThreshold2 = 0
 ```
 
-At 1000 Hz polling, 50 events = 50ms of buffering capacity. The value was previously set to 16, but 2025 testing (Overclock.net, Blur Busters) found zero measurable latency benefit at that level and occasional input skipping on systems with brief DPC congestion. Values below 30 cause event drops; 50 is the lowest safe value. This bounds kernel-side buffering without risking missed inputs.
+This disables Windows pointer acceleration for affected input paths. It changes
+desktop pointer behavior as well as game behavior where Windows pointer
+processing is used.
 
-**Source:** djdallmann's mouclass.sys kernel analysis (GamingPCSetup); 2025 community testing.
+The step also writes `MouseDataQueueSize = 50` under the mouse class-driver
+parameters. The queue value is a repository policy choice. The repository has
+no committed input trace establishing that 50 is optimal or a fixed latency
+bound. A value that is too small for a device and system load can drop input.
 
----
+## Verification
 
-## Summary: The Scheduling Stack
+After applying these settings:
 
-After all steps are applied, CS2 benefits from a layered scheduling advantage:
-
-| Layer | Mechanism | Applied By |
-|-------|-----------|------------|
-| Process creation | IFEO PerfOptions `CpuPriorityClass=3` | Step 10 (Phase 3) |
-| Thread quantum | `Win32PrioritySeparation=0x2A` | Step 27 |
-| MMCSS registration | `SystemResponsiveness=10`, `Games` category | Step 27 |
-| GPU queue | MMCSS `GPU Priority=8` | Step 27 |
-| Maintenance deferral | Game Mode + Automatic Maintenance disabled | Steps 12, 27 |
-| P-core retention | `PowerThrottlingOff=1` (Intel hybrid) | Step 27 |
-| Input latency bound | mouclass queue 100→50 | Step 29 |
-| Timer granularity | Global 1ms timer resolution | Step 28 |
-
-These layers are additive. Each one reduces the probability of a scheduling interruption during CS2's render or game loop. The cumulative effect is measurable frametime consistency improvement rather than raw FPS — which is exactly what 1% low optimization looks like in practice.
+1. Reboot when requested.
+2. Confirm the expected registry values and active HAGS state in Windows.
+3. Test fullscreen and borderless presentation, overlays, Alt+Tab, capture, and
+   multi-monitor behavior.
+4. Test audio, streaming, communication tools, legacy applications, device
+   installation, maintenance, sleep, shutdown, and hibernation as applicable.
+5. Compare repeatable frame-time and input measurements with the same workload.
+6. Restore the prior values if compatibility, power, temperature, or measured
+   performance regresses.

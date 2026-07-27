@@ -76,7 +76,7 @@ BeforeAll {
         $script:VerifyNicResults = @(
             (New-VerifyCheckResult -Status "OK" -Label "NIC tweak: EEE" -Detail "(Disabled)")
         )
-        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "OK" -Label "Active power plan = CS2 Optimized" -Detail "(cs2-guid)"
+        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "OK" -Label "Active power plan = frametime.cfg" -Detail "(cs2-guid)"
         $script:VerifyQosResults = @(
             (New-VerifyCheckResult -Status "OK" -Label "QoS policy: CS2_UDP_Ports" -Detail "(DSCP 46)"),
             (New-VerifyCheckResult -Status "OK" -Label "QoS policy: CS2_App" -Detail "(DSCP 46)")
@@ -285,7 +285,7 @@ Describe "Invoke-VerifySettings" {
         $counts.changedCount | Should -Be 0
         $counts.missingCount | Should -Be 0
         $counts.okCount | Should -BeGreaterThan 0
-        (@($script:VerifyOutput) -join "`n") | Should -Match "All settings intact . your optimizations are still active!"
+        (@($script:VerifyOutput) -join "`n") | Should -Match "All checked settings match their expected values\."
     }
 
     It "marks the Game Mode category as changed when AutoGameModeEnabled is disabled" {
@@ -381,13 +381,13 @@ Describe "Invoke-VerifySettings" {
     }
 
     It "marks the power plan category as changed when the CS2 plan is not active" {
-        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = CS2 Optimized" -Detail "(active: balanced-guid, expected: cs2-guid)"
+        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = frametime.cfg" -Detail "(active: balanced-guid, expected: cs2-guid)"
 
         Invoke-VerifySettings
 
         $counts = Get-VerifyCounters
         $counts.changedCount | Should -Be 1
-        (@($script:VerifyOutput) -join "`n") | Should -Match "Active power plan = CS2 Optimized"
+        (@($script:VerifyOutput) -join "`n") | Should -Match "Active power plan = frametime.cfg"
     }
 
     It "marks QoS policies as missing when a required policy is absent" {
@@ -480,11 +480,11 @@ Describe "Test-VerifyPowerPlan" {
             if ($joined -eq '/list') {
                 return @"
 Power Scheme GUID: 11111111-1111-1111-1111-111111111111  (Balanced)
-Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (CS2 Optimized)
+Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (frametime.cfg)
 "@
             }
             if ($joined -eq '/getactivescheme') {
-                return 'Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (CS2 Optimized)'
+                return 'Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (frametime.cfg)'
             }
             if ($joined -match '^/query 22222222-2222-2222-2222-222222222222 ') {
                 if ($joined -match [regex]::Escape($PP_USBSS)) {
@@ -515,41 +515,28 @@ Describe "Test-VerifyScheduledTasks" {
         }
     }
 
-    It "returns changed when the affinity task action payload does not match" {
+    It "returns changed when a legacy automatic affinity task remains" {
         Mock Get-ScheduledTask {
             [PSCustomObject]@{
                 State = 'Ready'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\CS2_OPTIMIZE\wrong.ps1"'
-                    }
-                )
+                Actions = @()
             }
         }
 
         $result = Test-VerifyScheduledTasks
 
         $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'action mismatch'
+        $result.Label | Should -Match 'Legacy task'
+        $result.Detail | Should -Match 'automatic CCD affinity is disabled'
     }
 
-    It "returns changed when the affinity task state is unhealthy" {
-        Mock Get-ScheduledTask {
-            [PSCustomObject]@{
-                State = 'Unknown'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CS2_AffinityScriptPath`""
-                    }
-                )
-            }
-        }
+    It "reports manual-only policy rather than a missing task on dual-CCD X3D" {
+        Mock Get-ScheduledTask { $null }
 
         $result = Test-VerifyScheduledTasks
 
-        $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'state: Unknown'
+        $result.Status | Should -Be "INFO"
+        $result.Label | Should -Be "CCD affinity policy"
+        $result.Detail | Should -Match 'manual only'
     }
 }

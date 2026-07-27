@@ -1,6 +1,6 @@
 ---
-name: Bug Report
-description: Something broke or behaved unexpectedly
+name: Bug report
+description: Report reproducible incorrect behavior
 labels: ["bug"]
 body:
   - type: markdown
@@ -14,9 +14,9 @@ body:
     attributes:
       label: Which phase/step?
       options:
-        - Phase 1 — Normal Boot
-        - Phase 2 — Safe Mode
-        - Phase 3 — Final Setup
+        - Phase 1 - Normal boot
+        - Phase 2 - Safe Mode
+        - Phase 3 - Final setup
         - FPS Cap Calculator
         - Cleanup
         - Verify-Settings
@@ -74,13 +74,28 @@ body:
       required: true
 
   - type: dropdown
-    id: dryrun
+    id: execution_mode
     attributes:
-      label: Did you run in DRY-RUN mode first?
+      label: Execution mode
       options:
-        - "Yes"
-        - "No"
-        - Not applicable
+        - Live optimization
+        - Full DRY-RUN
+        - Scoped DRY-RUN
+        - Smoke test
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: dryrun_context
+    attributes:
+      label: DRY-RUN context (if applicable)
+      description: >-
+        Include launcher, GPU branch, PowerShell version, final phase marker,
+        exit code, and whether C:\FRAMETIME_CFG changed.
+      placeholder: >-
+        START.bat dry-run 3; Windows PowerShell 5.1; PHASE 2 marker missing;
+        exit 1; C:\FRAMETIME_CFG unchanged
 
   - type: textarea
     id: evidence

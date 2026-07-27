@@ -27,18 +27,24 @@ cs2_blur_fix.nip
 
 # Runtime state (generated on target machine)
 state.json
+state.json.corrupt*
 progress.json
+progress.json.corrupt*
 backup.json
 backup.lock
 backup.*.json
 backup.corrupt.*.json
 benchmark_history.json
 latency_history.json
-cs2_optimize.log
+frametime.log
+frametime_current.log
+frametime_*.log
 
-# Secrets and credentials — never commit these
+# Secrets and credentials - never commit these
 .env
 .env.*
+!.env.example
+!.env.sample
 *.pem
 *.key
 *.p12
@@ -61,34 +67,47 @@ service-account*.json
 *.gpg
 
 # Personal configurations (internal testing only)
-*_sebastian.*
+*.personal.ps1
+*.personal.json
+*.personal.yaml
+*.personal.yml
 *.local.ps1
 *.local.json
 *.local.yaml
 *.local.yml
 
-# Agent orchestration files (loop definitions, progress tracking)
+# Local assistant and automation state
 .claude/
-progress.md
+/progress.md
 
-# Local-only automation and audit workspace
-.agents/
-.codex/
-.codegraph/
-.kilo/
-.serena/
+# Local-only automation and private workspace
+/.agents/
+/.codex/
+/.codegraph/
+/.kilo/
+/.serena/
+/.internal/
 .github/codex/
 .github/workflows/codex.yml
 HARNESS_PRINCIPLES.md
 code_review.md
-docs/agent/
-docs/archive/
-docs/source-audit/
+/docs/archive/
 AGENT_AUDIT_REPORT.md
 debug-log-*.md
 scripts/topology_inventory.sh
 
-# Root-only private notes and remediation working papers
+# Local instruction drafts and exported sessions
+/AGENTS.md
+/CLAUDE.md
+/.github/copilot-instructions.md
+/.github/instructions/
+/.github/prompts/
+/conversation-exports/
+/prompt-drafts/
+/task-reports/
+/evaluation-results/
+
+# Root-only private notes and working papers
 /private/
 /local/
 /scratch/
@@ -97,24 +116,20 @@ scripts/topology_inventory.sh
 /notes.md
 /plan.md
 /status.md
-/*-audit.md
-/*-ledger.md
-/*-report.md
-/*-status.md
 
 # Local analysis outputs; keep durable config such as .codacy/codacy.config.json
-.codacy/cli-config.yaml
-.codacy/codacy.yaml
-.codacy/generated/
-.codacy/logs/
-.codacy/results/
-.codacy/tmp/
-.codacy/tools-configs/
-coverage/
-reports/
-.cache/
-artifacts/
-TestResults/
+/.codacy/cli-config.yaml
+/.codacy/codacy.yaml
+/.codacy/generated/
+/.codacy/logs/
+/.codacy/results/
+/.codacy/tmp/
+/.codacy/tools-configs/
+/coverage/
+/reports/
+/.cache/
+/test-artifacts/
+/TestResults/
 coverage.xml
 *.coverage
 *.trx
@@ -138,8 +153,7 @@ test-results.xml
 junit.xml
 junit-*.xml
 
-# Unvalidated GUI captures; publish only after Windows accessibility review
-/docs/screenshots/[0-9][0-9].png
+# Local GUI captures; publish only after Windows accessibility review
 /docs/screenshots/*.local.png
 /docs/screenshots/*.draft.png
 

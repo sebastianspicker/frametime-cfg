@@ -1,14 +1,13 @@
-# PSScriptAnalyzer settings for CS2 Optimization Suite
+# PSScriptAnalyzer settings for frametime.cfg
 # Run: Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
 #
-# Last reviewed: 2026-05-26 (RP-022 empty-catch audit)
-# All exclusions validated against current codebase — each has documented justification.
+# All exclusions validated against current codebase - each has documented justification.
 @{
     Severity = @('Error', 'Warning')
 
     ExcludeRules = @(
         # ── Intentional by design ─────────────────────────────────────────
-        # This is a CLI tool — Write-Host with colors is the correct output
+        # This is a CLI tool - Write-Host with colors is the correct output
         'PSAvoidUsingWriteHost',
 
         # UTF-8 without BOM is preferred (modern tooling, git compatibility)
@@ -25,7 +24,7 @@
         # ShouldProcess would be redundant
         'PSUseShouldProcessForStateChangingFunctions',
 
-        # Internal functions not exported as a module — verb/noun conventions
+        # Internal functions not exported as a module - verb/noun conventions
         # are relaxed for readability (Load-State, Apply-*, Ensure-Dir, etc.)
         'PSUseApprovedVerbs',
 
@@ -38,7 +37,8 @@
         'PSAvoidOverwritingBuiltInCmdlets',
 
         # Some params are used inside scriptblocks passed to Invoke-DrsSession
-        # which PSScriptAnalyzer can't track; others are API-contract placeholders
+        # which PSScriptAnalyzer cannot track; others are intentionally accepted
+        # by shared function signatures
         'PSReviewUnusedParameter',
 
         # Pagefile code in Optimize-SystemBase.ps1 requires WMI .Put() methods

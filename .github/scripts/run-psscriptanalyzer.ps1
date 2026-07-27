@@ -19,7 +19,6 @@ Write-Output "PSScriptAnalyzer $($importedModule.Version) imported successfully"
 
 $excludedRoots = @(
     "docs/archive",
-    "docs/agent",
     "vendor",
     "third_party",
     "third-party",

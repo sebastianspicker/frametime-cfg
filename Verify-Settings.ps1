@@ -1,13 +1,13 @@
 ﻿<#
-.SYNOPSIS  CS2 Optimization Suite — Settings Verifier (Read-Only)
+.SYNOPSIS  frametime.cfg - Settings Verifier (Read-Only)
 
   Checks all registry keys, boot config and service states set by the suite.
   Useful after Windows Updates that reset settings.
 
   Color-coded:
-    ✓  OK       (Green)  — Value matches
-    ✗  CHANGED  (Yellow) — Value was modified
-    ?  MISSING  (Red)    — Key doesn't exist
+    ✓  OK       (Green)  - Value matches
+    ✗  CHANGED  (Yellow) - Value was modified
+    ?  MISSING  (Red)    - Key doesn't exist
 #>
 param([switch]$SmokeTest)
 
@@ -144,20 +144,20 @@ function Test-VerifyPowerPlan {
         $activeOutput = powercfg /getactivescheme 2>&1 | Out-String
         $targetGuid = $null
         foreach ($line in ($plansOutput -split "`r?`n")) {
-            if ($line -match "([a-fA-F0-9\-]{36}).*CS2 Optimized") {
+            if ($line -match "([a-fA-F0-9\-]{36}).*frametime.cfg") {
                 $targetGuid = $Matches[1].ToLower()
                 break
             }
         }
         if (-not $targetGuid) {
-            return New-VerifyCheckResult -Status "MISSING" -Label "Power plan: CS2 Optimized" -Detail "plan not found"
+            return New-VerifyCheckResult -Status "MISSING" -Label "Power plan: frametime.cfg" -Detail "plan not found"
         }
         if ($activeOutput -notmatch "([a-fA-F0-9\-]{36})") {
             return New-VerifyCheckResult -Status "MISSING" -Label "Active power plan" -Detail "could not read active scheme"
         }
         $activeGuid = $Matches[1].ToLower()
         if ($activeGuid -ne $targetGuid) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = CS2 Optimized" -Detail "(active: $activeGuid, expected: $targetGuid)"
+            return New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = frametime.cfg" -Detail "(active: $activeGuid, expected: $targetGuid)"
         }
 
         $settingsToVerify = @(
@@ -175,7 +175,7 @@ function Test-VerifyPowerPlan {
         foreach ($setting in $settingsToVerify) {
             $queryOutput = powercfg /query $targetGuid $setting.Subgroup $setting.Setting 2>&1 | Out-String
             if ($queryOutput -notmatch 'Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)') {
-                return New-VerifyCheckResult -Status "MISSING" -Label "Power plan: CS2 Optimized" -Detail "could not read setting '$($setting.Label)'"
+                return New-VerifyCheckResult -Status "MISSING" -Label "Power plan: frametime.cfg" -Detail "could not read setting '$($setting.Label)'"
             }
             $currentValue = [Convert]::ToInt32($Matches[1], 16)
             if ($currentValue -ne $setting.Expected) {
@@ -184,10 +184,10 @@ function Test-VerifyPowerPlan {
         }
 
         if ($driftDetails.Count -gt 0) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = CS2 Optimized" -Detail "($(@($driftDetails) -join '; '))"
+            return New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = frametime.cfg" -Detail "($(@($driftDetails) -join '; '))"
         }
 
-        return New-VerifyCheckResult -Status "OK" -Label "Active power plan = CS2 Optimized" -Detail "($activeGuid)"
+        return New-VerifyCheckResult -Status "OK" -Label "Active power plan = frametime.cfg" -Detail "($activeGuid)"
     } catch {
         return New-VerifyCheckResult -Status "MISSING" -Label "Power plan verification" -Detail "powercfg not readable"
     }
@@ -291,33 +291,25 @@ function Test-VerifyScheduledTasks {
     try { $x3d = Get-X3DCcdInfo } catch {
         Write-DebugLog "Verify X3D CPU detection failed: $($_.Exception.Message)"
     }
-    if (-not $x3d -or -not $x3d.IsX3D -or -not $x3d.DualCCD) {
-        return New-VerifyCheckResult -Status "INFO" -Label "Scheduled task: CS2 CCD affinity" -Detail "N/A (not a dual-CCD X3D system)"
-    }
 
     try {
-        $task = Get-ScheduledTask -TaskName $CS2_AffinityTaskName -ErrorAction SilentlyContinue
-        if (-not $task) {
-            return New-VerifyCheckResult -Status "MISSING" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "not found"
+        $taskNames = @($CS2_AffinityTaskName, $LegacyCS2AffinityTaskName) | Select-Object -Unique
+        $task = @(Get-ScheduledTask -TaskName $taskNames -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($task.Count -gt 0) {
+            # Older releases guessed an LP mask from aggregate WMI counts. That
+            # mapping is not authoritative, so any surviving task is legacy
+            # drift rather than a required optimization.
+            $foundTaskName = if ($task[0].PSObject.Properties['TaskName']) { [string]$task[0].TaskName } else { "automatic affinity" }
+            return New-VerifyCheckResult -Status "CHANGED" -Label "Legacy task: $foundTaskName" -Detail "remove it; automatic CCD affinity is disabled"
         }
-        $healthyStates = @("Ready", "Running")
-        $taskState = [string]$task.State
-        if ($taskState -notin $healthyStates) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(state: $taskState)"
-        }
-
-        $expectedCommand = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-        $expectedArguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CS2_AffinityScriptPath`""
-        $actions = @($task.Actions)
-        $actualCommand = if ($actions.Count -gt 0) { [string]$actions[0].Execute } else { "" }
-        $actualArguments = if ($actions.Count -gt 0) { [string]$actions[0].Arguments } else { "" }
-        if ($actualCommand -ne $expectedCommand -or $actualArguments -ne $expectedArguments) {
-            return New-VerifyCheckResult -Status "CHANGED" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(action mismatch: exec='$actualCommand' args='$actualArguments')"
-        }
-        return New-VerifyCheckResult -Status "OK" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "(state: $taskState)"
     } catch {
-        return New-VerifyCheckResult -Status "MISSING" -Label "Scheduled task: $CS2_AffinityTaskName" -Detail "not readable"
+        return New-VerifyCheckResult -Status "CHANGED" -Label "Legacy affinity task" -Detail "absence could not be verified"
     }
+
+    if ($x3d -and $x3d.IsX3D -and $x3d.DualCCD) {
+        return New-VerifyCheckResult -Status "INFO" -Label "CCD affinity policy" -Detail "manual only (no authoritative logical-processor-to-CCD map)"
+    }
+    return New-VerifyCheckResult -Status "INFO" -Label "CCD affinity policy" -Detail "N/A (automatic affinity disabled)"
 }
 
 function Test-VerifyNvidiaDrsProfile {
@@ -454,7 +446,7 @@ try {
     $Script:_verifyMissingCount++
 }
 
-# NVIDIA GPU class registry keys — PerfLevelSrc + DisableDynamicPstate (P-state locks)
+# NVIDIA GPU class registry keys - PerfLevelSrc + DisableDynamicPstate (P-state locks)
 # Only checked if an NVIDIA GPU is detected in the device class registry
 $_nvClassPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$CFG_GUID_Display"
 $_nvKeyPath = $null
@@ -482,7 +474,7 @@ Write-Host "`n  ═══ SYSTEM PROFILE / GAMING ═══" -ForegroundColor Cy
 $mmPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
 Test-RegistryCheck $mmPath "SystemResponsiveness" 10 "SystemResponsiveness"
 Test-RegistryCheck $mmPath "NoLazyMode" 1 "MMCSS NoLazyMode (realtime-only)"
-# NetworkThrottlingIndex is NOT checked — deliberately left at Windows default (10)
+# NetworkThrottlingIndex is NOT checked - deliberately left at Windows default (10)
 # djdallmann xperf: 0xFFFFFFFF increases NDIS.sys DPC latency vs. default
 Test-RegistryCheck "$mmPath\Tasks\Games" "Priority" 6 "Gaming Priority"
 Test-RegistryCheck "$mmPath\Tasks\Games" "Scheduling Category" "High" "Gaming Scheduling Category"
@@ -494,7 +486,7 @@ Write-Host "`n  ═══ TIMER / KERNEL ═══" -ForegroundColor Cyan
 
 Test-RegistryCheck "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" "GlobalTimerResolutionRequests" 1 "Timer Resolution"
 
-# PowerThrottlingOff — Intel 12th gen+ only (E-core mismatch frametime spikes)
+# PowerThrottlingOff - Intel 12th gen+ only (E-core mismatch frametime spikes)
 $_intelHybridName = Get-IntelHybridCpuName
 if ($null -eq $_intelHybridName) {
     Write-Host "  ?  WARN      Power Throttling: could not detect CPU (skipping Intel-specific check)" -ForegroundColor Yellow
@@ -512,7 +504,7 @@ Test-RegistryCheck "HKLM:\SOFTWARE\Microsoft\FTH" "Enabled" 0 "Fault Tolerant He
 Test-RegistryCheck "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Installer" "DisableCoInstallers" 1 "PnP co-installers disabled"
 Test-RegistryCheck "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance" "MaintenanceDisabled" 1 "Automatic Maintenance disabled"
 # 0x80000001 stored as DWORD reads back as [int32]-2147483647 in PowerShell
-# (0x80000001 literal is [int64]2147483649 — int32/int64 mismatch would fail -eq)
+# (0x80000001 literal is [int64]2147483649 - int32/int64 mismatch would fail -eq)
 Test-RegistryCheck "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "NtfsDisableLastAccessUpdate" (-2147483647) "NTFS last-access update disabled"
 Test-RegistryCheck "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" "NtfsDisable8dot3NameCreation" 1 "NTFS 8.3 name creation disabled"
 
@@ -537,12 +529,12 @@ if ($nicGuid) {
     Test-RegistryCheck $tcpBase "TcpNoDelay" 1 "Nagle's Algorithm (TcpNoDelay)"
     Test-RegistryCheck $tcpBase "TcpAckFrequency" 1 "TCP Ack Frequency"
 } else {
-    Write-Host "  ?  MISSING   Active NIC not found — Nagle check skipped" -ForegroundColor Red
+    Write-Host "  ?  MISSING   Active NIC not found - Nagle check skipped" -ForegroundColor Red
     $Script:_verifyMissingCount += 2
 }
 Test-RegistryCheck "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\QoS" "Do not use NLA" "1" "QoS NLA bypass (DSCP prerequisite)"
-# IPv6 intentionally left ENABLED (2026 reversal: Steam prefers IPv6 when faster; disabling forces CGNAT)
-Write-Host "  ✓  INFO      IPv6: enabled (intentional — Steam prefers IPv6 when faster)" -ForegroundColor Cyan
+# IPv6 is intentionally left enabled so Windows can select an available route.
+Write-Host "  ✓  INFO      IPv6: enabled so Windows and applications can select an available route" -ForegroundColor Cyan
 $Script:_verifyInfoCount++
 
 Write-Host "`n  ═══ FAST STARTUP ═══" -ForegroundColor Cyan
@@ -603,7 +595,7 @@ try {
     # and English-only matching would fail on non-English Windows.
     $bcdOutput = bcdedit /enum "{current}" /v 2>&1 | Out-String
     # Match on hex element IDs (locale-independent) + any truthy value.
-    # Boolean values are localized (Yes/Ja/Oui/Sí/Да/是/Tak/etc.) — hex IDs are not.
+    # Boolean values are localized (Yes/Ja/Oui/Sí/Да/是/Tak/etc.) - hex IDs are not.
     # 0x26000060 = disabledynamictick.
     if ($bcdOutput -match "0x26000060\s+\S+") {
         Write-Host "  ✓  OK        Dynamic Tick disabled" -ForegroundColor Green
@@ -628,22 +620,22 @@ Test-ServiceCheck "WSearch" "Disabled" "Windows Search"
 Test-ServiceCheck "qWave"   "Disabled" "qWave (QoS network probes)"
 foreach ($xSvc in $CFG_XboxServices) {
     $xLabel = if ($xSvc -eq "XboxGipSvc") {
-        "$xSvc (Xbox wireless accessories — re-enable if using Xbox controller/headset)"
+        "$xSvc (Xbox wireless accessories - re-enable if using Xbox controller/headset)"
     } else {
         "$xSvc (Xbox background service)"
     }
     Test-ServiceCheck $xSvc "Disabled" $xLabel
 }
-# Windows Update services (Step 15, CRITICAL risk — most users skip this step)
+# Windows Update services (Step 15, CRITICAL risk - most users skip this step)
 # Only report if they were actually disabled; if still at default, show INFO not MISSING.
 foreach ($_wuSvc in @("wuauserv", "UsoSvc", "WaaSMedicSvc")) {
     $_wuObj = Get-Service $_wuSvc -ErrorAction SilentlyContinue
     if ($_wuObj -and $_wuObj.StartType -eq 'Disabled') {
-        Write-Host "  ✓  OK        $_wuSvc = Disabled (Step 15 — Windows Update Blocker)" -ForegroundColor Green
+        Write-Host "  ✓  OK        $_wuSvc = Disabled (Step 15 - Windows Update Blocker)" -ForegroundColor Green
         $Script:_verifyOkCount++
     } elseif ($_wuObj) {
         # Not disabled = user likely skipped Step 15 (expected for most users)
-        Write-Host "  ✓  INFO      $_wuSvc = $($_wuObj.StartType) (Step 15 skipped — normal)" -ForegroundColor Cyan
+        Write-Host "  ✓  INFO      $_wuSvc = $($_wuObj.StartType) (Step 15 skipped - normal)" -ForegroundColor Cyan
         $Script:_verifyInfoCount++
     }
 }
@@ -688,26 +680,26 @@ $total = $counts.okCount + $counts.changedCount + $counts.missingCount
 Write-Blank
 Write-Host "  $(("$([char]0x2550)") * 60)" -ForegroundColor DarkGray
 Write-Host "  VERIFICATION RESULT:  $total settings checked$(if($counts.infoCount){", $($counts.infoCount) info"})" -ForegroundColor White
-Write-Host "  $([char]0x2714) OK:       $($counts.okCount)  — working as intended" -ForegroundColor Green
-Write-Host "  $([char]0x2718) CHANGED:  $($counts.changedCount)  — something reset these" -ForegroundColor Yellow
-Write-Host "  ?  MISSING:  $($counts.missingCount)  — not applied yet" -ForegroundColor Red
+Write-Host "  $([char]0x2714) OK:       $($counts.okCount)  - match expected values" -ForegroundColor Green
+Write-Host "  $([char]0x2718) CHANGED:  $($counts.changedCount)  - differ from expected values" -ForegroundColor Yellow
+Write-Host "  ?  MISSING:  $($counts.missingCount)  - not present" -ForegroundColor Red
 Write-Host "  $(("$([char]0x2550)") * 60)" -ForegroundColor DarkGray
 
 if ($counts.changedCount -gt 0 -or $counts.missingCount -gt 0) {
     Write-Blank
     if ($counts.changedCount -gt 0) {
-        Write-Host "  $([char]0x26A0) Windows Update likely reset $($counts.changedCount) of your optimizations." -ForegroundColor Yellow
-        Write-Host "    This is normal — Windows does this after major updates." -ForegroundColor DarkGray
+        Write-Host "  $([char]0x26A0) $($counts.changedCount) checked value(s) differ from the repository expectation." -ForegroundColor Yellow
+        Write-Host "    This verifier does not determine what changed them." -ForegroundColor DarkGray
     }
     if ($counts.missingCount -gt 0) {
-        Write-Host "  $([char]0x2139) $($counts.missingCount) setting(s) were never applied (you may have skipped those steps)." -ForegroundColor DarkGray
+        Write-Host "  $([char]0x2139) $($counts.missingCount) checked value(s) are not present. The related step may have been skipped or may not apply to this system." -ForegroundColor DarkGray
     }
     Write-Host ""
-    Write-Host "  $([char]0x2139) What to do: Run Phase 1 again (START.bat -> [1])." -ForegroundColor Cyan
-    Write-Host "    It will detect your previous progress and only re-apply what changed." -ForegroundColor DarkGray
+    Write-Host "  $([char]0x2139) What to do: Review the listed checks before deciding whether to re-run a step." -ForegroundColor Cyan
+    Write-Host "    Clear saved progress from START.bat only when you intend to re-run Phase 1." -ForegroundColor DarkGray
 } else {
     Write-Blank
-    Write-Host "  $([char]0x2714) All settings intact — your optimizations are still active!" -ForegroundColor Green
+    Write-Host "  $([char]0x2714) All checked settings match their expected values." -ForegroundColor Green
 }
 
     Write-Blank

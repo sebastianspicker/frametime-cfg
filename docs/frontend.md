@@ -8,16 +8,21 @@ controls.
 
 ## Structure
 
-- `CS2-Optimize-GUI.ps1` owns startup, XAML loading, navigation, asynchronous
+- `frametime-gui.ps1` owns startup, XAML loading, navigation, asynchronous
   operation lifecycle, Windows High Contrast adaptation, and shutdown cleanup.
-- `ui/CS2-Optimize-GUI.xaml` owns layout, resources, shared control styles,
+- `ui/frametime-gui.xaml` owns layout, resources, shared control styles,
   accessible names, labels, and live regions.
-- `helpers/gui-panels.ps1` owns panel data mapping and interaction handlers.
+- `helpers/gui-panels.ps1` owns shared panel state plus Overview, Assess, Setup,
+  Recovery, and Benchmark interactions.
+- `helpers/gui-network.ps1` owns Network panel mapping and event handlers.
+- `helpers/gui-video.ps1` owns Video settings mapping and event handlers.
 - Existing domain helpers remain the source of truth for assessment, backup,
   benchmark, network, tier, and video behavior.
 
 Do not embed XAML back into the PowerShell entrypoint. Keep domain operations
-out of click handlers when a shared helper already owns them.
+out of click handlers when a shared helper already owns them. The network and
+video controllers depend on WPF elements and must remain loaded through
+`gui-panels.ps1`, not the common `helpers.ps1` loader used by terminal flows.
 
 ## Navigation and page patterns
 
@@ -38,10 +43,11 @@ retain their existing confirmation or preview boundary.
 
 ## Styling
 
-`DESIGN.md` is the source of truth for visual tokens and component rules.
+[`ui-design.md`](ui-design.md) is the source of truth for visual tokens and
+component rules.
 Resources in the XAML use `DynamicResource` so Windows High Contrast changes
 can replace brushes at runtime. Keep the interface dark, restrained, and
-information-oriented. Use the orange accent for the principal action or active
+information-oriented. Use the amber accent for the principal action or active
 state, not for decoration.
 
 Shared styles are intentionally limited to navigation, primary/secondary/danger
@@ -49,29 +55,31 @@ buttons, cards, form controls, progress, and data grids. Page-specific layout
 should remain local. Do not add a runtime styling framework or a generic wrapper
 component layer.
 
-## Accessibility
+## Accessibility targets
 
-The target is WCAG 2.2 AA-equivalent desktop behavior plus Windows UI
-Automation conventions:
+The release targets WCAG 2.2 AA-equivalent desktop behavior and Windows UI
+Automation conventions. They remain Windows validation targets, not guarantees
+for the current alpha:
 
 - all actions must be reachable by keyboard with a visible focus indicator;
 - use native WPF controls and native window chrome;
 - pair inputs with `Label.Target` and provide an automation name when visual
   context alone is insufficient;
 - announce changing operation status with polite live regions;
-- never encode status by color alone;
+- do not encode status by color alone;
 - preserve Windows High Contrast and reduced-motion preferences;
 - avoid nonessential animation;
 - keep long-running assessment work cancellable;
 - verify tab order and focus restoration after dialogs on Windows.
 
-## Responsive behavior
+## Scaling targets
 
-The supported target is Windows desktop at 100–200% scaling with an effective
-content area down to 960 by 540 pixels. The window is resizable with a
-900-by-500 minimum safety floor. Toolbars and action groups should use wrapping
+The release target is Windows desktop at 100 to 200 percent scaling with an
+effective content area down to 960 by 540 pixels. The window is resizable with
+a 900-by-500 minimum size. Toolbars and action groups should use wrapping
 layouts; tables retain horizontal scrolling rather than hiding critical
-columns. A phone or touch-first layout is not a goal.
+columns. These dimensions still require Windows validation. A phone or
+touch-first layout is not a goal.
 
 ## Supported runtime
 
@@ -86,33 +94,34 @@ window behavior, or screenshots.
 Run the focused frontend contracts:
 
 ```powershell
-Invoke-Pester -Path @(
-  "tests/gui-design-contract.Tests.ps1",
-  "tests/helpers/gui-panels.Tests.ps1"
-) -CI
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 `
+    -Path .\tests\gui-design-contract.Tests.ps1 `
+          .\tests\helpers\gui-panels.Tests.ps1
 ```
 
-Also parse all PowerShell files, run `xmllint --noout
-ui/CS2-Optimize-GUI.xaml` when available, and run the full local test entrypoint
+Also parse all PowerShell files, run `xmllint --noout ui/frametime-gui.xaml`
+when available, and run the full local test entrypoint
 before release:
 
 ```powershell
-./scripts/Invoke-LocalTests.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1
 ```
 
 On Windows, manually verify Overview, Assess including cancellation, setup
 launch, benchmark invalid/valid input, empty and populated Recovery, Network
 failure/retry, and video write confirmation. Repeat with keyboard only, Windows
-High Contrast, 200% scaling, and a 960-by-540 effective viewport. Capture new
-screenshots only after those states pass. Legacy screenshots were removed
-because they no longer represented the current task structure.
+High Contrast, 200 percent scaling, and a 960-by-540 effective viewport. Capture new
+screenshots only after those states pass. No current screenshots are published
+pending validated capture on Windows. Legacy screenshots were removed because
+they no longer represented the current task structure.
 
 ## Content conventions
 
 Use domain terms that match the terminal workflow. Prefer explicit verbs such as
 `Run full scan`, `Verify supported settings`, `Restore selected step`, and
 `Write video.txt`. Avoid promotional copy, decorative glyphs, vague actions,
-and claims of zero risk. Explain consequence and recovery near risky actions.
+and unqualified safety claims. Explain consequence and recovery near risky
+actions.
 
 ## Known limitations
 

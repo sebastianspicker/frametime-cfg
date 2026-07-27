@@ -9,6 +9,7 @@ BeforeAll {
     $script:SecurityWorkflow = Get-Content (Join-Path $script:ProjectRoot ".github/workflows/security.yml") -Raw
     $script:RepositorySettings = Get-Content (Join-Path $script:ProjectRoot ".github/REPO_SETTINGS.md") -Raw
     $script:SmokeEntrypointsScript = Get-Content (Join-Path $script:ProjectRoot ".github/scripts/smoke-entrypoints.ps1") -Raw
+    $script:SyntaxVerifier = Get-Content (Join-Path $script:ProjectRoot ".github/scripts/verify-syntax.ps1") -Raw
     $script:PesterInstaller = Get-Content (Join-Path $script:ProjectRoot ".github/scripts/install-pester.ps1") -Raw
     $script:PSScriptAnalyzerRunner = Get-Content (Join-Path $script:ProjectRoot ".github/scripts/run-psscriptanalyzer.ps1") -Raw
 }
@@ -26,6 +27,12 @@ Describe "lint workflow contract" {
         $script:LintWorkflow | Should -Match 'shell:\s+powershell'
     }
 
+    It "keeps the syntax verifier compatible with Windows PowerShell 5.1 and fail-fast" {
+        $script:SyntaxVerifier | Should -Not -Match 'Path\]::GetRelativePath'
+        $script:SyntaxVerifier | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+        $script:SyntaxVerifier | Should -Match 'StringComparison\]::OrdinalIgnoreCase'
+    }
+
     It "targets the protected main branch" {
         $script:LintWorkflow | Should -Match 'branches:\s+\[main\]'
         $script:SecurityWorkflow | Should -Match 'branches:\s+\[main\]'
@@ -40,7 +47,7 @@ Describe "lint workflow contract" {
             'PostReboot-Setup.ps1',
             'FpsCap-Calculator.ps1',
             'Verify-Settings.ps1',
-            'CS2-Optimize-GUI.ps1'
+            'frametime-gui.ps1'
         )) {
             $escaped = [regex]::Escape($scriptName)
             $script:SmokeEntrypointsScript | Should -Match $escaped
@@ -62,7 +69,7 @@ Describe "lint workflow contract" {
             'Verify-Settings.ps1',
             'Boot-SafeMode.ps1',
             'PostReboot-Setup.ps1',
-            'CS2-Optimize-GUI.ps1'
+            'frametime-gui.ps1'
         )) {
             $escaped = [regex]::Escape($target)
             $script:SmokeEntrypointsScript | Should -Match $escaped
@@ -94,8 +101,7 @@ Describe "lint workflow contract" {
 
     It "covers documentation changes and tracked EstimateKey references" {
         $script:LintWorkflow | Should -Not -Match '!docs/archive/\*\*'
-        $script:LintWorkflow | Should -Not -Match '!docs/agent/\*\*'
-        $script:LintWorkflow | Should -Not -Match '\(docs/archive\|docs/agent\|vendor'
+        $script:LintWorkflow | Should -Not -Match '\(docs/archive\|vendor'
         $script:LintWorkflow | Should -Match 'git grep -n -E'
         $script:LintWorkflow | Should -Match "grep -v 'tests/workflow-contracts.Tests.ps1'"
         $script:LintWorkflow | Should -Match "grep -v '.github/REPO_SETTINGS.md'"
@@ -134,7 +140,7 @@ Describe "security workflow contract" {
     }
 
     It "pins START-GUI.bat to the trusted GUI script target" {
-        $script:SecurityWorkflow | Should -Match 'CS2-Optimize-GUI\.ps1'
-        $script:SecurityWorkflow | Should -Match 'START-GUI\.bat no longer launches CS2-Optimize-GUI\.ps1'
+        $script:SecurityWorkflow | Should -Match 'frametime-gui\.ps1'
+        $script:SecurityWorkflow | Should -Match 'START-GUI\.bat no longer launches frametime-gui\.ps1'
     }
 }

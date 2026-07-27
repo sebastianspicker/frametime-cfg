@@ -17,7 +17,7 @@ BeforeAll {
             [PSCustomObject]@{ Phase = 1; Path = "Optimize-GameConfig.ps1" },
             [PSCustomObject]@{ Phase = 3; Path = "PostReboot-Setup.ps1" }
         )
-        $stepPattern = [regex]'(?s)Write-Section\s+["'']Step\s+(?<Step>\d+)\s+[—-]\s+(?<Title>[^"'']+)["''](?<Body>.*?)(?=Write-Section\s+["'']Step\s+\d+\s+[—-]|\z)'
+        $stepPattern = [regex]'(?s)Write-Section\s+["'']Step\s+(?<Step>\d+)\s+[--]\s+(?<Title>[^"'']+)["''](?<Body>.*?)(?=Write-Section\s+["'']Step\s+\d+\s+[--]|\z)'
 
         foreach ($source in $phaseSources) {
             $fullPath = Join-Path $script:ProjectRoot $source.Path

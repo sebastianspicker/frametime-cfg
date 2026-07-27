@@ -116,6 +116,7 @@ namespace System.Windows.Automation {
         if (-not $PSCmdlet.ShouldProcess("asynchronous operation", "Stop")) { return }
     }
     function Write-DebugLog {}
+    function global:shutdown { param([Parameter(ValueFromRemainingArguments)]$CmdArgs) }
 
     $Script:UISync = @{}
     $Script:AllPanels = @("PanelDashboard", "PanelAnalyze", "PanelOptimize", "PanelNetwork")
@@ -642,6 +643,95 @@ Describe "Startup drift helpers" {
     }
 }
 
+Describe "Invoke-GuiSafeModeExit" {
+
+    BeforeEach {
+        Mock shutdown { $global:LASTEXITCODE = 0 }
+        Mock Clear-SafeBootVerified {
+            [PSCustomObject]@{
+                Status = "Success"
+                Verified = $true
+                Applied = $true
+                DeleteExitCode = 0
+                EnumExitCode = 0
+                Message = "Safe Mode disabled and verified."
+            }
+        }
+    }
+
+    It "blocks restart when SafeBoot absence cannot be verified" {
+        Mock Clear-SafeBootVerified {
+            [PSCustomObject]@{
+                Status = "Failed"
+                Verified = $false
+                Applied = $true
+                DeleteExitCode = 0
+                EnumExitCode = 5
+                Message = "Safe Mode state could not be verified."
+            }
+        }
+
+        $result = Invoke-GuiSafeModeExit
+
+        $result | Should -Be $false
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke shutdown -Exactly 0
+    }
+
+    It "restarts only after verified SafeBoot removal" {
+        $result = Invoke-GuiSafeModeExit
+
+        $result | Should -Be $true
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke shutdown -Exactly 1
+    }
+
+    It "reports failure when Windows rejects the restart request" {
+        Mock shutdown {
+            $global:LASTEXITCODE = 5
+            "Access is denied."
+        }
+
+        $result = Invoke-GuiSafeModeExit
+
+        $result | Should -Be $false
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke shutdown -Exactly 1
+    }
+}
+
+Describe "Enter-GuiBackupOperation" {
+
+    BeforeEach {
+        Mock Test-BackupLock { $false }
+        Mock Set-BackupLock {}
+        Mock Write-DebugLog {}
+    }
+
+    It "returns false when an existing owner holds the lock" {
+        Mock Test-BackupLock { $true }
+
+        Enter-GuiBackupOperation | Should -BeFalse
+
+        Should -Invoke Set-BackupLock -Exactly 0
+    }
+
+    It "catches a contender winning between the check and atomic acquisition" {
+        Mock Set-BackupLock { throw "file already exists" }
+
+        { $script:LockResult = Enter-GuiBackupOperation } | Should -Not -Throw
+
+        $script:LockResult | Should -BeFalse
+        Should -Invoke Set-BackupLock -Exactly 1
+    }
+
+    It "returns true only after acquiring the lock" {
+        Enter-GuiBackupOperation | Should -BeTrue
+
+        Should -Invoke Set-BackupLock -Exactly 1
+    }
+}
+
 Describe "Save-SettingsToState" {
 
     BeforeEach {
@@ -688,5 +778,46 @@ Describe "Save-SettingsToState" {
         $saved = Get-Content $CFG_StateFile -Raw | ConvertFrom-Json
         $saved.profile | Should -Be "CUSTOM"
         $saved.mode | Should -Be "DRY-RUN"
+    }
+}
+
+Describe "published Phase runtime routing" {
+
+    It "routes only the Phase 2 and Phase 3 GUI buttons through the published runtime helper" {
+        $source = Get-Content -LiteralPath (Join-Path $Script:Root "helpers/gui-panels.ps1") -Raw
+
+        $source | Should -Match 'BtnOptPhase2"\s*\)\.Add_Click\(\{\s*Start-PublishedPhaseRuntime "SafeMode-DriverClean\.ps1"'
+        $source | Should -Match 'BtnOptPhase3"\s*\)\.Add_Click\(\{\s*Start-PublishedPhaseRuntime "PostReboot-Setup\.ps1"'
+        $source | Should -Match '\$runtimeRoot\s*=\s*Get-PhaseRuntimeRoot -DestinationRoot \$CFG_WorkDir'
+        $source | Should -Match 'Test-PhaseRuntimePayload -RuntimeRoot \$runtimeRoot'
+        $source | Should -Not -Match 'BtnOptPhase[23]"\s*\)\.Add_Click\(\{\s*Launch-Terminal'
+    }
+
+    It "does not launch an existing runtime whose manifest validation fails" {
+        Mock Get-PhaseRuntimeRoot { Join-Path $CFG_WorkDir "runtime-generations/0123456789abcdef0123456789abcdef" }
+        Mock Test-Path { $true }
+        Mock Test-PhaseRuntimePayload {
+            [PSCustomObject]@{ Valid = $false; Message = "runtime hash mismatch" }
+        }
+        Mock Start-Process {}
+
+        Start-PublishedPhaseRuntime "PostReboot-Setup.ps1" | Should -BeFalse
+
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 1
+        Should -Invoke Start-Process -Exactly 0
+    }
+
+    It "launches only after the published runtime passes integrity validation" {
+        Mock Get-PhaseRuntimeRoot { Join-Path $CFG_WorkDir "runtime-generations/0123456789abcdef0123456789abcdef" }
+        Mock Test-Path { $true }
+        Mock Test-PhaseRuntimePayload {
+            [PSCustomObject]@{ Valid = $true; Message = "verified" }
+        }
+        Mock Start-Process {}
+
+        Start-PublishedPhaseRuntime "SafeMode-DriverClean.ps1" | Should -BeTrue
+
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 1
+        Should -Invoke Start-Process -Exactly 1
     }
 }

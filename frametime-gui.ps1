@@ -1,11 +1,11 @@
 ﻿# ==============================================================================
-#  CS2-Optimize-GUI.ps1  —  WPF Dashboard
+#  frametime-gui.ps1  -  WPF Dashboard
 #  Launch via START-GUI.bat
 # ==============================================================================
 param([switch]$SmokeTest)
 
 if ($SmokeTest) {
-    Write-Host "SMOKE TEST OK: CS2-Optimize-GUI" -ForegroundColor Green
+    Write-Host "SMOKE TEST OK: frametime-gui" -ForegroundColor Green
     exit 0
 }
 
@@ -13,7 +13,7 @@ function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw "CS2-Optimize-GUI.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
+        throw "frametime-gui.ps1 must be run as Administrator. Start PowerShell with 'Run as administrator' and try again."
     }
 }
 
@@ -28,12 +28,30 @@ $Script:Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path $MyInvocat
 . "$Script:Root\helpers\step-catalog.ps1"
 . "$Script:Root\helpers\system-analysis.ps1"
 
+try {
+    Assert-NoLegacyPhaseHandoff
+} catch {
+    [System.Windows.MessageBox]::Show(
+        "The desktop interface cannot start while an older phase handoff is armed or cannot be verified.`n`n$($_.Exception.Message)`n`nUse the matching older checkout to complete or remove that handoff, then retry.",
+        "Startup blocked",
+        "OK",
+        "Error"
+    ) | Out-Null
+    throw
+}
+
 # ── Async engine ──────────────────────────────────────────────────────────────
 $Script:Pool   = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspacePool(1, 3)
 $Script:Pool.Open()
 $Script:UISync    = [hashtable]::Synchronized(@{})
 $Script:Closing   = $false
 $Script:AsyncTimers = [System.Collections.Generic.List[System.Windows.Threading.DispatcherTimer]]::new()
+$Script:AnalysisInFlight = $false
+$Script:AnalysisOperation = $null
+$Script:VerifyInFlight = $false
+$Script:LatencyInFlight = $false
+$Script:NetworkRegionPickerUpdating = $false
+$Script:CriticalOperation = $null
 
 function Invoke-Async {
     param(
@@ -132,7 +150,7 @@ function Stop-AsyncOperation {
 function New-Brush { [System.Windows.Media.BrushConverter]::new().ConvertFromString($args[0]) }
 
 # ── XAML ──────────────────────────────────────────────────────────────────────
-$xamlPath = Join-Path $Script:Root "ui\CS2-Optimize-GUI.xaml"
+$xamlPath = Join-Path $Script:Root "ui\frametime-gui.xaml"
 if (-not (Test-Path -LiteralPath $xamlPath -PathType Leaf)) {
     throw "GUI layout not found: $xamlPath"
 }
@@ -184,8 +202,8 @@ function Set-GuiThemeResources {
         BgMain = "#0B0D10"; BgSide = "#11151A"; BgCard = "#11151A"; BgHeader = "#11151A"
         BgRaised = "#181D23"; BgSelected = "#242B33"; TextPri = "#F4F6F8"
         TextSecondary = "#B8C0CC"; TextMuted = "#9AA5B4"; Border = "#313943"
-        ControlBorder = "#667085"; Accent = "#E8520A"; AccentHover = "#F05A16"
-        AccentPressed = "#D94B08"; AccentText = "#0B0D10"; Success = "#22C55E"
+        ControlBorder = "#667085"; Accent = "#D6A43B"; AccentHover = "#E2B24B"
+        AccentPressed = "#B98527"; AccentText = "#0B0D10"; Success = "#22C55E"
         SuccessFill = "#153A27"; Warning = "#FBBF24"; WarningFill = "#3F3312"
         Danger = "#F87171"; DangerFill = "#B42318"; DangerText = "#FFFFFF"; Info = "#38BDF8"
     }
@@ -212,7 +230,7 @@ function El {
 
 # ── Version labels (from config.env.ps1) ─────────────────────────────────────
 (El "SettingsVersion").Text = "  $CFG_Version"
-$Window.Title = "CS2 Optimize $CFG_Version"
+$Window.Title = "frametime.cfg $CFG_Version"
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 $Script:AllPanels = "PanelDashboard","PanelAnalyze","PanelOptimize","PanelBackup","PanelBenchmark","PanelNetwork","PanelVideo"
@@ -241,9 +259,9 @@ $InactiveStyle = $Window.Resources["NavBtn"]
 # ── Sidebar status helpers ────────────────────────────────────────────────────
 function Update-SidebarStatus {
     $state = Get-StateDataSafe
-    $prof = if ($state) { $state.profile } else { "—" }
+    $prof = if ($state) { $state.profile } else { "-" }
     $isDry = ($state -and $state.mode -eq "DRY-RUN")
-    $phaseText = "—"
+    $phaseText = "-"
     Ensure-SecureWorkDir -Path (Split-Path $CFG_ProgressFile -Parent)
     if (Test-Path $CFG_ProgressFile) {
         try {
@@ -312,7 +330,7 @@ $Window.Add_Closed({
     if ($Script:HighContrastHandler) {
         [System.Windows.SystemParameters]::remove_StaticPropertyChanged($Script:HighContrastHandler)
     }
-    # Snapshot the list before iterating — Tick handlers call Remove($timer) on this
+    # Snapshot the list before iterating - Tick handlers call Remove($timer) on this
     # same list, which would throw InvalidOperationException during enumeration.
     $timersSnapshot = @($Script:AsyncTimers)
     foreach ($t in $timersSnapshot) { try { $t.Stop() } catch { $null = $_ } }

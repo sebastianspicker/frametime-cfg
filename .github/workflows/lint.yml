@@ -7,24 +7,30 @@ on:
       - '**.ps1'
       - '**.psd1'
       - '*.bat'
+      - '*.md'
       - 'cfgs/**'
-      - 'README.md'
       - 'docs/**'
-      - '.github/workflows/**'
+      - 'ui/**'
+      - '.github/**'
+      - '.gitattributes'
+      - '.gitignore'
   pull_request:
     branches: [main]
     paths:
       - '**.ps1'
       - '**.psd1'
       - '*.bat'
+      - '*.md'
       - 'cfgs/**'
-      - 'README.md'
       - 'docs/**'
-      - '.github/workflows/**'
+      - 'ui/**'
+      - '.github/**'
+      - '.gitattributes'
+      - '.gitignore'
   workflow_dispatch:
 
 # Restrict GITHUB_TOKEN to read-only by default (principle of least privilege).
-# Individual jobs can escalate if needed — none in this workflow do.
+# Individual jobs can escalate if needed - none in this workflow do.
 permissions:
   contents: read
 

@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-#  Guide-VideoSettings.ps1  —  CS2 Video Settings Guide (May 2026)
+#  Guide-VideoSettings.ps1 - CS2 Video Settings Guide
 # ==============================================================================
 
 function Show-CS2SettingsGuide {
@@ -9,48 +9,39 @@ function Show-CS2SettingsGuide {
         [string] $gpuInput
     )
 
-    # DRY-RUN: skip interactive guide entirely — it has multiple Read-Host loops
+    # Render every guide-owned operation without entering its interactive loops.
+    # This keeps the full preview zero-prompt while still covering the feature.
     if ($SCRIPT:DryRun) {
-        Write-Host "  [DRY-RUN] Would show CS2 video settings guide (interactive)" -ForegroundColor Magenta
+        Write-Host "  [DRY-RUN] Would evaluate NVIDIA Reflex vs. NVCP low-latency guidance." -ForegroundColor Magenta
+        Write-Host "  [DRY-RUN] Would select a LOW/MID/HIGH repository video preset and resolution." -ForegroundColor Magenta
+        Write-Host "  [DRY-RUN] Would validate refresh rate, display mode, FPS cap, launch options, and in-game settings." -ForegroundColor Magenta
+        Write-Host "  [DRY-RUN] Would back up video.txt, generate the selected preset, and show the complete review checklist." -ForegroundColor Magenta
         return
     }
 
     # ── REFLEX DECISION (conflicting data) ─────────────────────────────────
     Write-Blank
     Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-    Write-Host "  │  NVIDIA REFLEX — CONFLICTING DATA                          │" -ForegroundColor Yellow
+    Write-Host "  │  NVIDIA REFLEX CONFIGURATION                               │" -ForegroundColor Yellow
     Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │  Two supported positions:                                   │" -ForegroundColor Yellow
+    Write-Host "  │  Two configurations are available for local comparison:    │" -ForegroundColor Yellow
     Write-Host "  │                                                              │" -ForegroundColor Yellow
     Write-Host "  │  [A] -noreflex + NVCP Low Latency Ultra                     │" -ForegroundColor Cyan
-    Write-Host "  │      Community meta since Jan 2025 (Blur Busters, ThourCS2) │" -ForegroundColor DarkGray
-    Write-Host "  │      More stable 1% lows in multiple tests.                │" -ForegroundColor DarkGray
-    Write-Host "  │      CAVEAT: @CS2Kitchen proved that CapFrameX with        │" -ForegroundColor DarkYellow
-    Write-Host "  │      PresentMon 2.2+ delivers false lows data when         │" -ForegroundColor DarkYellow
-    Write-Host "  │      Reflex off + NVCP cap active. Boost possibly a        │" -ForegroundColor DarkYellow
-    Write-Host "  │      measurement artifact.                                  │" -ForegroundColor DarkYellow
+    Write-Host "  │      Uses the driver low-latency mode and disables Reflex. │" -ForegroundColor DarkGray
+    Write-Host "  │      Capture-tool and driver versions can affect results.  │" -ForegroundColor DarkYellow
     Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │  [B] Reflex ON (Enabled — 0% of pros use Boost)            │" -ForegroundColor Green
-    Write-Host "  │      ThourCS2 benchmark (NVIDIA Drv 581.08):               │" -ForegroundColor DarkGray
-    Write-Host "  │      3-4 ms less input lag on high-end, up to 15 ms on     │" -ForegroundColor DarkGray
-    Write-Host "  │      low-end. Nearly no 1%-low difference (+-0.5%).        │" -ForegroundColor DarkGray
-    Write-Host "  │      Valve + NVIDIA recommend Reflex ON.                   │" -ForegroundColor DarkGray
+    Write-Host "  │  [B] Reflex ON                                               │" -ForegroundColor Green
+    Write-Host "  │      Uses the in-game Reflex implementation.               │" -ForegroundColor DarkGray
+    Write-Host "  │      Display mode and driver behavior must be verified.    │" -ForegroundColor DarkYellow
     Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │      IMPORTANT (Jan 2026, Blur Busters):                   │" -ForegroundColor DarkYellow
-    Write-Host "  │      Reflex is non-functional in HW:FLIP mode (default).   │" -ForegroundColor DarkYellow
-    Write-Host "  │      FIX: Right-click cs2.exe -> Properties -> Compat ->   │" -ForegroundColor DarkYellow
-    Write-Host "  │      'Disable fullscreen optimizations'. This switches to  │" -ForegroundColor DarkYellow
-    Write-Host "  │      HW:Legacy Flip where Reflex works correctly.          │" -ForegroundColor DarkYellow
-    Write-Host "  │                                                              │" -ForegroundColor Yellow
-    Write-Host "  │  CONCLUSION: Test both with CapFrameX. Use whatever        │" -ForegroundColor White
-    Write-Host "  │  feels better to you. There is no definitive scientific    │" -ForegroundColor White
-    Write-Host "  │  proof for either side.                                     │" -ForegroundColor White
+    Write-Host "  │  Test both with the same capture and workload settings.     │" -ForegroundColor White
+    Write-Host "  │  This repository contains no validated comparison result.   │" -ForegroundColor White
     Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Yellow
     Write-Blank
 
     Write-Host "  Which launch option do you want in your clipboard?" -ForegroundColor White
     Write-Host "  [1]  -noreflex  (contested test path; compare on your system)" -ForegroundColor Cyan
-    Write-Host "  [2]  No -noreflex  (Reflex ON in-game, less input lag)" -ForegroundColor Green
+    Write-Host "  [2]  No -noreflex  (Reflex ON in-game)" -ForegroundColor Green
     Write-Host "  [3]  Show both, I'll decide myself" -ForegroundColor DarkGray
     do { $reflexChoice = Read-Host "  [1/2/3]" } while ($reflexChoice -notin @("1","2","3"))
 
@@ -78,14 +69,14 @@ function Show-CS2SettingsGuide {
     Write-Host "  Parameter explanation:" -ForegroundColor White
     Write-Info "  -console               Open developer console at startup"
     if ($reflexFlag) {
-        Write-Info "  -noreflex              Disables Reflex completely (including in-game UI)"
-        Write-Info "                         -> Use NVCP Low Latency Mode Ultra instead"
+        Write-Info "  -noreflex              Requests Reflex disabled; confirm in the current client"
+        Write-Info "                         Compare with the selected driver low-latency setting"
     } else {
         Write-Info "  (no -noreflex)         Set Reflex in-game to 'Enabled' or 'Enabled+Boost'"
     }
-    Write-Info "  +exec autoexec         Loads autoexec.cfg on start (also auto-loaded by CS2)"
-    Write-Info "  fps_max                Set via autoexec.cfg (default 0 = uncapped)"
-    Write-Info "  NOTE: -threads N is cargo-cult — Valve warns against it (omitted deliberately)"
+    Write-Info "  +exec autoexec         Requests autoexec.cfg execution at startup"
+    Write-Info "  fps_max                Set via optimization.cfg (default 0 = uncapped)"
+    Write-Info "  NOTE: the repository does not add -threads; validate engine flags against current game documentation."
 
     # ── NVIDIA CP SETTINGS ───────────────────────────────────────────────
     if ($gpuInput -in @("1","2")) {
@@ -93,7 +84,7 @@ function Show-CS2SettingsGuide {
         Write-Host "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
         Write-Host "  │  NVIDIA CONTROL PANEL  ->  3D Settings  ->  CS2/cs2.exe    │" -ForegroundColor Cyan
         Write-Host "  │                                                              │" -ForegroundColor Cyan
-        Write-Host "  │  Shader Cache Size   -> Unlimited      [widely recommended] │" -ForegroundColor Green
+        Write-Host "  │  Shader Cache Size   -> Unlimited      [suite choice]       │" -ForegroundColor Green
         if ($fpsCap -gt 0) {
             $capStr = "Max Frame Rate         -> $fpsCap (avg $avgFps - 9%)"
             Write-Host "  │  $($capStr.PadRight(60))│" -ForegroundColor Green
@@ -101,13 +92,13 @@ function Show-CS2SettingsGuide {
         } else {
             Write-Host "  │  Max Frame Rate       -> set after benchmark  [benchmark]  │" -ForegroundColor Yellow
         }
-        Write-Host "  │  Power Management     -> Prefer Maximum Perf. [low-latency] │" -ForegroundColor Yellow
+        Write-Host "  │  Power Management     -> Prefer Maximum Perf. [suite choice]│" -ForegroundColor Yellow
         if ($reflexFlag) {
             Write-Host "  │  Low Latency Mode     -> Ultra              [heuristic]    │" -ForegroundColor Yellow
         } else {
             Write-Host "  │  Low Latency Mode     -> Off (Reflex handles) [heuristic]  │" -ForegroundColor Yellow
         }
-        Write-Host "  │  Vertical Sync        -> Off         [common low-latency]   │" -ForegroundColor DarkGray
+        Write-Host "  │  Vertical Sync        -> Off         [fixed-refresh preset] │" -ForegroundColor DarkGray
         if ($gpuInput -eq "1") {
             Write-Host "  │                                                              │" -ForegroundColor Cyan
             Write-Host "  │  RTX 5000: Scaling -> MONITOR (not GPU)                    │" -ForegroundColor Yellow
@@ -130,26 +121,26 @@ function Show-CS2SettingsGuide {
         Write-Host "  │  Settings -> Display -> Graphics -> 'Optimizations for       │" -ForegroundColor White
         Write-Host "  │  windowed games' -> ON                                       │" -ForegroundColor White
         Write-Host "  │                                                              │" -ForegroundColor DarkCyan
-        Write-Host "  │  Moves DX10/11 from legacy blt to flip-model in windowed    │" -ForegroundColor DarkGray
-        Write-Host "  │  mode. Reduces frame latency for borderless/windowed.       │" -ForegroundColor DarkGray
-        Write-Host "  │  No effect in exclusive fullscreen.                         │" -ForegroundColor DarkGray
+        Write-Host "  │  Requests the Windows flip-model path for eligible DX10/11  │" -ForegroundColor DarkGray
+        Write-Host "  │  windowed games. Confirm effective behavior on this system. │" -ForegroundColor DarkGray
+        Write-Host "  │  Exclusive-fullscreen behavior is outside this setting.     │" -ForegroundColor DarkGray
         Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor DarkCyan
     }
 
     # ── HARDWARE TIER DETECTION ──────────────────────────────────────────
     Write-Blank
-    Write-Host "  YOUR PC TIER (for settings recommendations):" -ForegroundColor White
-    Write-Host "  [1]  LOW-END     GTX 1650/1660, RX 580/5500, <150 avg FPS" -ForegroundColor DarkGray
-    Write-Host "  [2]  MID-RANGE   RTX 3060/4060, RX 6700/7600, 150-300 avg FPS" -ForegroundColor Yellow
-    Write-Host "  [3]  HIGH-END    RTX 4070+/5070+, RX 7800+, 300+ avg FPS" -ForegroundColor Green
+    Write-Host "  SELECT A REPOSITORY VIDEO PRESET:" -ForegroundColor White
+    Write-Host "  [1]  LOW         Lower visual settings and pixel load" -ForegroundColor DarkGray
+    Write-Host "  [2]  MID         Balanced repository defaults" -ForegroundColor Yellow
+    Write-Host "  [3]  HIGH        Higher image-quality defaults" -ForegroundColor Green
     do { $tierChoice = Read-Host "  [1/2/3]" } while ($tierChoice -notin @("1","2","3"))
     $pcTier = switch ($tierChoice) { "1" {"LOW"} "2" {"MID"} "3" {"HIGH"} }
 
     Write-Blank
     Write-Host "  YOUR RESOLUTION:" -ForegroundColor White
-    Write-Host "  [1]  1280x960 / 1024x768  (4:3 stretched — ~80% pros)" -ForegroundColor Cyan
-    Write-Host "  [2]  1920x1080            (16:9 native — more FOV)" -ForegroundColor White
-    Write-Host "  [3]  2560x1440            (1440p — visual quality)" -ForegroundColor DarkGray
+    Write-Host "  [1]  1280x960 / 1024x768  (4:3 stretched)" -ForegroundColor Cyan
+    Write-Host "  [2]  1920x1080            (16:9 native - more FOV)" -ForegroundColor White
+    Write-Host "  [3]  2560x1440            (1440p - visual quality)" -ForegroundColor DarkGray
     Write-Host "  [4]  Other" -ForegroundColor DarkGray
     do { $resChoice = Read-Host "  [1/2/3/4]" } while ($resChoice -notin @("1","2","3","4"))
 
@@ -159,15 +150,15 @@ function Show-CS2SettingsGuide {
         "1" { @{ w="1280"; h="960";  ar="1" } }   # 4:3 stretched
         "2" { @{ w="1920"; h="1080"; ar="0" } }   # 1080p
         "3" { @{ w="2560"; h="1440"; ar="0" } }   # 1440p
-        "4" { @{ w=$null;  h=$null;  ar="0" } }   # custom — filled from existing file
+        "4" { @{ w=$null;  h=$null;  ar="0" } }   # custom - filled from existing file
     }
 
-    # ── VIDEO SETTINGS — MAY 2026 META ───────────────────────────────────
+    # Video settings
     Write-Blank
     Write-Host "  ╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║  CS2 VIDEO SETTINGS — MAY 2026 META                        ║" -ForegroundColor Cyan
+    Write-Host "  ║  CS2 VIDEO SETTINGS                                        ║" -ForegroundColor Cyan
     Write-Host "  ║  Tailored for: $($pcTier.PadRight(9)) GPU  ·  $($resLabel.PadRight(14))                ║" -ForegroundColor Cyan
-    Write-Host "  ║  Sources: pro databases, community benches, vendor docs     ║" -ForegroundColor DarkGray
+    Write-Host "  ║  Repository defaults; validate with repeatable captures     ║" -ForegroundColor DarkGray
     Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Blank
 
@@ -180,8 +171,8 @@ function Show-CS2SettingsGuide {
     }
     Write-Blank
 
-    # Determine recommended values per tier
-    $msaa       = switch ($pcTier) { "LOW" {"None + CMAA2"}    "MID" {"4x (sweet spot)"}  "HIGH" {"4x (community bench favorite)"} }
+    # Determine repository preset values for the selected tier.
+    $msaa       = switch ($pcTier) { "LOW" {"None + CMAA2"}    "MID" {"4x (repository default)"}  "HIGH" {"4x (repository default)"} }
     $shadows    = switch ($pcTier) { "LOW" {"Low"}             "MID" {"Medium"}            "HIGH" {"Medium"} }
     $dynShadows = switch ($pcTier) { "LOW" {"All"}             "MID" {"All"}               "HIGH" {"All"} }
     $shaderDet  = switch ($pcTier) { "LOW" {"Low"}             "MID" {"Low"}               "HIGH" {"High"} }
@@ -191,77 +182,83 @@ function Show-CS2SettingsGuide {
     $hdr        = switch ($pcTier) { "LOW" {"Performance"}     "MID" {"Performance"}       "HIGH" {"Performance"} }
 
     $msaaNote   = switch ($pcTier) {
-        "LOW"  {"CMAA2: post-process, near-zero FPS cost."}
-        "MID"  {"Community benches can favor 4x; use 2x if FPS budget is tight."}
-        "HIGH" {"Community benches can favor 4x. 8x costs too much for little return."}
+        "LOW"  {"CMAA2 enabled while MSAA is disabled; compare image quality."}
+        "MID"  {"4x is the repository value; compare against 2x with the same capture."}
+        "HIGH" {"4x is the repository value; compare other levels with the same capture."}
     }
 
-    Write-Host "  [BENCHMARK-BACKED / COMMON DEFAULTS]" -ForegroundColor Green
+    Write-Host "  [PROJECT DEFAULTS AND EVIDENCE BOUNDARY]" -ForegroundColor Green
     Write-Host @"
   ┌──────────────────────────────────────────────────────────────────────┐
-  │ Setting                  │ Value          │ Proof / Source            │
+  │ Setting                  │ Value          │ Rationale                 │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Display Mode             │ Fullscreen     │ Common low-latency       │
-  │                          │                │ competitive default      │
+  │ Display Mode             │ Fullscreen     │ Repository preset;       │
+  │                          │                │ compare on target system │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Boost Player Contrast    │ ON             │ Common readability       │
-  │                          │                │ default; benchmark cost  │
+  │ Boost Player Contrast    │ ON             │ Readability preference;  │
+  │                          │                │ benchmark cost           │
   │                          │                │ on your own system       │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Ambient Occlusion        │ OFF            │ ~30 FPS cost (multiple   │
-  │                          │                │ tests). No comp. adv.    │
+  │ Ambient Occlusion        │ OFF            │ Repository visual        │
+  │                          │                │ preference               │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
   │ HDR (light shader)       │ Performance    │ Suite default; compare   │
   │                          │                │ visually on your display │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ FidelityFX Super Res.    │ OFF            │ Native clarity default;  │
-  │                          │                │ lower res before FSR     │
+  │ FidelityFX Super Res.    │ OFF            │ Disabled by the          │
+  │                          │                │ repository preset        │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ Motion Blur              │ N/A (removed)  │ Disabled engine-wide by  │
-  │                          │                │ Valve (AMD GPU bug fix)  │
+  │ Motion Blur              │ Not written    │ No generated video.txt   │
+  │                          │                │ key in this repository   │
   ├──────────────────────────┼────────────────┼──────────────────────────┤
-  │ V-Sync                   │ OFF            │ Fixed-refresh default    │
+  │ V-Sync                   │ OFF            │ Fixed-refresh preset     │
   └──────────────────────────┴────────────────┴──────────────────────────┘
-  Tip: see docs/video.txt for a copy-ready 2026 meta video.txt example.
+  Tip: see docs/video.txt for the repository video.txt example.
 "@ -ForegroundColor Green
 
     Write-Blank
-    Write-Host "  [RECOMMENDED FOR YOUR TIER: $pcTier]" -ForegroundColor Cyan
+    $resolutionNote = switch ($resChoice) {
+        "1" { "Stretched 4:3." }
+        "2" { "Native aspect ratio." }
+        "3" { "Higher GPU load." }
+        default { "Selected by user." }
+    }
+    Write-Host "  [SELECTED REPOSITORY PRESET: $pcTier]" -ForegroundColor Cyan
     Write-Host "  ┌──────────────────────────────────────────────────────────────────────┐" -ForegroundColor Cyan
     Write-Host "  │ Setting                  │ Your Value     │ Reason                   │" -ForegroundColor Cyan
     Write-Host "  ├──────────────────────────┼────────────────┼──────────────────────────┤" -ForegroundColor Cyan
-    Write-Host "  │ Resolution               │ $($resLabel.PadRight(14)) │ $(if($resChoice -eq '1'){'~80% pros. Wider models.'}elseif($resChoice -eq '2'){'More FOV. Clear image.'}elseif($resChoice -eq '3'){'Visual quality. GPU-heavy.'}else{'Your preference.'})$((' ' * [math]::Max(0,24 - $(if($resChoice -eq '1'){'~80% pros. Wider models.'}elseif($resChoice -eq '2'){'More FOV. Clear image.'}elseif($resChoice -eq '3'){'Visual quality. GPU-heavy.'}else{'Your preference.'}).Length)))  │" -ForegroundColor White
+    Write-Host "  │ Resolution               │ $($resLabel.PadRight(14)) │ $($resolutionNote.PadRight(24))  │" -ForegroundColor White
     Write-Host "  │ MSAA                     │ $($msaa.PadRight(14)) │ $(if ($msaaNote.Length -gt 24) { $msaaNote.Substring(0, 21) + '...' } else { $msaaNote.PadRight(24) })  │" -ForegroundColor White
     Write-Host "  │ Global Shadow Quality    │ $($shadows.PadRight(14)) │ Tiered by FPS budget.    │" -ForegroundColor White
-    Write-Host "  │ Dynamic Shadows          │ $($dynShadows.PadRight(14)) │ Keeps tactical cues.     │" -ForegroundColor White
-    Write-Host "  │ Shader Detail            │ $($shaderDet.PadRight(14)) │ $(if($pcTier -eq 'HIGH'){'Quality default; optional'}else{'Performance default.     '})│" -ForegroundColor White
-    Write-Host "  │ Texture Filtering        │ $($texFilter.PadRight(14)) │ $(if($pcTier -eq 'LOW'){'Saves ~5 FPS.            '}else{'Nearly no FPS cost.       '})│" -ForegroundColor White
-    Write-Host "  │ Model / Texture Detail   │ $($modelTex.PadRight(14)) │ No FPS difference.        │" -ForegroundColor White
-    Write-Host "  │ Particle Detail          │ $($particle.PadRight(14)) │ Community consensus.      │" -ForegroundColor White
-    Write-Host "  │ HDR                      │ $($hdr.PadRight(14)) │ Quality: washes out sun.  │" -ForegroundColor White
+    Write-Host "  │ Dynamic Shadows          │ $($dynShadows.PadRight(14)) │ Enabled by each preset.  │" -ForegroundColor White
+    Write-Host "  │ Shader Detail            │ $($shaderDet.PadRight(14)) │ $(if($pcTier -eq 'HIGH'){'High preset value.      '}else{'Low preset value.       '})│" -ForegroundColor White
+    Write-Host "  │ Texture Filtering        │ $($texFilter.PadRight(14)) │ Adjust image sampling.    │" -ForegroundColor White
+    Write-Host "  │ Model / Texture Detail   │ $($modelTex.PadRight(14)) │ Adjust for VRAM budget.   │" -ForegroundColor White
+    Write-Host "  │ Particle Detail          │ $($particle.PadRight(14)) │ Low preset value.         │" -ForegroundColor White
+    Write-Host "  │ HDR                      │ $($hdr.PadRight(14)) │ Compare display results.  │" -ForegroundColor White
     Write-Host "  └──────────────────────────┴────────────────┴──────────────────────────────┘" -ForegroundColor Cyan
 
     if ($pcTier -eq "LOW") {
         Write-Blank
         Write-Host "  LOW-END TIPS:" -ForegroundColor Yellow
-        Write-Host "  -> 4:3 stretched (1280x960) gives ~25-40% more FPS than 1080p" -ForegroundColor White
-        Write-Host "  -> If <100 FPS: use MSAA None, Shadow Low, Shader Low" -ForegroundColor White
-        Write-Host "  -> Lower resolution before using FSR; keep FSR off for clarity by default" -ForegroundColor White
-        Write-Host "  -> CS2 is CPU-bound: if CPU at 100% and GPU at 60%, lower settings won't help" -ForegroundColor DarkYellow
+        Write-Host "  -> Lower resolution reduces pixel load when the GPU is limiting" -ForegroundColor White
+        Write-Host "  -> Compare MSAA, shadow, and shader values one at a time" -ForegroundColor White
+        Write-Host "  -> Compare lower resolution and FSR with the same image and capture criteria" -ForegroundColor White
+        Write-Host "  -> Use frame-time and utilization data to identify the limiting component" -ForegroundColor DarkYellow
     } elseif ($pcTier -eq "MID") {
         Write-Blank
         Write-Host "  MID-RANGE TIPS:" -ForegroundColor Yellow
-        Write-Host "  -> MSAA 4x is a strong default; use 2x if your FPS budget is tight" -ForegroundColor White
-        Write-Host "  -> At 1080p these settings should give 200-350 FPS" -ForegroundColor White
-        Write-Host "  -> If GPU-bound: 4:3 stretched frees ~30% GPU headroom" -ForegroundColor White
-        Write-Host "  -> 8 GB VRAM GPUs (4060/7600): restart CS2 every 2-3h (VRAM leak)" -ForegroundColor DarkYellow
+        Write-Host "  -> Compare the 4x preset against 2x with the same workload" -ForegroundColor White
+        Write-Host "  -> Capture a baseline and change one setting at a time" -ForegroundColor White
+        Write-Host "  -> Stretched 4:3 lowers pixel count but changes the rendered image" -ForegroundColor White
+        Write-Host "  -> Monitor VRAM use and restart only if behavior degrades over time" -ForegroundColor DarkYellow
     } else {
         Write-Blank
         Write-Host "  HIGH-END TIPS:" -ForegroundColor Yellow
-        Write-Host "  -> CPU is your bottleneck, not GPU. Higher settings won't cost FPS." -ForegroundColor White
-        Write-Host "  -> MSAA 4x: community benches can favor it. Don't go 8x; cost outweighs return." -ForegroundColor White
-        Write-Host "  -> At 1080p you should see 400+ FPS. At 1440p: 300+ FPS." -ForegroundColor White
-        Write-Host "  -> FPS cap is MORE important for you: high FPS = more frametime variance" -ForegroundColor DarkYellow
+        Write-Host "  -> Compare CPU and GPU frame times before increasing visual settings" -ForegroundColor White
+        Write-Host "  -> Compare MSAA levels with the same benchmark and capture settings" -ForegroundColor White
+        Write-Host "  -> Do not infer an FPS target from the tier label alone" -ForegroundColor White
+        Write-Host "  -> Evaluate FPS caps with repeatable frame-time captures" -ForegroundColor DarkYellow
     }
 
     Write-Blank
@@ -274,24 +271,22 @@ function Show-CS2SettingsGuide {
     Write-Blank
     Write-Host "  HONEST LIMITATION:" -ForegroundColor DarkYellow
     Write-Host @"
-  CS2 has structurally poor frame pacing due to the Source 2 engine.
-  Games with much higher graphics load (Apex, The Finals, Warzone)
-  deliver consistently better 1% lows than CS2. This is not a
-  hardware problem — it's a Valve engine problem. No setting or
-  tweak fixes this fundamentally.
+  Frame pacing depends on the workload, hardware, driver, Windows build,
+  game version, and capture method. This repository does not include a
+  hardware-independent performance result.
 
-  What actually helps (priority by evidence):
-  1.  CPU with high single-core performance  (9800X3D = current #1)
-  2.  RAM at rated speed (XMP/EXPO) — CS2 effect unclear, generally wise
-  3.  FPS cap via NVCP  (measurable, reproduced)
-  4.  Clean driver install (native removal + reinstall)
-  5.  Everything else: system hygiene or community consensus without hard proof
+  Record these inputs for a useful comparison:
+  1.  CPU, GPU, memory, driver, and Windows versions
+  2.  Resolution, display mode, and complete video settings
+  3.  FPS cap, Reflex state, and driver low-latency state
+  4.  Capture-tool version and a repeatable benchmark workload
+  5.  At least three runs for both the baseline and candidate state
 "@ -ForegroundColor DarkGray
 
-    # ── VIDEO.TXT — AUTOMATED WRITE ───────────────────────────────────────────
+    # ── VIDEO.TXT - AUTOMATED WRITE ───────────────────────────────────────────
     Write-Blank
     Write-Host "  ──────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "  VIDEO.TXT — AUTOMATIC WRITE" -ForegroundColor Cyan
+    Write-Host "  VIDEO.TXT - AUTOMATIC WRITE" -ForegroundColor Cyan
     Write-Host "  Path: <Steam>\userdata\<SteamID>\730\local\cfg\video.txt" -ForegroundColor DarkGray
     Write-Host "  ──────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
     Write-Blank
@@ -310,7 +305,7 @@ function Show-CS2SettingsGuide {
                 $videoTxtPath = $found.FullName
                 $videoTxtDir  = $found.DirectoryName
             } else {
-                # No video.txt yet — target the most recently modified Steam account
+                # No video.txt yet - target the most recently modified Steam account
                 $userDir = Get-ChildItem "$steamPath\userdata" -Directory `
                     -ErrorAction SilentlyContinue |
                     Sort-Object LastWriteTime -Descending | Select-Object -First 1
@@ -329,7 +324,7 @@ function Show-CS2SettingsGuide {
     if ($videoExists) {
         $existingVideoLines = @(Get-Content $videoTxtPath -Encoding UTF8 -ErrorAction SilentlyContinue)
         foreach ($line in $existingVideoLines) {
-            # VDF: "key" "value"  — skip comments and structural lines
+            # VDF: "key" "value"  - skip comments and structural lines
             if ($line -match '^\s*"([^"]+)"\s+"([^"]*)"') {
                 $existingVideoKeys[$Matches[1]] = $Matches[2]
             }
@@ -338,15 +333,15 @@ function Show-CS2SettingsGuide {
         Write-Info "  $($existingVideoLines.Count) lines, $($existingVideoKeys.Count) settings parsed."
     } else {
         if ($videoTxtPath) {
-            Write-Info "No video.txt found — will create at:"
+            Write-Info "No video.txt found - will create at:"
             Write-Sub "  $videoTxtPath"
         } else {
-            Write-Warn "Steam path not found — cannot locate video.txt automatically."
+            Write-Warn "Steam path not found - cannot locate video.txt automatically."
         }
     }
 
     # ── Preserve personal settings from existing file ─────────────────────────
-    # Refresh rate and brightness are hardware/preference-specific — keep current
+    # Refresh rate and brightness are hardware/preference-specific - keep current
     # values instead of overriding them with our defaults.
     $currentHz = if ($existingVideoKeys.ContainsKey("setting.refreshrate_numerator")) {
                      $existingVideoKeys["setting.refreshrate_numerator"]
@@ -375,7 +370,7 @@ function Show-CS2SettingsGuide {
 
     $reflexVideoVal = if ($reflexFlag) { "0" } else { "1" }
 
-    # ── Build recommended config (tier + user choices) ────────────────────────
+    # ── Build repository preset (tier + user choices) ─────────────────────────
     $rec_msaa       = switch ($pcTier) { "LOW" {"0"}    "MID" {"4"}    "HIGH" {"4"} }
     $rec_cascades   = switch ($pcTier) { "LOW" {"2"}    "MID" {"3"}    "HIGH" {"3"} }
     $rec_shadowTex  = switch ($pcTier) { "LOW" {"256"}  "MID" {"512"}  "HIGH" {"512"} }
@@ -397,7 +392,7 @@ function Show-CS2SettingsGuide {
         "setting.brightness"                               = $currentBrightness
         "setting.mat_vsync"                                = "0"
         "setting.msaa_samples"                             = $rec_msaa
-        "setting.r_csgo_cmaa_enable"                       = $(if ($pcTier -eq "LOW") { "1" } else { "0" })  # CMAA2 on LOW (free AA when msaa=0)
+        "setting.r_csgo_cmaa_enable"                       = $(if ($pcTier -eq "LOW") { "1" } else { "0" })  # CMAA2 on LOW when MSAA is disabled
         "setting.r_csgo_fsr_upsample"                      = "0"
         "setting.mat_viewportscale"                        = "1.000000"
         "setting.r_low_latency"                            = $reflexVideoVal
@@ -424,7 +419,7 @@ function Show-CS2SettingsGuide {
         "setting.sc_hdr_enabled_override"                  = "3"
     }
 
-    # ── Compare current vs. recommended ──────────────────────────────────────
+    # ── Compare current values with the repository preset ────────────────────
     $vMatching  = [System.Collections.Generic.List[string]]::new()
     $vDiffering = [System.Collections.Generic.List[hashtable]]::new()
     $vNewKeys   = [System.Collections.Generic.List[string]]::new()
@@ -440,9 +435,9 @@ function Show-CS2SettingsGuide {
 
     # ── Summary table ─────────────────────────────────────────────────────────
     Write-Blank
-    Write-Host "  YOUR VIDEO.TXT vs. OPTIMIZED:" -ForegroundColor White
+    Write-Host "  YOUR VIDEO.TXT vs. REPOSITORY PRESET:" -ForegroundColor White
     Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host "  $([char]0x2713)  Already at recommended value:   $($vMatching.Count) settings" -ForegroundColor Green
+    Write-Host "  $([char]0x2713)  Already at preset value:        $($vMatching.Count) settings" -ForegroundColor Green
     Write-Host "  !  Will be changed:                $($vDiffering.Count) settings" -ForegroundColor Yellow
     Write-Host "  +  New (not in current video.txt): $($vNewKeys.Count) settings" -ForegroundColor Cyan
     Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
@@ -454,13 +449,13 @@ function Show-CS2SettingsGuide {
         foreach ($d in $vDiffering) {
             Write-Host "    $($d.Key)" -ForegroundColor White
             Write-Host "      Current:   $($d.Current)" -ForegroundColor DarkYellow
-            Write-Host "      Optimized: $($d.Recommended)" -ForegroundColor Green
+            Write-Host "      Preset:    $($d.Recommended)" -ForegroundColor Green
         }
     }
 
     # ── Optional full preview ─────────────────────────────────────────────────
     Write-Blank
-    $showVAll = Read-Host "  Show full optimized video.txt ($($videoRecommended.Count) settings)? [y/N]"
+    $showVAll = Read-Host "  Show the full generated video.txt ($($videoRecommended.Count) settings)? [y/N]"
     if ($showVAll -match "^[yY]$") {
         Write-Blank
         foreach ($kv in $videoRecommended.GetEnumerator()) {
@@ -479,7 +474,7 @@ function Show-CS2SettingsGuide {
 
     # ── Write ─────────────────────────────────────────────────────────────────
     if ($videoTxtPath) {
-        $vProceed = Read-Host "  Rename video.txt → video.txt.bak + write optimized? [Y/n]"
+        $vProceed = Read-Host "  Rename video.txt → video.txt.bak and write the selected preset? [Y/n]"
         if ($vProceed -notmatch "^[nN]$") {
             $bakPath = $null
             if ($videoExists) {
@@ -496,11 +491,11 @@ function Show-CS2SettingsGuide {
                 }
             }
 
-            # Build VDF output — key padded to 52 chars for readability
+            # Build VDF output - key padded to 52 chars for readability
             $vLines = @(
                 '"VideoConfig"',
                 '{',
-                "    // CS2-Optimize Suite — $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
+                "    // frametime.cfg - $(Get-Date -Format 'yyyy-MM-dd HH:mm')",
                 "    // Tier: $pcTier  |  $($resMap.w)x$($resMap.h)  |  ${currentHz}Hz  |  Reflex: $(if ($reflexFlag) {'OFF (-noreflex)'} else {'ON'})",
                 "    // Original backed up as video.txt.bak",
                 ""
@@ -515,7 +510,7 @@ function Show-CS2SettingsGuide {
                 if (-not (Test-Path $videoTxtDir)) {
                     New-Item -ItemType Directory -Path $videoTxtDir -Force -ErrorAction SilentlyContinue | Out-Null
                 }
-                # Use BOM-less UTF-8 — PS 5.1's -Encoding UTF8 adds BOM which Valve VDF parsers may reject
+                # Use BOM-less UTF-8 - PS 5.1's -Encoding UTF8 adds BOM which Valve VDF parsers may reject
                 try {
                     [System.IO.File]::WriteAllLines($videoTxtPath, $vLines, [System.Text.UTF8Encoding]::new($false))
                 } catch {
@@ -533,7 +528,7 @@ function Show-CS2SettingsGuide {
                 Write-Host "  [DRY-RUN] Would write: $videoTxtPath" -ForegroundColor Magenta
             }
         } else {
-            Write-Info "Skipped — video.txt unchanged."
+            Write-Info "Skipped - video.txt unchanged."
         }
     } else {
         Write-Warn "Could not locate video.txt path automatically."

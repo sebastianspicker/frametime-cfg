@@ -2,14 +2,15 @@ Set-StrictMode -Version Latest
 
 $Script:GuiDnsBackupStepPrefix = "GUI DNS Change"
 $Script:ValveSdrConfigUrl = "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730"
-$Script:ValveRelayFirewallRulePrefix = "CS2 Optimize Relay Block - "
+$Script:ValveRelayFirewallRulePrefix = "frametime.cfg Relay Block - "
+$Script:LegacyValveRelayFirewallRulePrefix = "CS2 Optimize Relay Block - "
 $Script:ValveKnownHostedRegionTargets = @(
     [PSCustomObject]@{
         RegionCode         = "fsn-hetz"
         Label              = "Falkenstein (Germany) - Hetzner hosted"
         ProtocolPreference = "ICMP"
         Notes              = "Known Valve-hosted Source server IPs on Hetzner Falkenstein. Not currently exposed as CS2 SDR relays."
-        Provenance         = "Public server listings for srcds1001-1007-fsn-hetz; confirmed hosts 138.199.142.208-214."
+        Provenance         = "Repository fallback host range 138.199.142.208-214; verify against current public data before release."
         Candidates         = @(
             [PSCustomObject]@{ Host = "138.199.142.208"; Port = $null; Notes = "srcds1007-fsn-hetz" }
             [PSCustomObject]@{ Host = "138.199.142.209"; Port = $null; Notes = "srcds1006-fsn-hetz" }
@@ -103,6 +104,8 @@ function Get-ValveRegionTargets {
         [switch]$SkipLiveFetch
     )
 
+    # Live SDR targets use ICMP. If loading fails, the checked-in file below
+    # supplies Steam connection-manager targets with a TCP preference.
     if (-not $SkipLiveFetch) {
         try {
             $sdrConfig = Invoke-RestMethod -Uri $Script:ValveSdrConfigUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
@@ -434,6 +437,8 @@ function Measure-ValveRegionLatency {
     } else {
         "ICMP"
     }
+    # Protocol is target-defined: live SDR targets use ICMP, while the shipped
+    # offline Steam CM candidates use TCP port 27017.
     for ($candidateIndex = 0; $candidateIndex -lt $candidates.Count; $candidateIndex++) {
         $candidate = $candidates[$candidateIndex]
         $attemptedHost = [string]$candidate.Host
@@ -843,6 +848,17 @@ function Get-ValveRelayFirewallRuleName {
     return $ruleName
 }
 
+function Get-OwnedValveRelayFirewallRules {
+    [CmdletBinding()]
+    param()
+
+    $rules = @()
+    foreach ($prefix in @($Script:ValveRelayFirewallRulePrefix, $Script:LegacyValveRelayFirewallRulePrefix)) {
+        $rules += @(Get-NetFirewallRule -DisplayName "$prefix*" -ErrorAction SilentlyContinue)
+    }
+    return @($rules | Sort-Object DisplayName -Unique)
+}
+
 function Get-ValveRegionRelayAddresses {
     [CmdletBinding()]
     param(
@@ -861,10 +877,15 @@ function Get-BlockedValveRelayRegions {
     [CmdletBinding()]
     param()
 
-    $rules = @(Get-NetFirewallRule -DisplayName "$Script:ValveRelayFirewallRulePrefix*" -ErrorAction SilentlyContinue)
+    $rules = @(Get-OwnedValveRelayFirewallRules)
     return @($rules | Sort-Object DisplayName | ForEach-Object {
+        $prefix = if (([string]$_.DisplayName).StartsWith($Script:ValveRelayFirewallRulePrefix)) {
+            $Script:ValveRelayFirewallRulePrefix
+        } else {
+            $Script:LegacyValveRelayFirewallRulePrefix
+        }
         [PSCustomObject]@{
-            RegionName = ([string]$_.DisplayName).Substring($Script:ValveRelayFirewallRulePrefix.Length)
+            RegionName = ([string]$_.DisplayName).Substring($prefix.Length)
             RuleName   = [string]$_.DisplayName
             Enabled    = [string]$_.Enabled
         }
@@ -882,7 +903,7 @@ function Block-ValveRelayRegion {
     Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
     New-NetFirewallRule `
         -DisplayName $ruleName `
-        -Description "Blocks outbound traffic to Valve relay/server targets for $RegionName. Created by CS2 Optimize GUI." `
+        -Description "Blocks outbound traffic to Valve relay/server targets for $RegionName. Created by frametime.cfg GUI." `
         -Direction Outbound `
         -Action Block `
         -RemoteAddress $addresses `
@@ -906,7 +927,11 @@ function Unblock-ValveRelayRegion {
     )
 
     $ruleName = Get-ValveRelayFirewallRuleName -RegionName $RegionName
-    $existing = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
+    $legacyRuleName = "$Script:LegacyValveRelayFirewallRulePrefix$RegionName"
+    $existing = @(
+        @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
+        @(Get-NetFirewallRule -DisplayName $legacyRuleName -ErrorAction SilentlyContinue)
+    )
     if ($existing.Count -eq 0) {
         return [PSCustomObject]@{
             Changed    = $false
@@ -915,7 +940,9 @@ function Unblock-ValveRelayRegion {
         }
     }
 
-    Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction Stop
+    foreach ($rule in $existing) {
+        Remove-NetFirewallRule -DisplayName $rule.DisplayName -ErrorAction Stop
+    }
     return [PSCustomObject]@{
         Changed    = $true
         RegionName = $RegionName
@@ -927,7 +954,7 @@ function Unblock-AllValveRelayRegions {
     [CmdletBinding()]
     param()
 
-    $rules = @(Get-NetFirewallRule -DisplayName "$Script:ValveRelayFirewallRulePrefix*" -ErrorAction SilentlyContinue)
+    $rules = @(Get-OwnedValveRelayFirewallRules)
     foreach ($rule in $rules) {
         Remove-NetFirewallRule -DisplayName $rule.DisplayName -ErrorAction Stop
     }

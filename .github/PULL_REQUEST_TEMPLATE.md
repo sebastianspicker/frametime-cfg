@@ -18,18 +18,19 @@
 
 - [ ] Tested on a real system (not just theory)
 - [ ] CI `PSScriptAnalyzer` passes clean
-- [ ] DRY-RUN mode works correctly for any new registry/boot changes
+- [ ] New state-changing paths have a useful Full DRY-RUN plan and focused no-mutation test
+- [ ] `START.bat dry-run all` exits cleanly with no preview issues and unchanged suite state (if runtime behavior changed)
 - [ ] Backup/restore handles the new changes
 - [ ] README and relevant docs updated (if applicable)
 - [ ] Public docs describe the current checkout and contain no stale screenshots
-- [ ] No external tool dependencies added
+- [ ] New runtime dependencies are documented and justified
 - [ ] Local-only artifacts remain ignored or archived intentionally
 - [ ] Codacy local evidence and Codacy Cloud status are not conflated
 
 ## Security
 
 - [ ] No secrets, tokens, API keys, or credentials in the diff
-- [ ] No personal paths, raw diagnostics, runtime state, or local agent artifacts
+- [ ] No personal paths, raw diagnostics, runtime state, or private workspace artifacts
 - [ ] No `Invoke-Expression` / `iex` / `-EncodedCommand` usage
 - [ ] New system-modifying calls respect `$SCRIPT:DryRun` guard
 - [ ] No new `Invoke-WebRequest` calls to untrusted URLs

@@ -1,0 +1,20 @@
+* text=auto
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=lf
+*.psd1 text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.cfg text eol=lf
+*.cfg.example text eol=lf
+*.txt text eol=lf
+*.xaml text eol=lf
+LICENSE text eol=lf
+CODEOWNERS text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+*.png binary
