@@ -1,6 +1,6 @@
 // ===========================================================================
-//  CS2 video.txt — 2026 Meta Example (High-End / 1080p Competitive)
-//  CS2 Optimization Suite · docs/video.txt
+//  CS2 video.txt example (high-tier profile, 1080p)
+//  frametime.cfg · docs/video.txt
 // ===========================================================================
 //
 //  HOW TO USE:
@@ -8,38 +8,37 @@
 //    2. Copy this file to:
 //       <Steam install dir>\userdata\<SteamID>\730\local\cfg\video.txt
 //       Default path: C:\Program Files (x86)\Steam\userdata\<SteamID>\730\local\cfg\video.txt
-//       (Steam install dir ≠ AppData — find it at:
+//       (Steam install dir ≠ AppData - find it at:
 //        Registry: HKLM\SOFTWARE\WOW6432Node\Valve\Steam → InstallPath
 //        Or: Steam → Settings → Storage → path shown at the top)
 //    3. Start CS2. Settings apply on first launch.
 //    ALTERNATIVE: Set these values manually in CS2 Settings → Video.
 //
-//  TIERS:  H = High-end (RTX 4070+/5070+, 300+ avg FPS)
-//          M = Mid-range (RTX 3060/4060, 150-300 avg FPS) — annotated where differs
-//          L = Low-end   (GTX 1650/1660, <150 avg FPS)    — annotated where differs
+//  TIERS:  H = higher image-quality defaults
+//          M = balanced repository defaults
+//          L = lower pixel and effects load
 //
-//  SOURCES: ThourCS2 benchmarks, prosettings.net (883 pros, Apr 2026), esportfire.com
-//           CS2 Options Menu CVars guide (Steam ID 3046217806)
+//  These values are repository defaults. This file does not contain a validated
+//  performance or compatibility matrix.
 //
 //  NOTE:   This file controls settings the in-game menu writes.
-//          A separate set of CVars is written to autoexec.cfg by the suite.
+//          A separate set of CVars is written to optimization.cfg by the suite.
 //          r_player_visibility_mode, mat_monitorgamma_tv_enabled, snd_*, etc.
-//          are set in autoexec.cfg — they do NOT appear here.
+//          are set in optimization.cfg - they do NOT appear here.
 // ===========================================================================
 
 "VideoConfig"
 {
     // ── DISPLAY ──────────────────────────────────────────────────────────
-    // Fullscreen (1) = exclusive fullscreen. Bypasses DWM compositor.
-    // Measurably lower input latency than fullscreen windowed on pre-HAGS systems.
-    // On Windows 11 + HAGS the difference shrinks but exclusive FS is still preferred.
+    // Fullscreen (1) requests exclusive fullscreen. Presentation behavior can vary
+    // with the Windows build, driver, HAGS state, and fullscreen optimizations.
     "setting.fullscreen"                       "1"    // 1=Fullscreen, 0=Windowed, coop=FSW
     "setting.nowindowborder"                   "0"    // border (only relevant if windowed)
     "setting.coop_fullscreen"                  "0"    // 1=Fullscreen Windowed (borderless)
 
-    // Resolution — set to YOUR resolution. 4:3 examples below.
-    // 1920x1080 (H/M preferred)   | 1280x960 (4:3 stretched, ~80% of pros)
-    // 2560x1440 (H visual clarity) | 1024x768 (4:3 low-end FPS)
+    // Resolution - set to YOUR resolution. 4:3 examples below.
+    // 1920x1080 (native 16:9)     | 1280x960 (4:3 stretched)
+    // 2560x1440 (higher pixel count) | 1024x768 (lower pixel count)
     "setting.defaultres"                       "1920"
     "setting.defaultresheight"                 "1080"
 
@@ -47,53 +46,48 @@
     // Set to 1 if you play 4:3 stretched (e.g. 1280x960 on a 1080p monitor)
     "setting.aspectratiomode"                  "0"
 
-    // Refresh rate — set to YOUR monitor's refresh rate. numerator/denominator = Hz as fraction.
+    // Refresh rate - set to YOUR monitor's refresh rate. numerator/denominator = Hz as fraction.
     // 60Hz: 60/1 | 144Hz: 144/1 | 165Hz: 165/1 | 240Hz: 240/1 | 360Hz: 360/1
     "setting.refreshrate_numerator"            "240"
     "setting.refreshrate_denominator"          "1"
 
     // Brightness (in-game slider, -1.0 to +1.0 offset from base gamma)
-    // Controlled separately by r_fullscreen_gamma in autoexec.cfg.
+    // Controlled separately by r_fullscreen_gamma in optimization.cfg.
     "setting.brightness"                       "0.000000"
 
-    // V-Sync — OFF for fixed-refresh lowest-latency play. If you use a
-    // tuned G-SYNC/VRR stack, validate that separately in NVCP.
+    // V-Sync is Off in the repository fixed-refresh default. Validate VRR and
+    // frame-cap configurations separately.
     "setting.mat_vsync"                        "0"
 
     // ── ANTI-ALIASING ─────────────────────────────────────────────────────
-    // ThourCS2 benchmark (7800X3D + RTX 4070Ti):
-    //   None=619.7 | CMAA2=610.3 | 2x=608.0 | 4x=600.1 | 8x=547.9 avg FPS
-    //   Key finding from community benches: 4x can produce better 1% lows
-    //   and frame consistency vs None on some high/mid-tier systems.
-    //   8x: -11.6% avg FPS on H-tier, -29.4% on M-tier. Not worth it below 300 FPS.
-    // H: 4x    M: 4x (or 2x if <200 FPS)    L: None (use CMAA2 instead — see below)
+    // MSAA cost depends on resolution and GPU load. Compare the available levels
+    // with the same workload. Repository defaults: H=4x, M=4x, L=None.
     "setting.msaa_samples"                     "4"    // 0=None, 2=2x, 4=4x, 8=8x
 
-    // CMAA2 (Conservative Morphological AA) — post-process edge smoothing.
-    // Usually low FPS cost in community benchmarks. Use EITHER msaa_samples OR cmaa_enable, not both.
-    // H/M: 0 (MSAA handles AA)    L: 1 (CMAA2 when msaa_samples=0 — free AA)
+    // CMAA2 (Conservative Morphological AA) - post-process edge smoothing.
+    // Use either msaa_samples or cmaa_enable, not both.
+    // H/M: 0 (MSAA handles AA)    L: 1 (CMAA2 when msaa_samples=0)
     "setting.r_csgo_cmaa_enable"               "0"    // H/M: 0  |  L: 1
 
     // ── FSR (FidelityFX Super Resolution) ────────────────────────────────
-    // OFF = native resolution rendering. FSR 1.0 introduces shimmering artifacts
-    // even at Ultra Quality — harmful for enemy recognition at common resolutions.
+    // Off uses native-resolution rendering. FSR changes image reconstruction and
+    // must be compared on the target resolution.
     // mat_viewportscale must be 1.000000 when FSR is disabled.
     "setting.r_csgo_fsr_upsample"              "0"    // 0=Off, 2=FSR enabled
     "setting.mat_viewportscale"                "1.000000"
 
     // ── NVIDIA REFLEX ──────────────────────────────────────────────────────
     // 0=Off, 1=On, 2=On+Boost
-    // ThourCS2: "On" reduces input lag 3-4ms (H-tier), up to 15ms (L-tier).
-    // "On+Boost" shows no additional measurable benefit on most systems.
-    // -noreflex launch option: replaces this with NVCP Low Latency Mode Ultra.
+    // Compare the available states with the same driver, display mode, workload,
+    // and capture method. The repository includes no validated latency result.
+    // The -noreflex comparison path uses NVCP Low Latency Mode Ultra.
     // Set 0 here if using -noreflex launch option.
     "setting.r_low_latency"                    "1"    // H/M/L: 1 (or 0 if using -noreflex)
 
     // ── SHADOW QUALITY ────────────────────────────────────────────────────
-    // CRITICAL for competitive: keep the shadow system enabled. Dynamic Shadows
-    // is the 2026 competitive information setting; global quality can be tiered.
-    // csm_enabled: master shadow toggle. Keep 1 (off=no enemy shadow cues at all).
-    "setting.csm_enabled"                      "1"    // 1=shadows on (strongly recommended)
+    // Dynamic shadows can expose in-game shadow cues. Global quality is tiered.
+    // csm_enabled is the master shadow toggle.
+    "setting.csm_enabled"                      "1"    // 1=shadows on
 
     // Shadow cascade count controls shadow draw distance and quality.
     // 2=Low quality, 3=Medium/High/Very High quality
@@ -109,36 +103,35 @@
     "setting.lb_shadow_texture_height_override" "512"
 
     // Dynamic shadows from non-sun light sources (lamps, muzzle flash)
-    // "All" = dynamic point light shadows. Current 2026 meta favors All for
-    // tactical shadow cues; drop only if your GPU cannot hold target FPS.
+    // "All" = dynamic point light shadows. The repository default retains
+    // those cues; compare other values against the same capture workload.
     // H/M/L: 1 (All)
     "setting.videocfg_dynamic_shadows"         "1"    // 0=Sun Only, 1=All
 
     // Viewmodel shadows (your weapon casting shadows). Cosmetic only.
     "setting.csm_viewmodel_shadows"            "0"    // 0=off (saves a small shadow pass)
 
-    // Particle shadows (grenades, smoke particles casting shadows). Cosmetic only.
+    // Particle shadows (grenades and smoke particles casting shadows).
     "setting.r_particle_shadows"               "0"    // 0=off
 
     // ── SHADER / TEXTURE / PARTICLE DETAIL ───────────────────────────────
     // Shader Detail: Low=0, High=1
-    // High adds lighting/material complexity computation. No competitive visibility
-    // advantage. H: High is a suite quality default when GPU headroom exists;
-    // pure performance meta uses Low.
+    // High adds lighting and material computation. H uses High as the repository
+    // image-quality default; M and L use Low.
     "setting.shaderquality"                    "1"    // H: 1  |  M/L: 0
 
-    // Texture Filtering: AF 16x (5) is near-zero cost on any GPU from last 6 years.
-    // Bilinear (0) is legacy habit from CS:GO era. No performance reason to use it.
+    // Texture Filtering: AF 16x (5) is the repository high-tier default.
+    // Compare filtering levels for image quality and frame-time behavior.
     // 0=Bilinear, 1=Trilinear, 2=AF2x, 3=AF4x, 4=AF8x, 5=AF16x
     "setting.r_texturefilteringquality"        "5"    // H/M: 5 (AF16x) | L: 0 (Bilinear)
 
     // Model / Texture Detail: controls character decal resolution and texture streaming.
-    // No competitive visibility advantage at higher settings; only affects VRAM usage.
+    // Higher values can change image quality, streaming behavior, and VRAM use.
     // 256=Low, 512=Medium, 1024=High
     "setting.r_character_decal_resolution"     "512"  // H/M: 512 | L: 256
     "setting.r_texture_stream_max_resolution"  "1024" // H: 1024 | M: 512 | L: 256
 
-    // CPU/GPU quality levels (internal engine preset — overridden by individual settings above)
+    // CPU/GPU quality levels (internal engine preset - overridden by individual settings above)
     // 0=Low, 1=Medium, 2=High, 3=Very High
     "setting.cpu_level"                        "2"
     "setting.gpu_level"                        "3"
@@ -146,13 +139,12 @@
     "setting.mem_level"                        "2"
 
     // Particle Detail: Low=0, Medium=1, High=2, Very High=3
-    // Universal competitive recommendation: Low. Simpler particles, no tactical loss.
+    // The repository performance-oriented default is Low. Compare visual behavior.
     "setting.r_particle_max_detail_level"      "0"    // All tiers: 0 (Low)
 
     // ── AMBIENT OCCLUSION ─────────────────────────────────────────────────
     // AO adds contact shadows between objects (ground contact, object-to-object).
-    // Purely cosmetic. FPS cost: up to 6% from r_aoproxy + r_ssao pass.
-    // No competitive advantage. Disabled for all tiers.
+    // Disabled for all repository tiers. Compare image and frame-time results if enabled.
     "setting.r_aoproxy_enable"                 "0"    // 0=disabled
     "setting.r_aoproxy_min_dist"               "0"    // irrelevant when disabled
     "setting.r_ssao"                           "0"    // 0=SSAO off
@@ -161,46 +153,44 @@
     // NOTE: This is NOT display HDR output. CS2's HDR setting is a rendering shader
     // that increases brightness/bloom of direct light sources (sun, lamps).
     // sc_hdr_enabled_override: -1=Auto/Quality, 3=Performance
-    // Performance recommended for competitive: Quality can wash out window areas
-    // and bomb sites near bright light sources (e.g. Inferno A site sun).
+    // Performance is the repository default. Compare both values visually.
     "setting.sc_hdr_enabled_override"          "3"    // All tiers: 3 (Performance)
 
     // ── MOTION BLUR ───────────────────────────────────────────────────────
-    // Motion blur was globally REMOVED from CS2 by Valve due to AMD GPU compatibility
-    // bugs. There is no functioning in-game toggle. No CVar exists. Nothing to set.
+    // This repository does not write a motion-blur key. Recheck the current game
+    // settings surface after game updates.
 
     // ── COLOR CALIBRATION ─────────────────────────────────────────────────
-    // Controlled via r_fullscreen_gamma in autoexec.cfg (exclusive fullscreen only).
-    // Range: 1.6 (brighter/competitive) to 2.2 (standard). Default 2.2 set in autoexec.
+    // Controlled via r_fullscreen_gamma in optimization.cfg (exclusive fullscreen only).
+    // Repository default 2.2 is set in optimization.cfg; verify it in the selected mode.
 }
 
 // ===========================================================================
 //  TIER QUICK REFERENCE
 // ===========================================================================
 //
-//  LOW-END  (GTX 1650/1660, RX 580/5500, <150 avg FPS):
-//    msaa_samples 0 | r_csgo_cmaa_enable 1 (CMAA2 — free AA when msaa=0)
+//  LOW:
+//    msaa_samples 0 | r_csgo_cmaa_enable 1 (CMAA2 when msaa=0)
 //    csm_max_num_cascades_override 2 | lb_shadow_texture 256 | shaderquality 0
 //    r_texturefilteringquality 0 | r_character_decal_resolution 256
-//    videocfg_dynamic_shadows 1 | Tip: use 4:3 stretched for ~30% FPS gain
+//    videocfg_dynamic_shadows 1 | Lower resolution reduces pixel load
 //
-//  MID-RANGE (RTX 3060/4060, RX 6700/7600, 150-300 avg FPS):
+//  MID:
 //    msaa_samples 4 | csm_max_num_cascades_override 3 | lb_shadow_texture 512
 //    shaderquality 0 | r_texturefilteringquality 5 | videocfg_dynamic_shadows 1
-//    Note: 8 GB VRAM GPUs (4060/7600) — restart CS2 every 2-3h (VRAM leak bug)
+//    Monitor VRAM use and restart only if behavior degrades over time
 //
-//  HIGH-END  (RTX 4070+/5070+, RX 7800+, 300+ avg FPS) — this file:
+//  HIGH - this file:
 //    msaa_samples 4 | shaderquality 1 | r_texturefilteringquality 5
-//    CPU is your bottleneck — raising settings won't cost FPS meaningfully
-//    FPS cap is more important for you (high FPS = more frametime variance)
+//    Compare this profile with the same workload and capture method
 //
 // ===========================================================================
-//  SETTINGS CONTROLLED IN autoexec.cfg (NOT here)
+//  SETTINGS CONTROLLED IN optimization.cfg (NOT here)
 // ===========================================================================
 //
 //  r_player_visibility_mode 1     Boost Player Contrast (suite default; benchmark-dependent)
 //  mat_monitorgamma_tv_enabled 0  Computer Monitor color mode
-//  r_fullscreen_gamma 2.2         Brightness (exclusive fullscreen only; try 1.6-1.8)
+//  r_fullscreen_gamma 2.2         Repository brightness default
 //  speaker_config 1               Headphone-mode suite baseline
 //  snd_headphone_eq 0             Natural EQ (suite default; Crisp is also common)
 //  snd_spatialize_lerp 0          Current headphone/spatial suite default; listening-dependent

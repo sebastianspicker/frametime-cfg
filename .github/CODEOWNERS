@@ -1,13 +1,13 @@
-# CODEOWNERS — require review for security-sensitive paths
+# CODEOWNERS - require review for security-sensitive paths
 # Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 #
 # NOTE: @sebastianspicker is the repository owner.
 # CODEOWNERS only works when branch protection rules require reviews.
 
-# Default — all files require owner review
+# Default - all files require owner review
 *                           @sebastianspicker
 
-# CI/CD workflows — highest risk (can exfiltrate secrets, run arbitrary code)
+# CI/CD workflows - highest risk (can exfiltrate secrets, run arbitrary code)
 .github/workflows/          @sebastianspicker
 .github/scripts/            @sebastianspicker
 .github/dependabot.yml      @sebastianspicker
@@ -26,3 +26,5 @@ helpers/                    @sebastianspicker
 Run-Optimize.ps1            @sebastianspicker
 START.bat                   @sebastianspicker
 START-GUI.bat               @sebastianspicker
+frametime-gui.ps1           @sebastianspicker
+ui/frametime-gui.xaml       @sebastianspicker

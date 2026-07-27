@@ -11,7 +11,7 @@ $scripts = @(
     'PostReboot-Setup.ps1',
     'FpsCap-Calculator.ps1',
     'Verify-Settings.ps1',
-    'CS2-Optimize-GUI.ps1'
+    'frametime-gui.ps1'
 )
 
 foreach ($script in $scripts) {

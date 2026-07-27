@@ -1,13 +1,15 @@
 ﻿# ==============================================================================
-#  helpers/step-state.ps1  —  Step Progress / Resume System
+#  helpers/step-state.ps1  -  Step Progress / Resume System
 # ==============================================================================
 
 function Load-Progress {
     if (Test-Path $CFG_ProgressFile) {
         try { return (Get-Content $CFG_ProgressFile -Raw -ErrorAction Stop | ConvertFrom-Json) }
         catch {
-            Write-Warn "Progress tracking file was corrupted — starting fresh. (Your optimizations are not affected.)"
-            try { Copy-Item $CFG_ProgressFile "$CFG_ProgressFile.corrupt" -Force -ErrorAction Stop } catch { Write-DebugLog "Could not preserve corrupted progress file." }
+            Write-Warn "Progress tracking file was corrupted - starting fresh. (Your optimizations are not affected.)"
+            if (-not $SCRIPT:DryRun) {
+                try { Copy-Item $CFG_ProgressFile "$CFG_ProgressFile.corrupt" -Force -ErrorAction Stop } catch { Write-DebugLog "Could not preserve corrupted progress file." }
+            }
         }
     }
     return $null
@@ -21,11 +23,11 @@ function Save-Progress($prog) {
 
 function Complete-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     if ($SCRIPT:DryRun) { Write-DebugLog "DRY-RUN: Step $stepNum ($stepName) not recorded."; return }
-    # Flush backup buffer BEFORE persisting progress — if we crash between flush and
+    # Flush backup buffer BEFORE persisting progress - if we crash between flush and
     # Save-Progress, the worst case is re-running a completed step (safe). The reverse
     # (progress saved, backup lost) means we can't rollback a step we recorded as done.
     try { Flush-BackupBuffer } catch {
-        Write-Warn "Flush-BackupBuffer in Complete-Step failed: $_ — skipping Save-Progress (step will re-run on resume)."
+        Write-Warn "Flush-BackupBuffer in Complete-Step failed: $_ - skipping Save-Progress (step will re-run on resume)."
         return
     }
     $prog = Load-Progress
@@ -39,6 +41,13 @@ function Complete-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     if ($stepKey -notin @($prog.completedSteps)) {
         $prog.completedSteps = @($prog.completedSteps) + $stepKey
     }
+    # Completion and skip are mutually exclusive states. This also canonicalizes
+    # legacy progress when a previously skipped step is completed on retry.
+    if ($prog.PSObject.Properties['skippedSteps']) {
+        $prog.skippedSteps = @($prog.skippedSteps | Where-Object { $_ -ne $stepKey })
+    } else {
+        $prog | Add-Member -NotePropertyName skippedSteps -NotePropertyValue @() -Force
+    }
     # Ensure timestamps is a PSCustomObject for consistent Add-Member behavior.
     # On first call, timestamps may be a hashtable (from the initial @{} literal);
     # Add-Member on a hashtable creates a NoteProperty that is lost during JSON
@@ -49,6 +58,7 @@ function Complete-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     $prog.timestamps | Add-Member -NotePropertyName "$phase-$stepNum" `
         -NotePropertyValue (Get-Date -Format "yyyy-MM-dd HH:mm:ss") -Force
     Save-Progress $prog
+    $SCRIPT:CurrentTierStepOutcome = 'Applied'
     Write-DebugLog "Step $stepNum completed: $stepName"
 }
 
@@ -62,10 +72,15 @@ function Skip-Step([int]$phase, [int]$stepNum, [string]$stepName) {
     if ($stepKey -notin @($prog.skippedSteps)) {
         $prog.skippedSteps = @($prog.skippedSteps) + $stepKey
     }
-    # Do NOT add to completedSteps — skippedSteps is a separate semantic.
+    if ($prog.PSObject.Properties['completedSteps']) {
+        $prog.completedSteps = @($prog.completedSteps | Where-Object { $_ -ne $stepKey })
+    } else {
+        $prog | Add-Member -NotePropertyName completedSteps -NotePropertyValue @() -Force
+    }
+    # Do NOT add to completedSteps - skippedSteps is a separate semantic.
     # Test-StepDone checks both arrays for resume purposes.
     $prog.phase = $phase
-    # Track lastSkippedStep separately — do NOT advance lastCompletedStep,
+    # Track lastSkippedStep separately - do NOT advance lastCompletedStep,
     # because skipped steps were not actually executed. Resume should use
     # the maximum of lastCompletedStep and lastSkippedStep for determining
     # where to continue from.
@@ -75,20 +90,31 @@ function Skip-Step([int]$phase, [int]$stepNum, [string]$stepName) {
         $prog.lastSkippedStep = [math]::Max($prog.lastSkippedStep, $stepNum)
     }
     Save-Progress $prog
+    $SCRIPT:CurrentTierStepOutcome = 'Skipped'
 }
 
 function Test-StepDone([int]$phase, [int]$stepNum) {
     $prog = Load-Progress
     if (-not $prog) { return $false }
     # A step is "done" for resume purposes if it was either completed or skipped.
-    # Uses composite key "P{phase}:{step}" only — bare step numbers are NOT checked
+    # Uses composite key "P{phase}:{step}" only - bare step numbers are NOT checked
     # because they would collide across phases (e.g., Phase 1 step 5 vs Phase 3 step 5).
     # Legacy progress files with bare numbers are treated as empty (user re-runs from step 1).
     $stepKey = "P${phase}:${stepNum}"
     return ($stepKey -in @($prog.completedSteps) -or $stepKey -in @($prog.skippedSteps))
 }
 
+function Test-StepCompleted([int]$phase, [int]$stepNum) {
+    <# Checks applied completion only. Use Test-StepDone for resume routing. #>
+    $prog = Load-Progress
+    if (-not $prog) { return $false }
+    $stepKey = "P${phase}:${stepNum}"
+    return ($stepKey -in @($prog.completedSteps))
+}
+
 function Show-ResumePrompt($phase, $totalSteps) {
+    if ($SCRIPT:DryRun) { return 1 }
+
     $prog = Load-Progress
     if (-not $prog -or $prog.phase -ne $phase) { return 1 }
     $phasePrefix = "P${phase}:"
@@ -120,7 +146,7 @@ function Show-ResumePrompt($phase, $totalSteps) {
         if ($SCRIPT:Profile -eq "YOLO") { return ($totalSteps + 1) }
         $r = Read-Host "  Start over anyway? [y/N]"
         if ($r -match "^[jJyY]$") { Clear-Progress $phase; return 1 }
-        return ($totalSteps + 1)  # Sentinel: callers use `for ($step = $startStep; $step -le $totalSteps; ...)` — this skips the loop
+        return ($totalSteps + 1)  # Sentinel: callers use `for ($step = $startStep; $step -le $totalSteps; ...)` - this skips the loop
     }
     if ($SCRIPT:Profile -in @("SAFE","YOLO")) {
         Write-Info "$($SCRIPT:Profile) profile: auto-resume from step $nextStep (of $totalSteps)."
@@ -128,7 +154,7 @@ function Show-ResumePrompt($phase, $totalSteps) {
     }
     Write-Blank
     Write-Host "  ┌─────────────────────────────────────────────────────────" -ForegroundColor DarkYellow
-    Write-Host "  │  RESUME — Previous session found" -ForegroundColor Yellow
+    Write-Host "  │  RESUME - Previous session found" -ForegroundColor Yellow
     Write-Host "  │  Last step: $lastProcessed  |  Continue from: $nextStep" -ForegroundColor White
     # Filter completedSteps and skippedSteps to only show steps from the current phase.
     # Without this filter, steps from Phase 1 and Phase 3 would appear mixed together.
@@ -152,7 +178,7 @@ function Show-ResumePrompt($phase, $totalSteps) {
     do {
         $r = Read-Host "  [1/2/3]"
         if ($r -notin @("1","2","3")) {
-            Write-Host "  Invalid choice '$r' — please enter 1, 2, or 3." -ForegroundColor Yellow
+            Write-Host "  Invalid choice '$r' - please enter 1, 2, or 3." -ForegroundColor Yellow
         }
     } while ($r -notin @("1","2","3"))
     switch ($r) {
@@ -161,7 +187,7 @@ function Show-ResumePrompt($phase, $totalSteps) {
             $s = Read-Host "  From step (1-$totalSteps)"
             $sv = 1
             if ([int]::TryParse($s,[ref]$sv) -and $sv -ge 1 -and $sv -le $totalSteps) { return $sv }
-            Write-Warn "Invalid step '$s' — resuming from step $nextStep."
+            Write-Warn "Invalid step '$s' - resuming from step $nextStep."
             return $nextStep
         }
         "3" { Clear-Progress $phase; return 1 }
@@ -175,14 +201,14 @@ function Clear-Progress($phase = $null) {
     if (-not $prog) { return }
 
     if ($null -eq $phase -or $prog.phase -eq $phase) {
-        # Reset to empty progress rather than deleting the file — avoids race conditions
+        # Reset to empty progress rather than deleting the file - avoids race conditions
         # and makes intent clear (file exists but no steps are done)
         $empty = [PSCustomObject]@{ phase=0; lastCompletedStep=0; lastSkippedStep=0; completedSteps=@(); skippedSteps=@(); timestamps=[PSCustomObject]@{} }
         Save-Progress $empty
         Write-DebugLog "Progress reset$(if($phase){" (Phase $phase)"})"
     } else {
         # Cross-phase re-run: progress file has a different phase than requested.
-        # Still reset — the user explicitly asked to start over from this phase.
+        # Still reset - the user explicitly asked to start over from this phase.
         Write-DebugLog "Cross-phase reset: progress had Phase $($prog.phase), resetting for Phase $phase"
         $empty = [PSCustomObject]@{ phase=0; lastCompletedStep=0; lastSkippedStep=0; completedSteps=@(); skippedSteps=@(); timestamps=[PSCustomObject]@{} }
         Save-Progress $empty

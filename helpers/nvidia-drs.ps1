@@ -1,17 +1,17 @@
 ﻿# ==============================================================================
-#  helpers/nvidia-drs.ps1  —  NVIDIA DRS (Driver Registry Store) via nvapi64.dll
+#  helpers/nvidia-drs.ps1  -  NVIDIA DRS (Driver Registry Store) via nvapi64.dll
 # ==============================================================================
 #
 #  Low-level C# interop layer that calls nvapi64.dll directly from PowerShell.
-#  Writes settings to the DRS binary database (nvdrs.dat) — the same mechanism
-#  used by NVIDIA Profile Inspector and NVIDIA Control Panel.
+#  Writes settings through NVIDIA DRS APIs, the same public API family used by
+#  NVIDIA profile-management tools. Behavioral equivalence is not assumed.
 #
 #  Architecture:
 #    nvapi64.dll exports only `nvapi_QueryInterface(uint id)` → returns
 #    function pointers for all NVAPI functions.  We resolve 12 DRS functions,
 #    wrap them in delegates, and expose typed static methods.
 #
-#  Struct marshaling uses byte[] + GCHandle.Alloc(Pinned) — no unsafe code.
+#  Struct marshaling uses byte[] + GCHandle.Alloc(Pinned) - no unsafe code.
 #  All structs are zero-initialized and fields written via BitConverter.
 #
 #  Reference implementations:
@@ -119,13 +119,13 @@ public class NvApiDrs
     //    userFriendlyName(4096) + launcher(4096) + fileInFolder(4096)
     //
     //  NOTE on NVDRS_APPLICATION versions:
-    //    V1 was the minimum supported struct, but NVIDIA drivers 595.xx+ (2026)
+    //    V1 was the minimum supported struct, but newer driver interfaces
     //    return INCOMPATIBLE_STRUCT_VERSION (-9) when V1 is passed to
     //    DRS_CreateApplication and DRS_FindApplicationByName.
     //    V3 (16392 bytes, version tag 0x00034008) is the standard version used
     //    by NVIDIA Profile Inspector and NvAPIWrapper. Extra V3 fields
     //    (userFriendlyName, launcher, fileInFolder) are left zeroed when creating
-    //    applications — the driver only requires appName.
+    //    applications - the driver only requires appName.
     //
     private const int UNICODE_STR_BYTES = 4096;
 
@@ -177,7 +177,7 @@ public class NvApiDrs
         IntPtr ptr = NvAPI_QueryInterface(id);
         if (ptr == IntPtr.Zero)
             throw new Exception(string.Format(
-                "NVAPI function 0x{0:X8} not found — driver too old?", id));
+                "NVAPI function 0x{0:X8} not found - driver too old?", id));
         return (T)(object)Marshal.GetDelegateForFunctionPointer(ptr, typeof(T));
     }
 
@@ -339,7 +339,7 @@ public class NvApiDrs
             {
                 // -179: exe is already bound to a profile (possibly this one, possibly another).
                 // This is benign when re-running on the same profile but problematic when
-                // the exe is in a DIFFERENT profile — settings written here won't apply.
+                // the exe is in a DIFFERENT profile - settings written here won't apply.
                 // Caller (nvidia-profile.ps1) verifies the target profile owns the exe via
                 // the Base Profile detection logic. Throw a distinct exception so the caller
                 // can handle it (e.g., by logging a warning) rather than silently succeeding.
@@ -403,31 +403,31 @@ function Initialize-NvApiDrs {
     .DESCRIPTION
         Returns $true if DRS is available (NVIDIA driver installed, 64-bit PS).
         Returns $false on AMD/Intel GPUs, missing DLL, or compilation failure.
-        Result is cached — safe to call multiple times.
+        Result is cached - safe to call multiple times.
     #>
     if ((Get-Variable -Name NvApiAvailable -Scope Script -ErrorAction SilentlyContinue)) {
         if ($SCRIPT:NvApiAvailable -eq $true) { return $true }
         if ($SCRIPT:NvApiAvailable -eq $false) { return $false }  # Don't re-attempt after a failure
     }
 
-    # Only attempt on x64 PowerShell — nvapi64.dll is a native x64 binary.
+    # Only attempt on x64 PowerShell - nvapi64.dll is a native x64 binary.
     # ARM64 PowerShell has [IntPtr]::Size == 8 but cannot load x64 DLLs via Add-Type P/Invoke.
     if ([IntPtr]::Size -ne 8) {
-        Write-DebugLog "NvApiDrs: 32-bit PowerShell — nvapi64.dll requires 64-bit"
+        Write-DebugLog "NvApiDrs: 32-bit PowerShell - nvapi64.dll requires 64-bit"
         $SCRIPT:NvApiAvailable = $false
         return $false
     }
     if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
-        Write-DebugLog "NvApiDrs: ARM64 Windows detected — nvapi64.dll requires native x64"
+        Write-DebugLog "NvApiDrs: ARM64 Windows detected - nvapi64.dll requires native x64"
         $SCRIPT:NvApiAvailable = $false
         return $false
     }
 
     try {
-        # Constrained Language Mode (CLM) blocks Add-Type — occurs under AppLocker, WDAC,
+        # Constrained Language Mode (CLM) blocks Add-Type - occurs under AppLocker, WDAC,
         # or DeviceGuard UMCI policies. Fall back to registry-only NVIDIA profile path.
         if ($ExecutionContext.SessionState.LanguageMode -eq 'ConstrainedLanguage') {
-            Write-DebugLog "NvApiDrs: Constrained Language Mode — Add-Type blocked"
+            Write-DebugLog "NvApiDrs: Constrained Language Mode - Add-Type blocked"
             $SCRIPT:NvApiAvailable = $false
             return $false
         }
@@ -442,7 +442,7 @@ function Initialize-NvApiDrs {
         $SCRIPT:NvApiAvailable = $true
         Write-DebugLog "NvApiDrs: initialized successfully"
     } catch {
-        Write-DebugLog "NvApiDrs: init failed — $_"
+        Write-DebugLog "NvApiDrs: init failed - $_"
         $SCRIPT:NvApiAvailable = $false
     }
 
@@ -466,7 +466,7 @@ function Invoke-DrsSession {
         [switch]$NoSave
     )
 
-    # Guard against writes during dry-run — NVAPI bypasses Set-RegistryValue's dry-run interceptor
+    # Guard against writes during dry-run - NVAPI bypasses Set-RegistryValue's dry-run interceptor
     if (-not $NoSave -and (Get-Variable -Name DryRun -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:DryRun) {
         Write-ConsoleLine "  [DRY-RUN] Would execute NVAPI DRS session (write mode)" -ForegroundColor Magenta
         return

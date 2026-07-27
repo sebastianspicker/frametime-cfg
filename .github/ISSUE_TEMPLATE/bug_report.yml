@@ -1,24 +1,26 @@
-name: Bug Report
-description: Something broke or behaved unexpectedly
+---
+name: Bug report
+description: Report reproducible incorrect behavior
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please fill in as much as you can — the more detail, the faster we can reproduce it.
+        Thanks for reporting. Include enough detail to reproduce the problem,
+        but remove personal or private system information.
 
   - type: dropdown
     id: phase
     attributes:
       label: Which phase/step?
       options:
-        - Phase 1 — Normal Boot
-        - Phase 2 — Safe Mode
-        - Phase 3 — Final Setup
+        - Phase 1 - Normal boot
+        - Phase 2 - Safe Mode
+        - Phase 3 - Final setup
         - FPS Cap Calculator
         - Cleanup
         - Verify-Settings
-        - GUI Dashboard
+        - Desktop interface
         - Other
     validations:
       required: true
@@ -47,7 +49,8 @@ body:
     id: description
     attributes:
       label: What happened?
-      placeholder: Describe the issue. Include the error message if there was one.
+      placeholder: >-
+        Describe the issue and include the relevant error message.
     validations:
       required: true
 
@@ -71,16 +74,33 @@ body:
       required: true
 
   - type: dropdown
-    id: dryrun
+    id: execution_mode
     attributes:
-      label: Did you run in DRY-RUN mode first?
+      label: Execution mode
       options:
-        - "Yes"
-        - "No"
-        - Not applicable
+        - Live optimization
+        - Full DRY-RUN
+        - Scoped DRY-RUN
+        - Smoke test
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: dryrun_context
+    attributes:
+      label: DRY-RUN context (if applicable)
+      description: >-
+        Include launcher, GPU branch, PowerShell version, final phase marker,
+        exit code, and whether C:\FRAMETIME_CFG changed.
+      placeholder: >-
+        START.bat dry-run 3; Windows PowerShell 5.1; PHASE 2 marker missing;
+        exit 1; C:\FRAMETIME_CFG unchanged
 
   - type: textarea
     id: evidence
     attributes:
       label: Logs or evidence
-      description: Paste the relevant error line, smoke marker, or sanitized log excerpt. Do not include personal paths, tokens, or private system data.
+      description: >-
+        Paste a sanitized error line, smoke marker, or log excerpt. Do not
+        include personal paths, tokens, credentials, or private system data.

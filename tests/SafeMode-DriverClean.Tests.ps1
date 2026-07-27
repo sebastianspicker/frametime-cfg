@@ -29,6 +29,10 @@ Describe "SafeMode-DriverClean.ps1 entrypoint wrapper" {
         . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
     }
 
+    BeforeEach {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
+    }
+
     It "bypasses administrator validation before orchestration for smoke tests" {
         Mock Assert-SafeModeDriverCleanAdministrator { throw "Administrator check should not run" }
         Mock Invoke-SafeModeDriverClean { throw "Orchestration should not run" }
@@ -56,6 +60,28 @@ Describe "SafeMode-DriverClean.ps1 entrypoint wrapper" {
         Invoke-SafeModeDriverCleanEntryPoint
 
         $script:CallOrder | Should -Be @("assert", "orchestrate")
+    }
+
+    It "fails closed before administrator validation when the published payload is invalid" {
+        Mock Test-PublishedRuntimePayloadBootstrap { [PSCustomObject]@{ Valid = $false; Message = "hash mismatch" } }
+        Mock Assert-SafeModeDriverCleanAdministrator { throw "must not validate elevation" }
+        Mock Invoke-SafeModeDriverClean { throw "must not orchestrate" }
+        Mock Write-Host {}
+
+        { Invoke-SafeModeDriverCleanEntryPoint } | Should -Throw "*published runtime payload is invalid*hash mismatch*"
+        Should -Invoke Assert-SafeModeDriverCleanAdministrator -Exactly 0
+        Should -Invoke Invoke-SafeModeDriverClean -Exactly 0
+        Should -Invoke Write-Host -ParameterFilter { $Object -match "CRITICAL.*hash mismatch" }
+    }
+
+    It "returns a nonzero process exit code for an invalid published payload" -Skip:(-not $IsWindows) {
+        $records = & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+            -File "$script:ProjectRoot/SafeMode-DriverClean.ps1" 2>&1
+        $exitCode = $LASTEXITCODE
+        $output = ($records | ForEach-Object { $_.ToString() }) -join "`n"
+
+        $exitCode | Should -Not -Be 0
+        $output | Should -Match "CRITICAL:.*runtime-manifest.json is missing"
     }
 }
 
@@ -160,6 +186,45 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
         Should -Invoke shutdown -Exactly 0
     }
 
+    It "clears SafeBoot and stops before driver removal when gpuInput is missing" {
+        Mock Load-State {
+            [PSCustomObject]@{
+                mode = "CONTROL"; logLevel = "NORMAL"; profile = "RECOMMENDED"
+                fpsCap = 0; avgFps = 0
+            }
+        }
+
+        . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
+        { Invoke-SafeModeDriverClean } | Should -Throw "*gpuInput must be a scalar value from 1 through 4*"
+
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke Initialize-Log -Exactly 0
+        Should -Invoke Initialize-Backup -Exactly 0
+        Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Remove-GpuDriverClean -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+    }
+
+    It "clears SafeBoot and stops before driver removal when gpuInput is invalid" {
+        Mock Load-State {
+            [PSCustomObject]@{
+                gpuInput = "NVIDIA"; mode = "CONTROL"; logLevel = "NORMAL"; profile = "RECOMMENDED"
+                fpsCap = 0; avgFps = 0
+            }
+        }
+
+        . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
+        { Invoke-SafeModeDriverClean } | Should -Throw "*gpuInput must be a scalar value from 1 through 4*"
+
+        Should -Invoke Clear-SafeBootVerified -Exactly 1
+        Should -Invoke Initialize-Log -Exactly 0
+        Should -Invoke Initialize-Backup -Exactly 0
+        Should -Invoke Remove-GpuDriverClean -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+    }
+
     It "does not mutate boot state or continue from a normal-mode dry run" {
         $SCRIPT:DryRun = $true
         Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
@@ -169,6 +234,19 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
 
         Should -Invoke Clear-SafeBootVerified -Exactly 0
         Should -Invoke Complete-Step -Exactly 0
+        Should -Invoke Remove-GpuDriverClean -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+    }
+
+    It "blocks boot-state changes and driver removal in normal mode even for YOLO" {
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+        Mock Test-YoloProfile { $true }
+
+        . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
+        Invoke-SafeModeDriverClean
+
+        Should -Invoke Clear-SafeBootVerified -Exactly 0
         Should -Invoke Remove-GpuDriverClean -Exactly 0
         Should -Invoke Set-RunOnce -Exactly 0
         Should -Invoke shutdown -Exactly 0
@@ -191,12 +269,12 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
         }
         Should -Invoke Set-RunOnce -Exactly 0
         Should -Invoke Complete-Step -Exactly 0 -ParameterFilter {
-            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "RunOnce Phase3"
+            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "Phase 3 user handoff"
         }
         Should -Invoke shutdown -Exactly 0
     }
 
-    It "stays running when Phase 3 RunOnce registration is not applied" {
+    It "stays running when the per-user Phase 3 handoff is not applied" {
         Mock Set-RunOnce {
             [PSCustomObject]@{
                 Status = "Failed"
@@ -213,7 +291,7 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
             $phase -eq 2 -and $stepNum -eq 2 -and $stepName -eq "DriverClean"
         }
         Should -Invoke Complete-Step -Exactly 0 -ParameterFilter {
-            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "RunOnce Phase3"
+            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "Phase 3 user handoff"
         }
         Should -Invoke shutdown -Exactly 0
     }
@@ -228,7 +306,7 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
         }
         Should -Invoke Set-RunOnce -Exactly 1 -ParameterFilter { $PassThru }
         Should -Invoke Complete-Step -Exactly 1 -ParameterFilter {
-            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "RunOnce Phase3"
+            $phase -eq 2 -and $stepNum -eq 3 -and $stepName -eq "Phase 3 user handoff"
         }
         Should -Invoke shutdown -Exactly 1
     }
@@ -245,5 +323,37 @@ Describe "SafeMode-DriverClean Phase 2 completion" {
         Should -Invoke Complete-Step -Exactly 0 -ParameterFilter { $stepNum -in @(2, 3) }
         Should -Invoke Set-RunOnce -Exactly 1 -ParameterFilter { $PassThru }
         Should -Invoke shutdown -Exactly 0
+    }
+
+    It "simulates all Phase 2 features without boot, persistence, prompt, or reboot mutations" {
+        Remove-Item Env:SAFEBOOT_OPTION -ErrorAction SilentlyContinue
+        $previewState = [PSCustomObject]@{
+            gpuInput = "2"; mode = "DRY-RUN"; logLevel = "VERBOSE"; profile = "CUSTOM"
+            fpsCap = 0; avgFps = 0; rollbackDriver = $null; nvidiaDriverPath = $null
+        }
+        $script:DriverCleanResult = [PSCustomObject]@{
+            Status = "DryRun"; Applied = $false; CanCompleteStep = $false
+            Message = "Driver cleanup previewed."
+        }
+        Mock Set-RunOnce {
+            [PSCustomObject]@{ Status = "DryRun"; Applied = $false; Message = "RunOnce previewed" }
+        }
+        Mock Read-Host { throw "Full Phase 2 DRY-RUN must not prompt" }
+        Mock Write-PhaseSummary {}
+
+        . "$script:ProjectRoot/SafeMode-DriverClean.ps1"
+        Invoke-SafeModeDriverClean -PreviewState $previewState -SimulateSafeMode
+
+        Should -Invoke Load-State -Exactly 0
+        Should -Invoke Initialize-Log -Exactly 0
+        Should -Invoke Initialize-Backup -Exactly 0
+        Should -Invoke Save-SuiteState -Exactly 0
+        Should -Invoke Clear-SafeBootVerified -Exactly 0
+        Should -Invoke Remove-GpuDriverClean -Exactly 1 -ParameterFilter { $GpuVendor -eq "NVIDIA" -and $PassThru }
+        Should -Invoke Set-RunOnce -Exactly 1 -ParameterFilter { $PassThru }
+        Should -Invoke Read-Host -Exactly 0
+        Should -Invoke shutdown -Exactly 0
+        Should -Invoke Remove-BackupLock -Exactly 0
+        Should -Invoke Write-PhaseSummary -Exactly 1 -ParameterFilter { $PhaseLabel -eq "PHASE 2" -and $DryRun }
     }
 }

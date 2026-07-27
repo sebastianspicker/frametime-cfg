@@ -1,272 +1,177 @@
-# NIC Latency Stack — Deep Dive
+# NIC Configuration and Latency Diagnostics
 
-> Covers Phase 1 Step 16 and Phase 3 Step 3.
+This document covers Phase 1 Step 16 and Phase 3 Step 3. The implementation
+changes Ethernet adapter properties, selected Windows network-offload state,
+QoS policy, and optionally interrupt affinity.
 
-Most "network optimization" guides for CS2 are either written for TCP applications (CS2 uses UDP), apply settings that only matter on Wi-Fi, or recommend disabling things that empirical testing shows make performance worse. This document explains what the suite actually does to the NIC receive path, why each layer matters, and how to verify it's working.
+## Evidence boundary
 
----
+The repository has no committed packet capture, ETW trace, LatencyMon result, or
+route dataset that establishes a latency improvement from these settings. NIC
+property names and behavior vary by adapter, firmware, driver, Windows build,
+switch, router, and ISP.
 
-## The CS2 Network Profile
+The suite records which operations were requested and skips properties a driver
+does not expose. A successful property write does not prove a useful DPC or
+network result. Measure the target adapter before and after application, and
+restore values that worsen throughput, loss, power, wake behavior, or latency.
 
-Before optimizing anything, it helps to know what CS2's traffic actually looks like:
+## Phase 1 adapter properties
 
-- **Protocol:** UDP only, for all game state
-- **Direction:** Bidirectional, but receive (server → client) is latency-critical
-- **Packet rate:** ~128 packets/second (one per server tick)
-- **Packet size:** ~80–120 bytes per datagram
-- **Ports:** UDP 27015–27036 (game), UDP 27020 (GOTV)
+The Ethernet path requests these values from `config.env.ps1`:
 
-This profile is radically different from what most NIC drivers are tuned for out of the box. NICs ship optimized for TCP bulk transfers (large packets, sustained throughput) and VoIP (small packets but few per second). CS2 is small packets at high regularity — the worst case for the default interrupt coalescing settings.
+| Logical property | Requested value | Main tradeoff |
+|---|---|---|
+| Energy Efficient Ethernet | Disabled | Higher idle adapter and link power. |
+| Flow Control | Disabled | Removes Ethernet PAUSE handling but can increase loss under congestion. |
+| Interrupt Moderation | Medium | Coalesces some interrupt work; exact driver behavior is adapter-specific. |
+| Receive Buffers | 512, or 2048 for detected 5 Gbit/s and faster adapters | Larger rings use more memory and can tolerate larger bursts. They are not a fixed latency guarantee. |
+| Transmit Buffers | 512, or 2048 for detected 5 Gbit/s and faster adapters | Same driver-specific tradeoff as receive rings. |
 
----
+Intel and Realtek drivers expose different display names. The implementation
+tries the configured primary name and then the corresponding alternate name.
+It also attempts to disable `*GreenEthernet` and `*PowerSavingMode` when the
+driver exposes those registry keywords.
 
-## Layer 1: PHY Power-State Wake Latency
+Unsupported or absent properties are skipped. The suite does not install a
+different NIC driver to obtain them.
 
-### What happens by default
+### Interrupt moderation
 
-**Energy Efficient Ethernet (EEE, IEEE 802.3az)** puts the PHY chip into Low Power Idle (LPI) during traffic gaps. At CS2's 128 pkt/sec rate — one packet every 7.8 milliseconds — the PHY enters LPI between every single packet burst. LPI exit adds **10–100µs of wake latency** to the first packet after each idle window. This appears in CapFrameX frametime traces as irregular jitter that's not correlated with GPU or CPU load.
+The repository chooses Medium for all profiles that run Step 16. This is a
+community-derived default, not a Microsoft or adapter-vendor universal
+recommendation. Driver implementations can map the label to different batching
+behavior.
 
-Realtek cards have two additional proprietary variants:
-- **`*GreenEthernet`** — Realtek's own power-save extension (different from IEEE EEE)
-- **`*PowerSavingMode`** — dynamic downclocking of the PHY when traffic is low
+Compare available driver modes with the same background traffic and workload.
+A mode that reduces interrupt count can add batching delay; a mode that handles
+every packet separately can increase CPU interrupt work. Keep the mode that
+produces the better measured result on the target system.
 
-**Flow Control (`*FlowControl`)** is different: it's IEEE 802.3x PAUSE frames, which allow a switch to halt your NIC's transmit path for up to ~50ms. This doesn't apply to receive latency, but unexpected transmit stalls are still unwanted.
+### RSS state
 
-### What the suite does
+Receive Side Scaling distributes network receive processing across processors.
+The helper adds expected RSS registry values only when they are absent. It does
+not overwrite existing vendor or administrator values.
 
-Disables all four in the NIC's driver registry key:
+Restart the adapter or reboot before evaluating the effective RSS state. Use
+Windows network cmdlets to confirm the active configuration rather than relying
+only on the registry entries.
 
-```
-HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-...}\000X
-    *EEE                = 0  (if present — Intel/Broadcom)
-    *GreenEthernet      = 0  (if present — Realtek)
-    *PowerSavingMode    = 0  (if present — Realtek)
-    *FlowControl        = 0
-```
+## UDP Receive Offload
 
-These are set via `RegistryKeyword`, meaning the NIC driver reads them at device initialization. Changes require a device restart (handled by `Disable-NetAdapter` + `Enable-NetAdapter` or reboot).
+Where the Windows network stack supports URO, Step 16 records the current global
+state and requests that URO be disabled. URO can coalesce UDP datagrams before
+delivery to higher network layers. Whether that helps or harms a game workload
+depends on driver and stack behavior.
 
-### DisplayName Fallback for Realtek NICs
+The operation is skipped when the command is not supported. The documentation
+does not convert potential batching into a fixed millisecond delay or assume a
+fixed CS2 packet interval.
 
-Intel and Realtek use different `DisplayName` strings for the same settings (e.g., Intel: `"EEE"`, Realtek: `"Energy Efficient Ethernet"`). The suite tries the Intel-style name first; if the property is not found, it falls back to the Realtek-style `DisplayName` via `$CFG_NIC_Tweaks_AltNames`. This covers the Realtek RTL8125/RTL8126 family (2.5 GbE / 5 GbE) which ships on many 2024–2026 gaming boards.
+Check the current Windows state with the applicable `netsh int udp show global`
+command on the target build. Use the Recovery workflow to restore the recorded
+state.
 
-### 5 GbE Buffer Sizing
+## QoS policy
 
-NICs at 5+ Gbps link speed (e.g., Realtek RTL8126) use larger receive/transmit buffers (`ReceiveBuffers = 2048`) to handle the higher packet rate without overflow. The suite detects link speed via `$nic.Speed` and scales automatically.
+Step 16 creates two repository-owned QoS policies with DSCP value 46:
 
-### How to verify
+| Policy | Match |
+|---|---|
+| `CS2_UDP_Ports` | UDP ports 27015 through 27036. |
+| `CS2_App` | The detected `cs2.exe` application path. |
 
-LatencyMon → Drivers tab. If NIC DPC latency shows spikes correlated with traffic bursts (not constant spikes), PHY wake latency is likely the cause. After this step, those burst-correlated spikes should flatten.
+It also writes the policy value named `Do not use NLA` so the Windows QoS policy
+can apply across network profile classification. This changes global QoS policy
+behavior and can conflict with organization-managed settings.
 
----
+A DSCP mark is only a label. A local switch or router must honor it for queuing
+to change, and upstream networks can rewrite or discard it. The repository does
+not claim that the policy changes Internet routing or Valve server behavior.
 
-## Layer 2: Interrupt Coalescing — Why "Disabled" Is Worse
+## TCP acknowledgment and Nagle values
 
-This is the most counter-intuitive optimization in the suite, and the one most commonly set wrong by other guides.
+Phase 1 Step 25 writes `TcpNoDelay=1` and `TcpAckFrequency=1` below the
+detected wired interface's TCP/IP registry key. These values request different
+TCP coalescing and acknowledgment behavior for applications using that
+interface. They do not control UDP game datagrams, and this repository has no
+application-level latency benchmark for the change.
 
-### The intuitive argument (wrong)
-
-*"Every CS2 packet should trigger an immediate interrupt. Disabling coalescing means the CPU processes each packet as soon as it arrives. Therefore: less coalescing → lower latency."*
-
-This argument is correct in a vacuum. It fails on a real gaming PC.
-
-### The empirical reality
-
-**djdallmann (GamingPCSetup)** ran controlled xperf/ETL measurements on an Intel Gigabit CT (one of the most common enterprise-grade NICs used in gaming motherboards) and measured actual DPC latency variance — not theoretical latency, but measured kernel interrupt scheduling jitter — under three conditions:
-
-1. Interrupt Moderation **Disabled**
-2. Interrupt Moderation **Medium** (~50–200µs coalescing window)
-3. Interrupt Moderation **High** (~200–500µs)
-
-**Result:** Medium produced the lowest DPC latency *variance*. Disabled was *worse* than Medium.
-
-### Why disabled causes interrupt storms
-
-A gaming PC always has background network traffic. Discord audio: 50 pkt/sec. Steam presence: ~10 pkt/sec. Windows telemetry: burst every few minutes. Browser tabs with websocket connections: variable. None of these are large individually. But with Interrupt Moderation disabled, each of these packets fires its own CPU interrupt, interleaved with CS2's 128 pkt/sec. The interrupt controller has to schedule and service each one individually.
-
-Under this load, the CPU interrupt scheduling path becomes irregular. CS2 packets that arrive simultaneously with Discord VoIP packets compete for DPC processing time. The result is DPC latency *variance* — individual processing delays that vary from 5µs to 200µs depending on what else arrived in the same microsecond. Variance is what causes frametime spikes.
-
-Medium coalescing collects packets within a ~50–200µs window and delivers one DPC for the batch. CS2 receives its packet no more than 200µs late — well within the 7.8ms tick window. But the DPC scheduling is deterministic: no surprise competition from background packet interrupts.
-
-### The suite's choice
-
-**Medium for all profiles** — including COMPETITIVE. This is the suite's current default based on community measurement, not an Intel or Microsoft universal-best recommendation. If you use a headless server with zero background traffic, Disabled might be correct. On a gaming PC with Discord, Steam, and a browser open, the suite currently prefers Medium.
-
----
-
-## Layer 3: RSS (Receive Side Scaling)
-
-### The Core 0 problem
-
-Intel I225-V, I226-V, and I219-V NICs (standard on most Z490/Z590/Z690/Z790/B650 motherboards) ship without RSS indirection table entries in their driver registry key. Without explicit RSS configuration, Windows NDIS assigns all receive-side DPC processing to **CPU Core 0** by default.
-
-Core 0 is also the default handler for most OS bookkeeping: APIC timer interrupts, PCI-e MSI routing on some configurations, DWM scheduling on older drivers. When CS2's game thread and NIC DPCs both contend on Core 0, DPC scheduling becomes irregular.
-
-### What the suite adds
-
-Five entries in the NIC's driver registry key (created if absent):
-
-| Entry | Value | Meaning |
-|-------|-------|---------|
-| `*RSS` | 1 | Master switch — some Realtek drivers ship with `*RSS=0`, silently ignoring all sub-parameters |
-| `*RSSProfile` | 1 (ClosestProcessor) | RSS queues processed on the CPU core whose L3 cache is nearest to where the DMA'd packet data landed |
-| `*RssBaseProcNumber` | 2 | Start RSS queues from Core 2, keeping Core 0/1 free for OS tasks |
-| `*MaxRssProcessors` | 4 (or 8 for 5+ GbE) | Spread processing across 4 cores maximum — adequate for 128 pkt/sec at 1–2.5 GbE; 8 for 5+ GbE |
-| `*NumRssQueues` | 4 (or 8 for 5+ GbE) | Explicit queue count, scaled to link speed |
-
-**Speed-aware scaling:** NICs at 5+ Gbps (e.g., Realtek RTL8126 5 GbE) use 8 queues and 8 max processors to handle higher packet rates. Queue count is capped at the actual processor count.
-
-**Existing values are never overwritten.** If your NIC driver or motherboard vendor already configured RSS, the suite leaves it alone.
-
-### Phase 3 Step 3 — NIC Interrupt Affinity
-
-This goes further: pinning the NIC's interrupt handling to a specific non-game core via `DevicePolicy=4` + `AssignmentSetOverride` in the interrupt affinity policy registry key. T3 / COMPETITIVE+ only, because it requires LatencyMon-confirmed NIC DPC spikes to be worth the risk of misaligning the affinity with your specific core layout.
-
-**When to use it:** Run LatencyMon for 10 minutes while gaming. If `ndis.sys` or your NIC driver (`e1g6032e.sys`, `rtx*.sys`, etc.) shows DPC execution times above 100µs consistently, interrupt affinity pinning is worth trying.
-
----
-
-## Layer 4: URO (UDP Receive Offload)
-
-### What URO is
-
-Per current Microsoft documentation, URO is a Windows 11 **24H2+** feature where the NIC coalesces multiple UDP datagrams from the same flow into a single large kernel-mode delivery. The goal is to reduce CPU interrupt overhead for high-throughput UDP applications — video streaming servers, DNS resolvers, etc.
-
-For those workloads, URO is appropriate. For CS2, it is not.
-
-### Why URO hurts CS2
-
-CS2 sends exactly one complete game state snapshot per packet. There is no meaningful aggregation possible — each datagram is its own atomic unit. When URO holds two or three of these datagrams waiting for the batch to fill before delivering the DPC, those packets are **artificially delayed**. The game state they carry is stale by the time it arrives in the application layer.
-
-At 128 pkt/sec, URO can delay a packet by up to ~15ms if it's waiting for a batch partner that never arrives (URO has a timeout). This is 2× the tick interval, turning a perfectly delivered packet into what the game engine perceives as a late or duplicate update.
-
-### The suite's fix
-
-```
-netsh int udp set global uro=disabled
-```
-
-On Windows versions without URO support, this command is a no-op or unsupported. On Windows 11 24H2+ it disables the feature system-wide. This is the only `netsh` command the suite uses because it's the only one in this area that directly targets UDP receive behavior.
-
----
-
-## Layer 5: QoS DSCP — The NLA Prerequisite Trap
-
-### What DSCP does
-
-DSCP (Differentiated Services Code Point) is a 6-bit field in the IP header that signals forwarding priority to network equipment. EF=46 (Expedited Forwarding) is the highest priority class — it tells routers and switches "process this before everything else."
-
-The Windows QoS Packet Scheduler can mark outgoing packets with DSCP values based on policies you define. The suite creates two policies to catch CS2 traffic:
-
-1. **Port-based:** UDP 27015–27036 → DSCP EF=46
-2. **App-path:** `cs2.exe` → DSCP EF=46 (belt-and-suspenders if ports change)
-
-### The silent failure problem
-
-Here is the issue that renders most guides' DSCP instructions useless:
-
-`New-NetQosPolicy` will report success even when DSCP marking is completely disabled.
-
-Windows refuses to apply DSCP marks on "unidentified" or "Public" network profiles. If your network adapter is categorized as "Public" (common for newly connected networks, VPN adapters, or any adapter without a recognized gateway), every QoS policy silently does nothing. No error, no warning — `Get-NetQosPolicy` shows your policy, but packets leave without the DSCP mark.
-
-The fix is a registry key that most guides never mention:
-
-```
-HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\QoS
-    Do not use NLA = "1"
-```
-
-This tells the QoS subsystem to ignore the network profile and always apply DSCP marking. Without this key, your policies are inert on Public networks. The suite always sets this key before creating the policies.
-
-### Real-world impact
-
-DSCP only benefits the LAN segment between your PC and your router. Consumer ISP routers (most home setups) strip DSCP markings at the first hop before packets enter the internet. Valve's servers receive packets without any DSCP marking regardless of what you set.
-
-On a managed network (university, work, esports venue with managed switches), DSCP EF marking can noticeably reduce queueing delay within that network. At home, it costs nothing to enable and may help with router QoS prioritization if your router supports DSCP-based queuing (some gaming routers do). The suite enables it correctly and leaves the user to assess their specific network.
-
----
-
-## Layer 6: IPv6 — Left Enabled (2026 Reversal)
-
-### Why the recommendation changed
-
-**Previous guidance (2023–2024)** recommended `DisabledComponents = 0xFF` to eliminate NDP/RA/DHCPv6 background traffic. That advice was based on the premise that CS2 game servers are IPv4-only, so IPv6 stack activity was pure overhead.
-
-**2025–2026 evidence reverses this:**
-
-- **Steam (late 2023+)** updated its networking stack to prefer IPv6 when round-trip time is demonstrably lower
-- **Riot Games 2025 infrastructure paper:** 68% of EU-West connections use IPv6, with 4.2ms median latency improvement vs IPv4-only paths
-- **Valve SDR relay network** supports IPv6 — disabling IPv6 removes a potentially faster routing path for the SDR relay hops between your client and Valve's game servers
-- **Disabling IPv6 on modern ISPs** often forces traffic through IPv4 CGNAT (Carrier-Grade NAT) gateways, which **adds** 5–15ms of latency — the exact opposite of what the optimization intended
-
-### Background traffic is negligible
-
-The original concern — NDP, Router Advertisements, DHCPv6 — generates less than 1 packet per second of background traffic. On modern NICs with interrupt moderation (Layer 2), this adds zero measurable DPC overhead. The routing benefit of leaving IPv6 enabled now far outweighs the sub-1-packet/sec background traffic cost.
-
-### Current suite behavior
-
-The suite **leaves IPv6 enabled** and displays manual disable instructions:
-
-```
-To disable manually if needed:
-  Set DisabledComponents = 0xFF in HKLM:\...\Tcpip6\Parameters
-```
-
-This is a troubleshooting step for users who specifically diagnose IPv6-related latency issues, not a default recommendation.
-
----
-
-## What This Suite Does NOT Do to the NIC
-
-Many common "network optimization" steps that appear in guides are omitted because they are TCP-only features with zero effect on CS2's UDP traffic:
-
-| Setting | Why skipped |
-|---------|-------------|
-| `netsh int tcp set global autotuninglevel=disabled` | TCP receive window scaling — CS2 uses UDP |
-| Disable RSC (Receive Segment Coalescing) | Coalesces TCP *segments* — not UDP datagrams |
-| Disable LSO (Large Send Offload) | NIC-based TCP segmentation — irrelevant for 80-byte UDP |
-| Disable TCP/UDP Checksum Offload | UDP checksum for 80-byte datagrams takes nanoseconds in hardware; software is slower |
-| `*TransmitBuffers = 256` | Suite sets 512 (safe default; 2048 for 5+ GbE NICs); reducing below 512 risks overflows during background traffic bursts |
-| Disable ARPOffload / NSOffload | Active only during system sleep — zero effect during gameplay |
-| Disable WakeOnMagicPacket | Active only when system is powered off |
-
-The guiding principle: if a setting only affects TCP, it cannot affect CS2 game packet delivery. CS2's UDP path bypasses the TCP stack entirely.
-
----
-
-## Verifying NIC Optimization
-
-### Tools needed
-
-- **LatencyMon** (Resplendence) — measures DPC and ISR latency; shows which drivers are responsible
-- **WireShark** (optional) — can verify DSCP markings on outbound packets
-
-### What to look for in LatencyMon
-
-Run for 10 minutes while playing a practice server match. Check:
-
-1. **Maximum DPC execution time** — should be below 150µs on a well-configured system. Values above 500µs consistently indicate a driver problem.
-2. **Problematic drivers** — `ndis.sys` above 100µs average indicates NIC interrupt issues. Your NIC driver (`e1i65x64.sys` for Intel, `rt640x64.sys` for Realtek) should be below 30µs average.
-3. **Interrupt frequency** — after RSS is configured, interrupt counts should be spread across cores 2–5, not concentrated on Core 0.
-
-### Checking RSS assignment
-
-```powershell
-Get-NetAdapterRss | Format-List Name, Enabled, *Processor*
-```
-
-The `BaseProcessorNumber` should reflect your configured `*RssBaseProcNumber`. `NumberOfReceiveQueues` should match `*NumRssQueues`.
-
-### Checking DSCP policies
-
-```powershell
-Get-NetQosPolicy | Where-Object { $_.Name -match "CS2" }
-```
-
-Verify both the port-based and app-path policies appear. To confirm marking is active (not silently disabled), check:
-
-```powershell
-(Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\QoS" -ErrorAction SilentlyContinue)."Do not use NLA"
-```
-
-Should return `"1"`.
+The values can affect TCP packet frequency outside CS2. Recovery restores the
+recorded prior values. Compare relevant TCP applications and network behavior
+before retaining the change.
+
+## IPv6
+
+The suite leaves IPv6 enabled. It does not claim that IPv6 is always faster than
+IPv4. Keeping both stacks available allows Windows, Steam, and the live network
+to select an available path and avoids a global protocol change without a
+target-specific diagnosis.
+
+Do not disable IPv6 solely to reduce background traffic. If a repeatable
+IPv6-specific failure exists, diagnose name resolution, address selection,
+router advertisements, path MTU, and routing before making a system-wide change.
+
+## Phase 3 interrupt affinity
+
+Phase 3 Step 3 is a higher-risk operation that writes NIC interrupt-affinity
+policy. It is intended for a system where NIC DPC work has been measured and CPU
+topology is known.
+
+The helper sets `DevicePolicy` and `AssignmentSetOverride` for the selected NIC
+device. An incorrect processor mask can place interrupts on a busy core, an
+inappropriate logical processor, or a processor outside the expected topology.
+Do not infer a suitable mask from core count alone on hybrid or multi-CCD CPUs.
+
+Use an authoritative logical-processor topology source and compare trace data
+before retaining this step. Recovery removes or restores the recorded policy
+values.
+
+## Wi-Fi scope
+
+The adapter property and affinity work targets the selected Ethernet adapter.
+The workflow can still change global URO and QoS policy when Wi-Fi is active.
+Wi-Fi latency is also affected by radio interference, channel use, roaming,
+power policy, access-point buffering, and signal quality, none of which these
+registry settings can correct.
+
+## Bufferbloat
+
+Bufferbloat is queueing delay caused by saturated links. NIC property changes do
+not configure router queue management or increase ISP capacity. Test latency
+while the connection is loaded in both upload and download directions. Address
+the bottleneck at the router or traffic source when saturation is the cause.
+
+## Settings deliberately left alone
+
+The suite does not apply every advanced-property recommendation found in NIC
+tuning guides. In particular:
+
+- TCP RSC and LSO do not configure CS2 UDP game datagrams;
+- checksum offload changes shift work between the NIC and CPU and require local
+  evidence;
+- wake-on-LAN settings concern sleep or powered-down behavior;
+- jumbo-frame configuration must match the entire path and is not required for
+  normal CS2 datagrams;
+- arbitrary buffer reductions can overflow under background traffic;
+- disabling IPv6 globally changes routing and application compatibility.
+
+## Verification
+
+After Step 16 or Phase 3 Step 3:
+
+1. Export or record the effective adapter advanced properties.
+2. Confirm link speed, RSS state, URO state, QoS policies, and the selected
+   adapter.
+3. Test throughput, packet loss, jitter, DNS, sleep and resume, Wake-on-LAN if
+   used, VPNs, and organization network access.
+4. Capture DPC and ISR behavior with an appropriate Windows trace tool under the
+   same traffic and game workload used for the baseline.
+5. Confirm the interrupt-affinity mask against current logical-processor
+   topology if Phase 3 Step 3 was applied.
+6. Restore the previous values if the result is neutral, negative, or unstable.
+
+LatencyMon can identify drivers associated with long DPC or ISR execution, but
+its summary alone does not prove that a specific NIC setting caused the result.
+Retain raw traces and repeat the comparison.

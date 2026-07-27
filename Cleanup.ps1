@@ -1,5 +1,5 @@
 ﻿<#
-.SYNOPSIS  CS2 Optimization Suite — Cleanup / Soft-Reset
+.SYNOPSIS  frametime.cfg - Cleanup / Soft-Reset
 
   [1]  QUICK REFRESH  (~2 min, no restart)
        CS2 Shader Cache [T1] · Temp · DNS · RAM Working Set
@@ -42,7 +42,7 @@ Initialize-ScriptDefaults
 Initialize-PhaseCounters
 Ensure-Dir $CFG_LogDir
 
-Write-LogoBanner "Cleanup / Soft-Reset  ·  CS2 Optimization Suite"
+Write-LogoBanner "Cleanup / Soft-Reset  ·  frametime.cfg"
 
 Write-Host @"
   [1]  QUICK REFRESH  (~2 min, no restart)
@@ -72,7 +72,7 @@ $total    = 0
 # ══════════════════════════════════════════════════════════════════════════════
 # QUICK REFRESH  [T1]
 # ══════════════════════════════════════════════════════════════════════════════
-Write-Section "Quick Refresh  [T1 — measurable effect after driver updates]"
+Write-Section "Quick Refresh  [T1 baseline maintenance]"
 
 # CS2 Shader Cache
 Write-TierBadge 1 "Clear CS2 Shader Cache"
@@ -97,7 +97,7 @@ if (-not $cs2Found) {
 }
 
 # Windows Temp
-Write-TierBadge 3 "Temp files  (no direct 1%-low effect — system hygiene)"
+Write-TierBadge 3 "Temporary files (no repository performance evidence)"
 if (-not $SCRIPT:DryRun) {
     $total += Clear-Dir "$env:SystemRoot\Temp" "Windows Temp"
     $total += Clear-Dir $env:TEMP              "User Temp"
@@ -119,7 +119,7 @@ if (-not $SCRIPT:DryRun) {
     try {
         # Add-Type is blocked under Constrained Language Mode (AppLocker/WDAC).
         if ($ExecutionContext.SessionState.LanguageMode -eq 'ConstrainedLanguage') {
-            Write-Info "Working set trim skipped (Constrained Language Mode — Add-Type blocked)."
+            Write-Info "Working set trim skipped (Constrained Language Mode - Add-Type blocked)."
             # Fall through to the catch handler for consistent flow
             throw "CLM"
         }
@@ -167,7 +167,7 @@ if ($doFull) {
     }
 
     # Prefetch  [T3]
-    Write-TierBadge 3 "Prefetch  (no 1%-low effect — system hygiene)"
+    Write-TierBadge 3 "Prefetch files (no repository performance evidence)"
     $pfPath = "$env:SystemRoot\Prefetch"
     if (Test-Path $pfPath) {
         $n = @(Get-ChildItem $pfPath -Filter "*.pf" -ErrorAction SilentlyContinue).Count
@@ -181,12 +181,12 @@ if ($doFull) {
     }
 
     # Winsock Reset  [T2]
-    Invoke-TieredStep -Tier 2 -Title "Winsock Reset" `
-        -Why "Corrupted socket entries can cause connection pauses." `
-        -Evidence "Helpful for server connection issues. No effect on lows if connection is stable." `
-        -Caveat "Harmless, but restart recommended afterwards for full effect." `
+    $null = Invoke-TieredStep -Tier 2 -Title "Winsock Reset" `
+        -Why "Resets the Windows Winsock catalog to its default state." `
+        -Evidence "The reset result is observable. This repository includes no application-level latency benchmark." `
+        -Caveat "A restart can be required, and custom network providers may need reconfiguration." `
         -Risk "SAFE" -Depth "NETWORK" `
-        -Improvement "Fixes corrupted Winsock entries — helps with connection issues" `
+        -Improvement "Resets Winsock catalog entries" `
         -SideEffects "May need restart for full effect" `
         -Undo "N/A (resets to clean state)" `
         -Action {
@@ -195,7 +195,7 @@ if ($doFull) {
         }
 
     # Event Logs  [Hygiene]
-    Write-TierBadge 3 "Clear Event Logs  (no 1%-low effect)"
+    Write-TierBadge 3 "Clear Event Logs (no repository performance evidence)"
     if (-not $SCRIPT:DryRun) {
         try {
             foreach ($l in @("Application","System","Setup")) {
@@ -208,12 +208,12 @@ if ($doFull) {
     }
 
     # Steam Verification  [T2]
-    Invoke-TieredStep -Tier 2 -Title "Verify CS2 game integrity (Steam)" `
+    $null = Invoke-TieredStep -Tier 2 -Title "Verify CS2 game integrity (Steam)" `
         -Why "Corrupt or outdated CS2 files can cause shader stutter and crashes." `
         -Evidence "T2: Especially useful after CS2 updates or shader cache clearing." `
         -Caveat "Takes 2-5 min. Steam must be running." `
         -Risk "SAFE" -Depth "APP" `
-        -Improvement "Fixes corrupt or outdated CS2 game files" `
+        -Improvement "Verifies CS2 files and reacquires content that Steam identifies as invalid" `
         -SideEffects "Takes 2-5 minutes. Steam must be running." `
         -Undo "N/A (verification only)" `
         -Action {
@@ -227,7 +227,7 @@ if ($doFull) {
                 if ($steamExe) {
                     Write-Step "Starting CS2 verification..."
                     Start-Process "steam://validate/730" -ErrorAction SilentlyContinue
-                    Write-OK "Steam verification started — wait for Steam to finish."
+                    Write-OK "Steam verification started - wait for Steam to finish."
                 } else {
                     Write-Warn "Steam.exe not found."
                     Write-Info "Manual: Steam -> CS2 -> Properties -> Local Files -> Verify"
@@ -242,7 +242,7 @@ if ($doFull) {
 # DRIVER REFRESH
 # ══════════════════════════════════════════════════════════════════════════════
 if ($doDriver) {
-    Write-Section "Driver Refresh  [T1 — restart required]"
+    Write-Section "Driver Refresh  [T1 - restart required]"
     Write-TierBadge 1 "Run native GPU driver clean + reinstall"
 
     if ($SCRIPT:DryRun) {
@@ -255,7 +255,7 @@ if ($doDriver) {
         exit 0
     }
 
-    # Validate GPU vendor from state — re-detect if state is missing or stale
+    # Validate GPU vendor from state - re-detect if state is missing or stale
     $gpuVendorOk = $false
     if (Test-Path $CFG_StateFile) {
         try {
@@ -264,7 +264,7 @@ if ($doDriver) {
         } catch { Write-DebugLog "State file read failed: $_" }
     }
     if (-not $gpuVendorOk) {
-        Write-Warn "GPU vendor not found in state — please confirm:"
+        Write-Warn "GPU vendor not found in state - please confirm:"
         Write-Host "  [1]  NVIDIA (RTX 5000 series)" -ForegroundColor White
         Write-Host "  [2]  NVIDIA (any other)" -ForegroundColor White
         Write-Host "  [3]  AMD" -ForegroundColor White
@@ -275,7 +275,7 @@ if ($doDriver) {
             if (Test-Path $CFG_StateFile) {
                 $st = Get-Content $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json
             } else {
-                # State file doesn't exist yet — create minimal state so SafeMode-DriverClean
+                # State file doesn't exist yet - create minimal state so SafeMode-DriverClean
                 # can read gpuInput after reboot. Without this, the GPU choice is lost.
                 $st = [PSCustomObject]@{ mode = $SCRIPT:Mode; profile = $SCRIPT:Profile }
             }
@@ -285,7 +285,7 @@ if ($doDriver) {
     }
 
     Write-Warn "Requires restart into Safe Mode."
-    Write-Host "  GPU Driver Clean: ✔  (native PowerShell — no tools needed)" -ForegroundColor Green
+    Write-Host "  GPU Driver Clean: ✔  (native PowerShell - no tools needed)" -ForegroundColor Green
     Write-Host "  Driver Install:   ✔  (native extract + install)" -ForegroundColor Green
 
     if (-not (Confirm-Risk "Restart into Safe Mode now?" "Save all open files!")) {
@@ -295,7 +295,7 @@ if ($doDriver) {
     try {
         Copy-PhaseRuntimePayload -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir
     } catch {
-        Write-Err "Driver Refresh: failed to copy scripts — $_"
+        Write-Err "Driver Refresh: failed to copy scripts - $_"
         Write-Info "Ensure all suite files are in: $ScriptRoot"
         throw
     }
@@ -303,27 +303,13 @@ if ($doDriver) {
     # Initialize backup system before Set-BootConfig (which auto-backs up the current value)
     Initialize-Backup
 
-    # Reset all progress unconditionally — Phase 2+3 will re-run from scratch
+    # Reset all progress unconditionally - Phase 2+3 will re-run from scratch
     Clear-Progress $null
-    $runOnceResult = Set-RunOnce "CS2_Phase2" "$CFG_WorkDir\SafeMode-DriverClean.ps1" -SafeMode -PassThru
-    if (-not $runOnceResult.Applied) {
-        Write-Err "Phase 2 RunOnce registration failed. Safe Mode boot flag was NOT set."
-        Write-Host "  Fix the RunOnce error above, then retry Driver Refresh." -ForegroundColor Cyan
-        Write-Host "  Do not reboot into Safe Mode until Phase 2 is registered." -ForegroundColor Cyan
-        return
-    }
-    $SCRIPT:CurrentStepTitle = "Driver Refresh — Safe Mode boot"
-    $null = Set-BootConfig "safeboot" "minimal" "Driver Refresh — Safe Mode for GPU driver clean"
+    $SCRIPT:CurrentStepTitle = "Driver Refresh - Safe Mode boot"
+    $phase2Transaction = Enable-Phase2SafeModeTransaction -SourceRoot $ScriptRoot -DestinationRoot $CFG_WorkDir -StatePath $CFG_StateFile -Why "Driver Refresh - Safe Mode for GPU driver clean"
     try { Flush-BackupBuffer } catch { Write-DebugLog "Flush after boot config backup failed: $_" }
-
-    # Verify safeboot flag — retry with explicit {current} if first attempt failed
-    if (-not (Test-BootConfigSet "safeboot")) {
-        Write-Warn "Safeboot flag not detected — retrying with explicit identifier..."
-        $null = bcdedit /set "{current}" safeboot minimal 2>&1
-    }
-    if (-not (Test-BootConfigSet "safeboot")) {
-        Write-Err "Could not set Safe Mode boot flag. Run manually: bcdedit /set {current} safeboot minimal"
-        Write-Host "  Then restart to enter Safe Mode for Phase 2." -ForegroundColor Cyan
+    if (-not $phase2Transaction.Applied) {
+        Write-Err "$($phase2Transaction.Message)"
         return
     }
 

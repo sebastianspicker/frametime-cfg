@@ -1,29 +1,29 @@
 ﻿# ==============================================================================
-#  helpers/nvidia-profile.ps1  —  NVIDIA CS2 Profile Settings (DRS + Registry)
+#  helpers/nvidia-profile.ps1  -  NVIDIA CS2 Profile Settings (DRS + Registry)
 # ==============================================================================
 #
-#  Applies optimized NVIDIA driver settings for CS2 using TWO methods:
+#  Applies repository-defined NVIDIA driver settings for CS2 using two methods:
 #
 #  1. DRS Direct Write (preferred):
-#     Calls nvapi64.dll via helpers/nvidia-drs.ps1 to write all 52 DWORD
+#     Calls nvapi64.dll via helpers/nvidia-drs.ps1 to write 42 DWORD
 #     settings directly to the DRS binary database (nvdrs.dat).
-#     This is the same mechanism NVIDIA Profile Inspector uses.
+#     This uses the public NVIDIA DRS API family also used by profile tools.
 #
 #  2. Registry Fallback (if DRS unavailable):
-#     Writes 25 settings to HKLM registry keys. Only PerfLevelSrc=0x2222
-#     in the GPU class key is confirmed effective on modern drivers.
-#     Directs users to re-run with DRS or use NPI manually.
+#     Writes 25 settings to HKLM registry keys. These keys are not equivalent
+#     to per-application DRS values, and effective behavior is driver-dependent.
+#     Directs users to re-run with DRS or inspect the profile manually.
 #
-#  52 DWORD settings applied via DRS (derived from public NVIDIA DRS documentation,
-#  NvApiDriverSettings.h, community testing, and reverse engineering).
+#  42 DWORD settings applied via DRS (derived from public NVIDIA DRS documentation,
+#  NVIDIA Profile Inspector metadata, and community testing).
 #  3 settings intentionally excluded:
-#    -  1 string setting (269308407) — unknown effect
-#    -  1 hardware-specific (550564838) — GPU device ID
-#    -  1 net-negative (2966161525) — frame interpolation = latency
-#  Plus 1 registry-only (PerfLevelSrc) — applied via registry always
+#    -  1 string setting (269308407) - unknown effect
+#    -  1 hardware-specific (550564838) - GPU device ID
+#    -  1 net-negative (2966161525) - frame interpolation = latency
+#  Plus 1 registry-only (PerfLevelSrc) - applied via registry always
 #
 
-# ── Settings table: all 52 DWORD settings for DRS ───────────────────────────
+# ── Settings table: 42 DWORD settings for DRS ───────────────────────────────
 # Each entry: Id (NvU32 settingId), Value (NvU32), Name (display label)
 #
 # Settings derived from public NVIDIA DRS IDs, community testing (djdallmann,
@@ -60,13 +60,13 @@ $NV_DRS_SETTINGS = @(
     @{ Id=6600001;    Value=1;          Name="Preferred refresh rate: Highest" }
     @{ Id=277041152;  Value=0;          Name="FRL Low Latency: OFF" }
     @{ Id=277041154;  Value=0;          Name="Frame Rate Limiter (legacy): OFF" }
-    @{ Id=277041162;  Value=500;        Name="FRL NVCPL: 500 FPS cap (effectively unlimited for most monitors)" }
+    @{ Id=277041162;  Value=500;        Name="FRL NVCPL: 500 FPS repository default" }
 
     # ── VRR / G-SYNC (suite default; benchmark on VRR/Pulsar displays) ─────
     @{ Id=278196567;  Value=0;          Name="VRR global feature: OFF (suite default)" }
     @{ Id=278196727;  Value=0;          Name="VRR requested state: OFF (suite default)" }
     @{ Id=279476652;  Value=1;          Name="G-SYNC: FORCE_OFF (suite default)" }
-    # Removed: Id=279476686 (0x10A879CE) — not in NPI, likely inert; other 6 G-SYNC settings cover VRR
+    # Removed: Id=279476686 (0x10A879CE) - not in NPI, likely inert; other 6 G-SYNC settings cover VRR
     @{ Id=279476687;  Value=1;          Name="G-SYNC (2): FORCE_OFF (suite default)" }
     @{ Id=294973784;  Value=0;          Name="G-SYNC globally: OFF (suite default)" }
     @{ Id=5912412;    Value=2525368439; Name="VSync tear control: disabled" }
@@ -81,10 +81,9 @@ $NV_DRS_SETTINGS = @(
 
     # ── Resizable BAR ───────────────────────────────────────────────────────
     # NPI CustomSettingNames.xml: 0x000F00BA = "rBAR - Enable"
-    # Community benchmark heuristic: some CS2 benches reported better 1% lows with
-    # per-app rBAR disabled, but this is not a universal NVIDIA recommendation.
-    # Keep system-wide BIOS rBAR enabled unless your own benchmarks suggest otherwise.
-    @{ Id=983226;     Value=0;          Name="rBAR: Disabled for CS2 by suite default (community benchmark heuristic)" }
+    # The profile disables per-application rBAR for CS2 as a repository default.
+    # This repository includes no validated cross-system benchmark for the value.
+    @{ Id=983226;     Value=0;          Name="rBAR: Disabled for CS2 by repository default" }
     @{ Id=983227;     Value=0;          Name="rBAR - Options: Disabled (companion setting)" }
 
     # ── Shader Cache ─────────────────────────────────────────────────────────
@@ -93,41 +92,26 @@ $NV_DRS_SETTINGS = @(
     # ── SLI / AFR ────────────────────────────────────────────────────────────
     @{ Id=270198627;  Value=0;          Name="Smooth AFR: OFF" }
 
-    # ── CUDA P-State Lock ────────────────────────────────────────────────────
-    # Removed: Id=1074665807 (0x400E194F) — undocumented duplicate; NPI-recognized
+    # ── CUDA performance-limit state ────────────────────────────────────────
+    # Removed: Id=1074665807 (0x400E194F) - undocumented duplicate; NPI-recognized
     # Id=1343646814 (0x50166C5E) below handles the same CUDA P-state override.
 
-    # ── Decoded flags (source: CustomSettingNames.xml + NVIDIA 2022 leak DB) ─
-    @{ Id=390467;     Value=1;          Name="Ultra Low Latency - CPL State: On (Reflex prereq — CPL mode active; NVCP ULL-Enabled is a separate setting)" }
-    @{ Id=14566042;   Value=0;          Name="DXR_ENABLE: OFF (DirectX Raytracing disabled — CS2 doesn't use DXR)" }
-    @{ Id=274606621;  Value=4;          Name="ANSEL_FREESTYLE_MODE: APPROVED_ONLY (4; no active overhead)" }
-    @{ Id=549198379;  Value=0;          Name="VK_NV_RAYTRACING: DISABLE (Vulkan RT extension off — CS2 doesn't use VK RT)" }
-    @{ Id=1343646814; Value=0;          Name="CUDA_STABLE_PERF_LIMIT: FORCE_OFF (0; prevents CUDA P-state drop to P2)" }
-    @{ Id=2156231208; Value=1;          Name="GFE_MONITOR_USAGE: 1 (GFE telemetry state; no impact without GFE installed)" }
+    # ── Publicly identified flags (NVAPI/NVIDIA Profile Inspector metadata) ─
+    @{ Id=390467;     Value=1;          Name="Ultra Low Latency - CPL State: On (separate from NVCP ULL-Enabled)" }
+    @{ Id=14566042;   Value=0;          Name="DXR_ENABLE: OFF (repository profile value)" }
+    @{ Id=274606621;  Value=4;          Name="ANSEL_FREESTYLE_MODE: APPROVED_ONLY (4)" }
+    @{ Id=549198379;  Value=0;          Name="VK_NV_RAYTRACING: DISABLE (repository profile value)" }
+    @{ Id=1343646814; Value=0;          Name="CUDA_STABLE_PERF_LIMIT: FORCE_OFF (0; driver behavior must be observed)" }
+    @{ Id=2156231208; Value=1;          Name="GFE_MONITOR_USAGE: 1 (public NPI-named state)" }
 
-    # ── Partially decoded flags (inferred from position + NVIDIA leak DB) ────
-    @{ Id=3224887;    Value=4;          Name="PS_ASYNC_SHADER_SCHEDULER variant (0x313537; value=4; likely thread count)" }
-    @{ Id=11313945;   Value=1;          Name="PS_ pipeline/shader cache variant (0xACA319; value=1=enabled)" }
-    @{ Id=12623113;   Value=2;          Name="FORCE_GPUKERNEL_COP_ARCH variant (0xC09D09; GPU kernel arch override)" }
-    @{ Id=270883746;  Value=0;          Name="SHIM_RENDERING_OPTIONS companion flag (0x10255BA2; always 0)" }
-    @{ Id=270883750;  Value=469762050;  Name="SHIM_RENDERING_OPTIONS extended (0x10255BA6; 0x1C000002 = EHSHELL_DETECT|DISABLE_TURING_POWER_POLICY)" }
-    @{ Id=271076560;  Value=0;          Name="MCSXX/SLI flag (0x10284CD0; disabled; no-op on single-GPU)" }
-    @{ Id=539250342;  Value=1;          Name="VK_SLI_WAR or similar Vulkan workaround flag (0x20244EA6; 1=enabled)" }
-    @{ Id=544173595;  Value=60;         Name="VK_LOW_LATENCY family (0x206F6E1B; value=60; likely sleep/overlap target µs)" }
-
-    # ── Unknown post-2022 flags (driver-ignored on current releases) ──────────
-    # NPI verification: these IDs do not appear anywhere in the loaded profile —
-    # not in named sections, not in Unknown. Driver silently discards on import.
-    # DRS write is harmless; driver doesn't act on unrecognized IDs.
-    @{ Id=276387096;  Value=60;         Name="Unknown post-2022 flag (0x10795518; driver-ignored on current releases)" }
-    @{ Id=276387097;  Value=0;          Name="Unknown post-2022 flag (0x10795519; driver-ignored on current releases)" }
 )
-# TOTAL: 52 DWORD settings via DRS (was 51: added rBAR Options companion setting)
+# TOTAL: 42 DWORD settings via DRS. Ten leak-derived or unidentified entries
+# were removed from the public alpha default.
 
 # ── Excluded settings ──────────────────────────────────────────────────────
-# 2966161525 (0xB0CC0875) — Smooth Motion APIs = 1 → frame interpolation adds latency
-# 550564838  (0x20D0F3E6) — OpenGL GPU Affinity → hardcoded GPU-specific PCI device ID
-# 269308407  (0x100D51F7) — String setting "Buffers=(Depth)" → DRS string type, marginal
+# 2966161525 (0xB0CC0875) - Smooth Motion APIs = 1 → frame interpolation adds latency
+# 550564838  (0x20D0F3E6) - OpenGL GPU Affinity → hardcoded GPU-specific PCI device ID
+# 269308407  (0x100D51F7) - String setting "Buffers=(Depth)" → DRS string type, marginal
 # ─────────────────────────────────────────────────────────────────────────────
 
 function New-NvidiaProfileResult {
@@ -161,14 +145,14 @@ function New-NvidiaProfileResult {
 
 function Apply-NvidiaCS2Profile {
     <#
-    .SYNOPSIS  Applies optimized CS2 NVIDIA driver profile settings.
+    .SYNOPSIS  Applies the repository-defined CS2 NVIDIA profile settings.
     .DESCRIPTION
-        DRS-first: writes all 52 DWORD settings directly to the NVIDIA DRS
+        DRS-first: writes 42 DWORD settings directly to the NVIDIA DRS
         binary database via nvapi64.dll P/Invoke.  Falls back to registry
         writes if DRS is unavailable (AMD GPU, missing DLL, 32-bit PS).
 
-        Always applies PerfLevelSrc=0x2222 via registry (the one confirmed-
-        effective registry key on all driver versions).
+        Also writes two GPU hardware-class values. Their effective behavior is
+        driver-dependent and must be observed on the target system.
     #>
 
     Write-Step "Applying NVIDIA CS2 profile settings..."
@@ -177,14 +161,19 @@ function Apply-NvidiaCS2Profile {
     $classPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$CFG_GUID_Display"
 
     $nvKeyPath = $null
-    if (Test-Path $classPath) {
+    if ($SCRIPT:DryRun) {
+        # The simulated driver install has not created a hardware class key.
+        # Use a synthetic policy-valid value so both planners render their paths.
+        $nvKeyPath = "$classPath\0000"
+        Write-ConsoleLine "  [DRY-RUN] Would locate and validate the installed NVIDIA GPU class key." -ForegroundColor Magenta
+    } elseif (Test-Path $classPath) {
         $subkeys = Get-ChildItem $classPath -ErrorAction SilentlyContinue |
             Where-Object { $_.PSChildName -match "^\d{4}$" }
         foreach ($key in $subkeys) {
             $props = Get-ItemProperty $key.PSPath -ErrorAction SilentlyContinue
             if ($props.ProviderName -match "NVIDIA" -or $props.DriverDesc -match "NVIDIA") {
                 $nvKeyPath = $key.PSPath
-                Write-DebugLog "NVIDIA GPU key: $($key.PSChildName) — $($props.DriverDesc)"
+                Write-DebugLog "NVIDIA GPU key: $($key.PSChildName) - $($props.DriverDesc)"
                 break
             }
         }
@@ -201,14 +190,16 @@ function Apply-NvidiaCS2Profile {
 
     # ── FPS cap override for FRL setting ────────────────────────────────────
     $frlValue = 500
-    $frlLabel = "500 (effectively unlimited)"
+    $frlLabel = "500 (repository default)"
     if ((Get-Variable -Name fpsCap -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:fpsCap -gt 0) {
         $frlValue = $SCRIPT:fpsCap
         $frlLabel = "$($SCRIPT:fpsCap) (user FPS cap)"
     }
 
     # ── Try DRS direct write (preferred path) ──────────────────────────────
-    if (Initialize-NvApiDrs) {
+    if ($SCRIPT:DryRun) {
+        $drsResult = Apply-NvidiaCS2ProfileDrs -FrlValue $frlValue -FrlLabel $frlLabel
+    } elseif (Initialize-NvApiDrs) {
         $drsResult = Apply-NvidiaCS2ProfileDrs -FrlValue $frlValue -FrlLabel $frlLabel
     } else {
         $drsResult = $null
@@ -216,14 +207,14 @@ function Apply-NvidiaCS2Profile {
 
     # ── Fallback: registry-only (if DRS unavailable or failed) ──────────────
     if (-not $drsResult -or $drsResult.Status -eq "SessionFailed") {
-        Write-Warn "DRS direct write unavailable — falling back to registry method."
+        Write-Warn "DRS direct write unavailable - falling back to registry method."
         return Apply-NvidiaCS2ProfileRegistry -NvKeyPath $nvKeyPath -FrlValue $frlValue -FrlLabel $frlLabel
     }
 
-    if (-not $drsResult.CanCompleteStep) {
+    if (-not $drsResult.CanCompleteStep -and $drsResult.Status -ne "DryRun") {
         Write-Blank
         Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-        Write-ConsoleLine "  │  NVIDIA CS2 PROFILE — DRS NOT FULLY APPLIED                 │" -ForegroundColor Yellow
+        Write-ConsoleLine "  │  NVIDIA CS2 PROFILE - DRS NOT FULLY APPLIED                 │" -ForegroundColor Yellow
         Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
         Write-ConsoleLine "  │  Status: $($drsResult.Status)$((' ' * [math]::Max(0, 52 - $drsResult.Status.Length)))│" -ForegroundColor White
         Write-ConsoleLine "  │  DRS:    $($drsResult.DrsApplied)/$($drsResult.DrsTotal) applied, $($drsResult.DrsFailed) failed$((' ' * [math]::Max(0, 28 - "$($drsResult.DrsApplied)/$($drsResult.DrsTotal)".Length - "$($drsResult.DrsFailed)".Length)))│" -ForegroundColor White
@@ -233,23 +224,24 @@ function Apply-NvidiaCS2Profile {
         return $drsResult
     }
 
-    # ── GPU class registry keys: P-state locks ──────────────────────────────
-    # PerfLevelSrc: the ONE confirmed-effective registry key for P-state override.
-    # DisableDynamicPstate: complementary — djdallmann confirmed via nvidia-smi
-    # monitoring that this locks P0 at the driver level independently from NVCP.
-    # Both go in the GPU hardware class key, NOT d3d. Effective on all drivers.
+    # ── GPU class registry values ──────────────────────────────────────────
+    # These hardware-class values are separate from DRS. Their names and stored
+    # values do not prove an effective P-state; observe behavior on the target
+    # driver and workload.
     $registryResults = @(
-        Set-RegistryValue $nvKeyPath "PerfLevelSrc"       0x2222 "DWord" "P-state: Max Performance (GPU class key)" -PassThru
-        Set-RegistryValue $nvKeyPath "DisableDynamicPstate" 1    "DWord" "Lock P0 at driver level (complements PerfLevelSrc)" -PassThru
+        Set-RegistryValue $nvKeyPath "PerfLevelSrc"       0x2222 "DWord" "Repository GPU class power-state value" -PassThru
+        Set-RegistryValue $nvKeyPath "DisableDynamicPstate" 1    "DWord" "Repository dynamic P-state policy value" -PassThru
     )
     $registryApplied = @($registryResults | Where-Object { $_.Applied }).Count
     $registryFailed = @($registryResults | Where-Object { -not $_.Applied -and $_.Status -ne "DryRun" }).Count
-    $profileStatus = if ($registryFailed -eq 0) { "Success" } else { "Partial" }
+    $profileStatus = if ($SCRIPT:DryRun) { "DryRun" } elseif ($registryFailed -eq 0) { "Success" } else { "Partial" }
     $profileCanComplete = ($profileStatus -eq "Success")
-    $profileMessage = if ($profileCanComplete) {
-        "NVIDIA DRS profile and required registry locks applied."
+    $profileMessage = if ($SCRIPT:DryRun) {
+        "NVIDIA DRS profile and supplemental registry writes previewed."
+    } elseif ($profileCanComplete) {
+        "NVIDIA DRS profile and supplemental registry writes applied."
     } else {
-        "NVIDIA DRS profile applied, but $registryFailed required registry lock(s) failed."
+        "NVIDIA DRS profile applied, but $registryFailed supplemental registry write(s) failed."
     }
 
     # ── DRS Success Summary ─────────────────────────────────────────────────
@@ -261,7 +253,7 @@ function Apply-NvidiaCS2Profile {
     $drsLabel = if ($errorCount -eq 0) { "$appliedCount DRS" } else { "$appliedCount/$settingCount DRS ($errorCount failed)" }
     $registryLabel = if ($registryFailed -eq 0) { "2 registry" } else { "$registryApplied/2 registry ($registryFailed failed)" }
     Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor $statusColor
-    $contentStr = "  NVIDIA CS2 PROFILE — $drsLabel + $registryLabel"
+    $contentStr = "  NVIDIA CS2 PROFILE - $drsLabel + $registryLabel"
     $padLen = [math]::Max(1, 64 - $contentStr.Length)
     Write-ConsoleLine "  │$contentStr$((' ' * $padLen))│" -ForegroundColor $statusColor
     Write-ConsoleLine "  │                                                              │" -ForegroundColor Green
@@ -301,7 +293,7 @@ function Apply-NvidiaCS2Profile {
 
 function Apply-NvidiaCS2ProfileDrs {
     <#
-    .SYNOPSIS  Writes all 52 DWORD settings to DRS via nvapi64.dll.
+    .SYNOPSIS  Writes 42 DWORD settings to DRS via nvapi64.dll.
     .DESCRIPTION
         Finds (or creates) the CS2 profile, backs up current values,
         writes all settings, and saves the DRS database.
@@ -319,12 +311,12 @@ function Apply-NvidiaCS2ProfileDrs {
     $SCRIPT:_drsErrors  = 0
     $SCRIPT:_drsBackupFailed = $false
 
-    # Validate FRL value — prevent nonsensical caps from corrupting the DRS profile
+    # Validate FRL value - prevent nonsensical caps from corrupting the DRS profile
     if ($FrlValue -le 0 -or $FrlValue -gt 1000) { $FrlValue = 500 }
 
     # ── DRY-RUN: print what WOULD be applied, skip Invoke-DrsSession entirely ──
     # The entire Invoke-DrsSession call creates a real DRS session that executes
-    # CreateProfile/AddApplication — mutating the DRS database even in DRY-RUN.
+    # CreateProfile/AddApplication - mutating the DRS database even in DRY-RUN.
     # Only the registry fallback path (PerfLevelSrc, DisableDynamicPstate) goes
     # through Set-RegistryValue which handles DRY-RUN itself.
     if ($SCRIPT:DryRun) {
@@ -363,7 +355,7 @@ function Apply-NvidiaCS2ProfileDrs {
             $drsProfile = [NvApiDrs]::FindApplicationProfile($session, "cs2.exe")
 
             if ($drsProfile -ne [IntPtr]::Zero) {
-                # cs2.exe found in a profile — check if it's the Base Profile.
+                # cs2.exe found in a profile - check if it's the Base Profile.
                 # The Base Profile (aka "Global" / "_GLOBAL_DRIVER_PROFILE") is the
                 # default catch-all profile for all applications. Writing CS2-specific
                 # settings to it would affect EVERY application, not just CS2.
@@ -374,27 +366,27 @@ function Apply-NvidiaCS2ProfileDrs {
                     Write-DebugLog "DRS: Base profile lookup failed: $($_.Exception.Message)"
                 }
                 if ($baseProfile -ne [IntPtr]::Zero -and $drsProfile -eq $baseProfile) {
-                    # cs2.exe is in the Base Profile — create a dedicated profile and move it
-                    Write-DebugLog "DRS: cs2.exe found in Base Profile — creating dedicated CS2 profile"
+                    # cs2.exe is in the Base Profile - create a dedicated profile and move it
+                    Write-DebugLog "DRS: cs2.exe found in Base Profile - creating dedicated CS2 profile"
                     $profileName = "Counter-strike 2"
                     $drsProfile = [NvApiDrs]::CreateProfile($session, $profileName)
                     $profileCreated = $true
                     # Bind applications to the new dedicated profile (AddApplication
-                    # with -179 on Base Profile is expected — the exe will be re-bound)
+                    # with -179 on Base Profile is expected - the exe will be re-bound)
                     try { [NvApiDrs]::AddApplication($session, $drsProfile, "cs2.exe") } catch {
-                        Write-Warn "DRS: AddApplication cs2.exe to dedicated profile — $_"
+                        Write-Warn "DRS: AddApplication cs2.exe to dedicated profile - $_"
                     }
                     try { [NvApiDrs]::AddApplication($session, $drsProfile, "csgos2.exe") } catch {
-                        Write-Warn "DRS: AddApplication csgos2.exe to dedicated profile — $_"
+                        Write-Warn "DRS: AddApplication csgos2.exe to dedicated profile - $_"
                     }
                 } else {
-                    # cs2.exe is in a non-Base profile — use that profile directly
-                    # (regardless of its name — it's the profile the driver reads for cs2.exe)
+                    # cs2.exe is in a non-Base profile - use that profile directly
+                    # (regardless of its name - it's the profile the driver reads for cs2.exe)
                     $profileName = "(cs2.exe profile)"
                     Write-DebugLog "DRS: cs2.exe found in dedicated profile (handle $drsProfile)"
                 }
             } else {
-                # cs2.exe not in any profile — search by known names
+                # cs2.exe not in any profile - search by known names
                 foreach ($name in @("Counter-strike 2", "Counter-Strike 2")) {
                     $drsProfile = [NvApiDrs]::FindProfileByName($session, $name)
                     if ($drsProfile -ne [IntPtr]::Zero) {
@@ -404,30 +396,29 @@ function Apply-NvidiaCS2ProfileDrs {
                 }
 
                 if ($drsProfile -eq [IntPtr]::Zero) {
-                    # No existing profile — create one
+                    # No existing profile - create one
                     $profileName = "Counter-strike 2"
                     $drsProfile = [NvApiDrs]::CreateProfile($session, $profileName)
                     $profileCreated = $true
                     Write-DebugLog "DRS: Created profile '$profileName'"
                 }
 
-                # Bind applications — only needed for newly created profiles.
+                # Bind applications - only needed for newly created profiles.
                 # Predefined/existing profiles already have cs2.exe pre-bound
                 # in NVIDIA's shipped DRS database (nvdrs.dat).
                 if ($profileCreated) {
                     try { [NvApiDrs]::AddApplication($session, $drsProfile, "cs2.exe") } catch {
-                        Write-Warn "DRS: AddApplication cs2.exe — $_"
+                        Write-Warn "DRS: AddApplication cs2.exe - $_"
                     }
                     try { [NvApiDrs]::AddApplication($session, $drsProfile, "csgos2.exe") } catch {
-                        Write-Warn "DRS: AddApplication csgos2.exe — $_"
+                        Write-Warn "DRS: AddApplication csgos2.exe - $_"
                     }
                 } else {
-                    Write-DebugLog "DRS: Profile '$profileName' found — cs2.exe pre-bound by NVIDIA, skipping AddApplication"
+                    Write-DebugLog "DRS: Profile '$profileName' found - cs2.exe pre-bound by NVIDIA, skipping AddApplication"
                 }
             }
 
             # ── Backup current DRS values ───────────────────────────────────
-            # Backup failure must not abort the settings write — wrap separately
             $effectiveTitle = if ((Get-Variable -Name CurrentStepTitle -Scope Script -ErrorAction SilentlyContinue) -and $SCRIPT:CurrentStepTitle) { $SCRIPT:CurrentStepTitle } else { "NVIDIA CS2 DRS Profile" }
             try {
                 Backup-DrsSettings -Session $session -DrsProfile $drsProfile `
@@ -435,9 +426,17 @@ function Apply-NvidiaCS2ProfileDrs {
                     -StepTitle $effectiveTitle `
                     -ProfileName $(if ($profileName) { $profileName } elseif ((Get-Variable -Name DRS_FOUND_VIA_APP -Scope Script -ErrorAction SilentlyContinue)) { $SCRIPT:DRS_FOUND_VIA_APP } else { "(found via cs2.exe)" }) `
                     -ProfileCreated $profileCreated
+                Flush-BackupBuffer
+                $durableBackup = Get-BackupDataRaw
+                $durableCapture = @($durableBackup.entries | Where-Object {
+                    $_.type -eq 'drs' -and $_.step -eq $effectiveTitle
+                }).Count -gt 0
+                if (-not $durableCapture) {
+                    throw "backup.json does not contain the expected DRS restore record."
+                }
             } catch {
-                Write-Warn "DRS backup failed (settings will still be applied): $_"
                 $SCRIPT:_drsBackupFailed = $true
+                throw "DRS settings were not applied because their restore record could not be persisted: $_"
             }
 
             # ── Apply settings ──────────────────────────────────────────────
@@ -522,28 +521,28 @@ function Apply-NvidiaCS2ProfileRegistry {
     <#
     .SYNOPSIS  Registry-only fallback for NVIDIA settings.
     .DESCRIPTION
-        Applies 25 settings via registry. Only PerfLevelSrc=0x2222 is
-        confirmed effective on modern drivers. Included for systems where
-        nvapi64.dll is unavailable (AMD GPU, 32-bit PS, old driver).
+        Applies 25 settings via registry when DRS is unavailable. These values
+        are not equivalent to a per-application DRS profile, and their effective
+        behavior must be observed on the target NVIDIA driver.
     #>
     param(
         [string]$NvKeyPath,
         [int]$FrlValue = 500,
-        [string]$FrlLabel = "500 (effectively unlimited)"
+        [string]$FrlLabel = "500 (repository default)"
     )
 
     $d3dPath = "HKLM:\SOFTWARE\NVIDIA Corporation\Global\d3d"
     $nvGlobalPath = "HKLM:\SOFTWARE\NVIDIA Corporation\Global\NVTweak"
 
-    # Table-driven registry settings. Only PerfLevelSrc (GPU class key) is confirmed
-    # effective on modern drivers. d3d keys are best-effort fallback.
+    # Table-driven registry settings. The d3d values are a limited fallback and
+    # can be ignored by current drivers.
     $regSettings = @(
-        # GPU class key — confirmed effective
-        @{ Path=$NvKeyPath;    Name="PerfLevelSrc";                  Value=0x2222; Why="Power Management: Max Performance" }
-        @{ Path=$NvKeyPath;    Name="DisableDynamicPstate";          Value=1;      Why="Lock P0 at driver level (complements PerfLevelSrc)" }
+        # GPU class values. Stored state does not prove the effective P-state.
+        @{ Path=$NvKeyPath;    Name="PerfLevelSrc";                  Value=0x2222; Why="Repository GPU class power-state value" }
+        @{ Path=$NvKeyPath;    Name="DisableDynamicPstate";          Value=1;      Why="Repository dynamic P-state policy value" }
         # NVTweak
         @{ Path=$nvGlobalPath; Name="Gestalt";                       Value=1;      Why="Shader cache control enabled" }
-        # d3d keys — may be ignored by modern drivers
+        # d3d keys - may be ignored by modern drivers
         @{ Path=$d3dPath;      Name="OGL_THREAD_CONTROL_DEFAULT";    Value=1;      Why="Threaded Optimization: ON" }
         @{ Path=$d3dPath;      Name="OGL_QUALITY_ENHANCEMENTS_DEFAULT"; Value=0;   Why="Triple Buffering: OFF" }
         @{ Path=$d3dPath;      Name="OGL_QUALITY_ENHANCEMENTS";      Value=3;      Why="Texture Filtering: High Performance" }
@@ -558,10 +557,10 @@ function Apply-NvidiaCS2ProfileRegistry {
         @{ Path=$d3dPath;      Name="PS_TEXFILTER_LOD_BIAS";         Value=0;      Why="Driver Controlled LOD Bias: OFF" }
         @{ Path=$d3dPath;      Name="ANISO_SETTING";                 Value=1;      Why="Anisotropic Filtering: Application Controlled" }
         @{ Path=$d3dPath;      Name="ANISO_MODE_SELECTOR";           Value=0;      Why="Anisotropic Mode: Application Controlled" }
-        @{ Path=$d3dPath;      Name="MAX_PRERENDERED_FRAMES";        Value=1;      Why="Max Pre-rendered Frames: 1 (less input lag)" }
+        @{ Path=$d3dPath;      Name="MAX_PRERENDERED_FRAMES";        Value=1;      Why="Max Pre-rendered Frames: 1 (requested fallback value)" }
         @{ Path=$d3dPath;      Name="VSYNC_MODE";                    Value=0;      Why="VSync: Force OFF" }
         @{ Path=$d3dPath;      Name="PRERENDERLIMIT_OPTION";         Value=1;      Why="Preferred Refresh Rate: Highest" }
-        @{ Path=$d3dPath;      Name="ANSEL_ENABLE";                  Value=0;      Why="Ansel: OFF (saves overhead)" }
+        @{ Path=$d3dPath;      Name="ANSEL_ENABLE";                  Value=0;      Why="Ansel: OFF (requested fallback value)" }
         @{ Path=$d3dPath;      Name="FRL_VALUE";                     Value=$FrlValue; Why="Frame Rate Limiter: $FrlLabel" }
         @{ Path=$d3dPath;      Name="FRL_LOW_LATENCY";               Value=0;      Why="FRL Low Latency: OFF" }
         @{ Path=$d3dPath;      Name="PS_FRAMERATE_LIMITER";          Value=0;      Why="Frame Rate Limiter (legacy): OFF" }
@@ -585,13 +584,13 @@ function Apply-NvidiaCS2ProfileRegistry {
     # ── Fallback Summary ────────────────────────────────────────────────────
     Write-Blank
     Write-ConsoleLine "  ┌──────────────────────────────────────────────────────────────┐" -ForegroundColor Yellow
-    Write-ConsoleLine "  │  NVIDIA CS2 PROFILE — $appliedCount settings via REGISTRY (fallback)$((' ' * (6 - "$appliedCount".Length)))│" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  NVIDIA CS2 PROFILE - $appliedCount settings via REGISTRY (fallback)$((' ' * (6 - "$appliedCount".Length)))│" -ForegroundColor Yellow
     Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
     Write-ConsoleLine "  │  ⚠  DRS direct write was unavailable.                       │" -ForegroundColor Yellow
-    Write-ConsoleLine "  │  Only PerfLevelSrc (GPU class key) is confirmed effective   │" -ForegroundColor Yellow
-    Write-ConsoleLine "  │  on modern drivers. Registry d3d keys may be ignored.       │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  These values are not equivalent to an application DRS     │" -ForegroundColor Yellow
+    Write-ConsoleLine "  │  profile. Current drivers may ignore registry d3d keys.     │" -ForegroundColor Yellow
     Write-ConsoleLine "  │                                                              │" -ForegroundColor Yellow
-    Write-ConsoleLine "  │  FOR FULL DRS COVERAGE:                                      │" -ForegroundColor White
+    Write-ConsoleLine "  │  FOR THE PER-APPLICATION DRS PATH:                          │" -ForegroundColor White
     Write-ConsoleLine "  │  Re-run after installing NVIDIA driver with nvapi64.dll    │" -ForegroundColor White
     Write-ConsoleLine "  │  or use NVIDIA Profile Inspector to set manually.          │" -ForegroundColor DarkGray
     Write-ConsoleLine "  │  NPI: github.com/Orbmu2k/nvidiaProfileInspector            │" -ForegroundColor DarkGray

@@ -1,41 +1,46 @@
-# Required GitHub Repository Settings
+# GitHub repository settings checklist
 
-These settings cannot be enforced via code — they must be configured manually in the GitHub web UI under **Settings**.
+These settings are not enforced by repository files and were not verified
+against the remote repository during alpha preparation. A repository
+administrator should review each item before publication.
 
-## Branch Protection Rules (Settings > Branches)
+## Main branch protection
 
-Create a rule for the `main` branch:
+- [ ] Require a pull request before merging.
+- [ ] Require at least one approval.
+- [ ] Dismiss stale approvals after new commits.
+- [ ] Require review from Code Owners where appropriate.
+- [ ] Require the applicable checks from `lint.yml` and `security.yml`.
+- [ ] Require conversation resolution.
+- [ ] Restrict bypass permissions to the intended maintainers.
+- [ ] Decide whether signed commits are required.
 
-- [x] **Require a pull request before merging**
-  - [x] Require approvals: 1
-  - [x] Dismiss stale pull request approvals when new commits are pushed
-  - [x] Require review from Code Owners
-- [x] **Require status checks to pass before merging**
-  - Required checks: `PSScriptAnalyzer`, `Verify syntax (parse check)`, `Windows PowerShell 5.1 compatibility`, `Pester tests`, `Pester tests (macOS)`, `EstimateKey cross-reference`, `E2E process smoke`, `Entry point smoke tests`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`
-- [x] **Require conversation resolution before merging**
-- [x] **Do not allow bypassing the above settings** (even for admins)
-- [ ] Require signed commits *(optional — adds trust but complicates workflow)*
+Required checks: `PSScriptAnalyzer`, `Verify syntax (parse check)`, `Windows PowerShell 5.1 compatibility`, `Pester tests`, `Pester tests (macOS)`, `EstimateKey cross-reference`, `E2E process smoke`, `Entry point smoke tests`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`.
 
-## Actions Permissions (Settings > Actions > General)
+Do not copy check names from this document without comparing them with the
+current workflow job names in `.github/workflows/`.
 
-- **Fork pull request workflows**: Require approval for first-time contributors
-- **Workflow permissions**: Read repository contents (default)
-- **Allow GitHub Actions to create and approve pull requests**: Disabled
+## Actions permissions
 
-## Secret Scanning (Settings > Code security and analysis)
+- [ ] Require approval for workflows from first-time external contributors.
+- [ ] Set the default workflow token to read-only repository contents.
+- [ ] Keep permission for Actions to create or approve pull requests disabled
+  unless a reviewed workflow requires it.
 
-- [x] **Secret scanning**: Enabled
-- [x] **Push protection**: Enabled *(blocks pushes containing detected secrets)*
-- [x] **Dependabot alerts**: Enabled *(not critical for this repo but good practice)*
+## Security features
 
-## Dependabot (automatic)
+- [ ] Enable private vulnerability reporting.
+- [ ] Enable secret scanning if available for the repository visibility and
+  account plan.
+- [ ] Enable push protection if available.
+- [ ] Enable Dependabot alerts.
+- [ ] Review weekly GitHub Actions updates configured in
+  `.github/dependabot.yml` before merging them.
 
-Configured in `.github/dependabot.yml`:
-- **GitHub Actions**: Weekly checks for pinned SHA updates (security patches)
-- Grouped into single PRs to reduce noise
-- Maintainers should still review action release notes before merging updates
+## Access
 
-## Collaborator Permissions
-
-- Limit **Write** access to trusted maintainers only
-- External contributors should submit PRs from forks (read-only CI by default)
+- [ ] Limit write and administration access to current maintainers.
+- [ ] Review deploy keys, GitHub Apps, webhooks, environments, and repository
+  secrets before making the repository public.
+- [ ] Confirm that external pull requests receive only the permissions required
+  by the checked-in workflows.

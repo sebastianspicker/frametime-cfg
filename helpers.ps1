@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
-#  helpers.ps1  —  Backward-compatible loader (dot-sources all helper modules)
+#  helpers.ps1  -  Backward-compatible loader (dot-sources all helper modules)
 # ==============================================================================
-#  SECURITY: This file and all helpers/*.ps1 are dot-sourced — same trust boundary
+#  SECURITY: This file and all helpers/*.ps1 are dot-sourced - same trust boundary
 #  as config.env.ps1. See config.env.ps1 header for dot-sourcing security analysis.
 
 # Ensure strict mode is active even when loaded in a runspace pool (GUI async)
@@ -32,7 +32,7 @@ $helpersRoot = if ($PSScriptRoot) { "$PSScriptRoot\helpers" }
 . "$helpersRoot\benchmark-history.ps1"
 . "$helpersRoot\power-plan.ps1"
 . "$helpersRoot\process-priority.ps1"
-# ── GUI-only modules (loaded separately by CS2-Optimize-GUI.ps1) ──────────
-# gui-panels.ps1      — WPF panel builders and event handlers
-# step-catalog.ps1    — Step metadata table for Optimize panel display
-# system-analysis.ps1 — Non-destructive health checks for Analyze panel
+# ── GUI-only modules (loaded separately by frametime-gui.ps1) ──────────
+# gui-panels.ps1      - WPF panel builders and event handlers
+# step-catalog.ps1    - Step metadata table for Optimize panel display
+# system-analysis.ps1 - Non-destructive health checks for Analyze panel

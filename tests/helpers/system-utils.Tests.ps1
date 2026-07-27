@@ -56,17 +56,26 @@ Describe "Save-JsonAtomic" {
         # Pre-create target file to verify it survives a failed write
         @{ original = "preserved" } | ConvertTo-Json | Set-Content $path -Encoding UTF8
 
-        # Mock Move-Item to simulate failure after .tmp is written
-        Mock Move-Item { throw "Simulated disk full" }
+        # Inject a commit failure after the temp file is durably written.
+        Mock Invoke-AtomicJsonFileCommit { throw "Simulated disk full" }
 
         { Save-JsonAtomic -Data @{ x = 1 } -Path $path } | Should -Throw "*Save-JsonAtomic*"
 
         # .tmp file should be cleaned up
         Test-Path $tmpPath | Should -Be $false
-        # Original file should be preserved (atomic guarantee — no partial write)
+        # Original file should be preserved (atomic guarantee - no partial write)
         Test-Path $path | Should -Be $true
         $preserved = Get-Content $path -Raw | ConvertFrom-Json
         $preserved.original | Should -Be "preserved"
+    }
+
+    It "uses atomic filesystem replacement rather than provider force-move" {
+        $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot "../../helpers/system-utils.ps1") -Raw
+
+        $source | Should -Match '\[IO\.File\]::Replace\(\$TemporaryPath, \$DestinationPath, \$replacementBackup\)'
+        $source | Should -Match '\[IO\.File\]::Move\(\$TemporaryPath, \$DestinationPath, \$true\)'
+        $source | Should -Match '\[IO\.File\]::Move\(\$TemporaryPath, \$DestinationPath\)'
+        $source | Should -Not -Match 'Move-Item \$tmp \$Path -Force'
     }
 
     It "preserves nested objects with default depth" {
@@ -99,6 +108,35 @@ Describe "Save-JsonAtomic" {
     }
 }
 
+Describe "v3 legacy phase handoff guard" {
+
+    BeforeEach { Reset-TestState }
+
+    It "does nothing when no v2.3 handoff is armed" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-Path { $false }
+
+        { Assert-NoLegacyPhaseHandoff } | Should -Not -Throw
+    }
+
+    It "fails closed when the v2.3 Safe Mode handoff is armed" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-Path { $true }
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{ '*CS2_Phase2' = 'powershell.exe -File C:\CS2_OPTIMIZE\SafeMode-DriverClean.ps1' }
+        }
+
+        { Assert-NoLegacyPhaseHandoff } | Should -Throw '*v2.3 phase handoff is still armed*'
+    }
+
+    It "fails closed when legacy registry state cannot be verified" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-Path { throw "registry unavailable" }
+
+        { Assert-NoLegacyPhaseHandoff } | Should -Throw '*Could not verify whether legacy phase handoff*'
+    }
+}
+
 # ── Set-RegistryValue DRY-RUN ────────────────────────────────────────────────
 Describe "Set-RegistryValue DRY-RUN" {
 
@@ -109,7 +147,18 @@ Describe "Set-RegistryValue DRY-RUN" {
         # Mock all functions that Set-RegistryValue might call
         Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
-        Mock Backup-RegistryValue {}
+        Mock Backup-RegistryValue {
+            [PSCustomObject]@{ Captured = $true; Entry = [PSCustomObject]@{}; Message = "captured" }
+        }
+        Mock Flush-BackupBuffer {}
+        Mock Get-BackupDataRaw {
+            [PSCustomObject]@{
+                entries = @([PSCustomObject]@{
+                    type = "registry"; step = $SCRIPT:CurrentStepTitle
+                    path = "HKLM:\SOFTWARE\Test"; name = "TestValue"
+                })
+            }
+        }
     }
 
     It "does not write to registry in DRY-RUN mode" {
@@ -131,14 +180,10 @@ Describe "Set-RegistryValue DRY-RUN" {
         }
     }
 
-    It "still delegates to Backup-RegistryValue in DRY-RUN mode so the helper can self-guard" {
+    It "does not enqueue a registry backup in DRY-RUN mode" {
         Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason"
 
-        Should -Invoke Backup-RegistryValue -Exactly 1 -ParameterFilter {
-            $Path -eq "HKLM:\SOFTWARE\Test" -and
-            $Name -eq "TestValue" -and
-            $StepTitle -eq "Test Step"
-        }
+        Should -Invoke Backup-RegistryValue -Exactly 0
     }
 }
 
@@ -172,13 +217,10 @@ Describe "Set-BootConfig DRY-RUN" {
         }
     }
 
-    It "still delegates to Backup-BootConfig in DRY-RUN mode so the helper can self-guard" {
+    It "does not enqueue a boot backup in DRY-RUN mode" {
         Set-BootConfig "disabledynamictick" "yes" "Test"
 
-        Should -Invoke Backup-BootConfig -Exactly 1 -ParameterFilter {
-            $Key -eq "disabledynamictick" -and
-            $StepTitle -eq "Test Step"
-        }
+        Should -Invoke Backup-BootConfig -Exactly 0
     }
 }
 
@@ -195,8 +237,26 @@ Describe "Write helper result contracts" {
         Mock Write-Err {}
         Mock Write-Step {}
         Mock Write-DebugLog {}
-        Mock Backup-RegistryValue {}
-        Mock Backup-BootConfig {}
+        Mock Backup-RegistryValue {
+            [PSCustomObject]@{ Captured = $true; Entry = [PSCustomObject]@{}; Message = "captured" }
+        }
+        Mock Backup-BootConfig {
+            [PSCustomObject]@{ Captured = $true; Entry = [PSCustomObject]@{}; Message = "captured" }
+        }
+        Mock Flush-BackupBuffer {}
+        Mock Get-BackupDataRaw {
+            [PSCustomObject]@{
+                entries = @(
+                    [PSCustomObject]@{
+                        type = "registry"; step = $SCRIPT:CurrentStepTitle
+                        path = "HKLM:\SOFTWARE\Test"; name = "TestValue"
+                    }
+                    [PSCustomObject]@{
+                        type = "bootconfig"; step = $SCRIPT:CurrentStepTitle; key = "disabledynamictick"
+                    }
+                )
+            }
+        }
         Mock Ensure-SecureWorkDir {}
         Mock Set-SecureAcl {}
         Mock New-Item {}
@@ -224,6 +284,31 @@ Describe "Write helper result contracts" {
         $result.Message | Should -Match "Registry write failed"
     }
 
+    It "Set-RegistryValue blocks the write when backup capture fails" {
+        Mock Backup-RegistryValue {
+            [PSCustomObject]@{ Captured = $false; Entry = $null; Message = "registry read denied" }
+        }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Message | Should -Match "original value was not captured"
+        Should -Invoke Flush-BackupBuffer -Exactly 0
+        Should -Invoke Set-ItemProperty -Exactly 0
+    }
+
+    It "Set-RegistryValue blocks the write when backup persistence fails" {
+        Mock Flush-BackupBuffer { throw "disk full" }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RegistryValue "HKLM:\SOFTWARE\Test" "TestValue" 1 "DWord" "Test reason" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Message | Should -Match "restore record was not persisted"
+        Should -Invoke Set-ItemProperty -Exactly 0
+    }
+
     It "Set-RegistryValue returns dry-run status without applying writes" {
         $SCRIPT:DryRun = $true
         Mock Test-Path { $true }
@@ -247,6 +332,7 @@ Describe "Write helper result contracts" {
         $result.Applied | Should -Be $false
         Should -Invoke Set-ItemProperty -Exactly 0
         Should -Invoke New-Item -Exactly 0
+        Should -Invoke Backup-RegistryValue -Exactly 0
     }
 
     It "Set-RegistryValue keeps default no-output behavior for existing callers" {
@@ -259,25 +345,38 @@ Describe "Write helper result contracts" {
     }
 
     It "Set-RunOnce returns success status with -PassThru after registration" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "Success"
         $result.Applied | Should -Be $true
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
             $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
-            $Name -eq "CS2_OPTIMIZE_CS2_Phase3" -and
+            $Name -eq "FRAMETIME_CFG_FRAMETIME_Phase3" -and
             $Value -match "-Verb RunAs" -and $Value -match "-Wait"
         }
     }
 
+    It "Set-RunOnce accepts an immutable runtime generation target" {
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq $generationPath }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce "FRAMETIME_Phase2" $generationPath -SafeMode -PassThru
+
+        $result.Status | Should -Be "Success"
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Name -eq "*!FRAMETIME_Phase2" -and $Value -match [regex]::Escape($generationPath)
+        }
+    }
+
     It "Set-RunOnce returns failed status with -PassThru when registration throws" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-ItemProperty { throw "access denied" }
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "Failed"
         $result.Applied | Should -Be $false
@@ -288,7 +387,7 @@ Describe "Write helper result contracts" {
         $SCRIPT:DryRun = $true
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "DryRun"
         $result.Applied | Should -Be $false
@@ -296,31 +395,33 @@ Describe "Write helper result contracts" {
     }
 
     It "Set-RunOnce returns skipped status under WhatIf without registration" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru -WhatIf
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru -WhatIf
 
         $result.Status | Should -Be "Skipped"
         $result.Applied | Should -Be $false
         Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Set-SecureAcl -Exactly 0
     }
 
     It "Set-RunOnce keeps default no-output behavior for existing callers" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         $result | Should -BeNullOrEmpty
     }
 
     It "leaves a registered normal-mode handoff pending until explicit cleanup" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-ItemProperty {}
         Mock Remove-ItemProperty {}
 
-        $result = Set-RunOnce "CS2_Phase3" "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
 
         $result.Applied | Should -Be $true
         Should -Invoke Set-ItemProperty -Exactly 1
@@ -328,14 +429,262 @@ Describe "Write helper result contracts" {
     }
 
     It "removes the durable handoff only when completion requests cleanup" {
+        $script:HandoffPresent = $true
+        Mock Test-Path { $true } -ParameterFilter {
+            $LiteralPath -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        }
+        Mock Get-ItemProperty {
+            $properties = [PSCustomObject]@{}
+            if ($script:HandoffPresent) {
+                $properties | Add-Member -NotePropertyName "FRAMETIME_CFG_FRAMETIME_Phase3" -NotePropertyValue "command"
+            }
+            $properties
+        }
+        Mock Remove-ItemProperty { $script:HandoffPresent = $false }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3"
+
+        $result | Should -BeNullOrEmpty
+        Should -Invoke Remove-ItemProperty -Exactly 1 -ParameterFilter {
+            $LiteralPath -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
+            $Name -eq "FRAMETIME_CFG_FRAMETIME_Phase3"
+        }
+    }
+
+    It "returns success without deletion when the handoff registry key is already absent" {
+        Mock Test-Path { $false } -ParameterFilter {
+            $LiteralPath -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        }
+        Mock Get-ItemProperty { throw "must not query an absent key" }
+        Mock Remove-ItemProperty { throw "must not delete an absent handoff" }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3" -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+        $result.Message | Should -Match "already absent"
+        Should -Invoke Get-ItemProperty -Exactly 0
+        Should -Invoke Remove-ItemProperty -Exactly 0
+    }
+
+    It "returns success without deletion when the handoff value is already absent" {
+        Mock Test-Path { $true } -ParameterFilter {
+            $LiteralPath -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+        }
+        Mock Get-ItemProperty { [PSCustomObject]@{ UnrelatedValue = "command" } }
+        Mock Remove-ItemProperty { throw "must not delete an absent handoff" }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3" -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+        $result.Message | Should -Match "already absent"
+        Should -Invoke Get-ItemProperty -Exactly 1
+        Should -Invoke Remove-ItemProperty -Exactly 0
+    }
+
+    It "removes a Safe Mode handoff and verifies the value is absent afterward" {
+        $script:HandoffPresent = $true
+        Mock Test-Path { $true } -ParameterFilter {
+            $LiteralPath -eq "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
+        }
+        Mock Get-ItemProperty {
+            $properties = [PSCustomObject]@{}
+            if ($script:HandoffPresent) {
+                $properties | Add-Member -NotePropertyName "*!FRAMETIME_Phase2" -NotePropertyValue "command"
+            }
+            $properties
+        }
+        Mock Remove-ItemProperty { $script:HandoffPresent = $false }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase2" -SafeMode -PassThru
+
+        $result.Status | Should -Be "Success"
+        $result.Applied | Should -Be $true
+        $result.Message | Should -Match "verified absent"
+        Should -Invoke Get-ItemProperty -Exactly 2
+        Should -Invoke Remove-ItemProperty -Exactly 1 -ParameterFilter {
+            $LiteralPath -eq "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -and
+            $Name -eq "*!FRAMETIME_Phase2" -and $ErrorAction -eq "Stop"
+        }
+    }
+
+    It "reports a registry query failure instead of treating it as absence" {
+        Mock Test-Path { throw "registry provider unavailable" }
+        Mock Get-ItemProperty { throw "must not query after key query failure" }
+        Mock Remove-ItemProperty { throw "must not delete after query failure" }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "registry provider unavailable"
+        Should -Invoke Get-ItemProperty -Exactly 0
+        Should -Invoke Remove-ItemProperty -Exactly 0
+    }
+
+    It "reports a handoff value query failure instead of treating it as absence" {
+        Mock Test-Path { $true }
+        Mock Get-ItemProperty { throw "registry value query denied" }
+        Mock Remove-ItemProperty { throw "must not delete after value query failure" }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "registry value query denied"
+        Should -Invoke Get-ItemProperty -Exactly 1
+        Should -Invoke Remove-ItemProperty -Exactly 0
+    }
+
+    It "reports a Safe Mode handoff removal failure instead of suppressing it" {
+        Mock Test-Path { $true }
+        Mock Get-ItemProperty {
+            $properties = [PSCustomObject]@{}
+            $properties | Add-Member -NotePropertyName "*!FRAMETIME_Phase2" -NotePropertyValue "command"
+            $properties
+        }
+        Mock Remove-ItemProperty { throw "access denied" }
+
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase2" -SafeMode -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "Failed to remove phase handoff"
+    }
+
+    It "reports failure when the handoff remains present after deletion" {
+        Mock Test-Path { $true }
+        Mock Get-ItemProperty {
+            [PSCustomObject]@{ FRAMETIME_CFG_FRAMETIME_Phase3 = "command" }
+        }
         Mock Remove-ItemProperty {}
 
-        Remove-PhaseHandoff -Name "CS2_Phase3"
+        $result = Remove-PhaseHandoff -Name "FRAMETIME_Phase3" -PassThru
 
-        Should -Invoke Remove-ItemProperty -Exactly 1 -ParameterFilter {
-            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
-            $Name -eq "CS2_OPTIMIZE_CS2_Phase3"
-        }
+        $result.Status | Should -Be "Failed"
+        $result.Applied | Should -Be $false
+        $result.Message | Should -Match "remains present after deletion"
+        Should -Invoke Get-ItemProperty -Exactly 2
+        Should -Invoke Remove-ItemProperty -Exactly 1
+    }
+
+    It "does not set safeboot when payload preparation fails" {
+        Mock Copy-PhaseRuntimePayload { throw "copy failed" }
+        Mock Set-RunOnce {}
+        Mock Set-BootConfig {}
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke Set-BootConfig -Exactly 0
+    }
+
+    It "does not publish, prepare, register, change BCD, or persist state under WhatIf" {
+        Mock Ensure-SecureWorkDir {}
+        Mock Copy-PhaseRuntimePayload { throw "must not publish" }
+        Mock Set-RunOnce { throw "must not register" }
+        Mock Set-BootConfig { throw "must not change BCD" }
+        Mock Set-Phase1SafeModeReadyFlag { throw "must not persist state" }
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile -WhatIf
+
+        $result.Status | Should -Be "Skipped"
+        $result.Applied | Should -Be $false
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Copy-PhaseRuntimePayload -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 0
+        Should -Invoke Set-BootConfig -Exactly 0
+        Should -Invoke Set-Phase1SafeModeReadyFlag -Exactly 0
+    }
+
+    It "does not set safeboot when Phase 2 RunOnce registration is not applied" {
+        Mock Ensure-SecureWorkDir {}
+        Mock Copy-PhaseRuntimePayload { $SCRIPT:TestTempRoot }
+        Mock Set-RunOnce { [PSCustomObject]@{ Applied = $false; Message = "RunOnce failed" } }
+        Mock Set-BootConfig {}
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $false
+        Should -Invoke Set-BootConfig -Exactly 0
+    }
+
+    It "disarms Phase 2 when the safeboot write fails" {
+        $script:RollbackOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Ensure-SecureWorkDir {}
+        Mock Copy-PhaseRuntimePayload { $SCRIPT:TestTempRoot }
+        Mock Get-PhaseRuntimeRoot { $SCRIPT:TestTempRoot }
+        Mock Set-RunOnce { $script:RollbackOrder.Add("arm"); [PSCustomObject]@{ Applied = $true; Message = "RunOnce set" } }
+        Mock Set-BootConfig { $script:RollbackOrder.Add("bcd"); [PSCustomObject]@{ Applied = $false; Message = "bcdedit failed" } }
+        Mock Clear-SafeBootVerified { $script:RollbackOrder.Add("clear"); [PSCustomObject]@{ Verified = $true; Message = "cleared" } }
+        Mock Remove-PhaseHandoff { $script:RollbackOrder.Add("disarm"); [PSCustomObject]@{ Applied = $true; Message = "RunOnce removed" } }
+        Mock Test-BootConfigSet { throw "must not verify a failed boot write" }
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $false
+        $result.SafeBootCleared | Should -Be $true
+        $script:RollbackOrder | Should -Be @("arm", "bcd", "clear", "disarm")
+        Should -Invoke Remove-PhaseHandoff -Exactly 1 -ParameterFilter { $Name -eq "FRAMETIME_Phase2" -and $SafeMode -and $PassThru }
+        Should -Invoke Test-BootConfigSet -Exactly 0
+    }
+
+    It "retains and re-arms Phase 2 when safeboot rollback cannot be verified" {
+        $script:RollbackOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Ensure-SecureWorkDir {}
+        Mock Copy-PhaseRuntimePayload { $SCRIPT:TestTempRoot }
+        Mock Get-PhaseRuntimeRoot { $SCRIPT:TestTempRoot }
+        Mock Set-RunOnce { $script:RollbackOrder.Add("arm"); [PSCustomObject]@{ Applied = $true; Message = "RunOnce set" } }
+        Mock Set-BootConfig { $script:RollbackOrder.Add("bcd"); [PSCustomObject]@{ Applied = $true; Message = "bcdedit set" } }
+        Mock Test-BootConfigSet { $script:RollbackOrder.Add("verify"); $false }
+        Mock Clear-SafeBootVerified { $script:RollbackOrder.Add("clear"); [PSCustomObject]@{ Verified = $false; Message = "still armed" } }
+        Mock Remove-PhaseHandoff { throw "must not disarm while SafeBoot might remain" }
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $false
+        $result.SafeBootCleared | Should -Be $false
+        $result.RecoveryHandoffApplied | Should -Be $true
+        $result.Message | Should -Match "CRITICAL"
+        $script:RollbackOrder | Should -Be @("arm", "bcd", "verify", "clear", "arm")
+        Should -Invoke Remove-PhaseHandoff -Exactly 0
+        Should -Invoke Set-RunOnce -Exactly 2
+    }
+
+    It "clears safeboot before disarming when readiness persistence fails" {
+        $script:RollbackOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Ensure-SecureWorkDir {}
+        Mock Copy-PhaseRuntimePayload { $SCRIPT:TestTempRoot }
+        Mock Get-PhaseRuntimeRoot { $SCRIPT:TestTempRoot }
+        Mock Set-RunOnce { [PSCustomObject]@{ Applied = $true; Message = "RunOnce set" } }
+        Mock Set-BootConfig { [PSCustomObject]@{ Applied = $true; Message = "bcdedit set" } }
+        Mock Test-BootConfigSet { $true }
+        Mock Set-Phase1SafeModeReadyFlag { throw "state write failed" }
+        Mock Clear-SafeBootVerified { $script:RollbackOrder.Add("clear"); [PSCustomObject]@{ Verified = $true; Message = "cleared" } }
+        Mock Remove-PhaseHandoff { $script:RollbackOrder.Add("disarm"); [PSCustomObject]@{ Applied = $true; Message = "removed" } }
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $false
+        $result.SafeBootCleared | Should -Be $true
+        $script:RollbackOrder | Should -Be @("clear", "disarm")
+    }
+
+    It "persists readiness only after payload, RunOnce, safeboot write, and live verification succeed" {
+        $script:TransactionOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Ensure-SecureWorkDir { $script:TransactionOrder.Add("secure") }
+        Mock Copy-PhaseRuntimePayload { $script:TransactionOrder.Add("copy"); $SCRIPT:TestTempRoot }
+        Mock Set-RunOnce { $script:TransactionOrder.Add("runonce"); [PSCustomObject]@{ Applied = $true; Message = "RunOnce set" } }
+        Mock Set-BootConfig { $script:TransactionOrder.Add("bcd"); [PSCustomObject]@{ Applied = $true; Message = "bcdedit set" } }
+        Mock Test-BootConfigSet { $script:TransactionOrder.Add("verify"); $true }
+        Mock Set-Phase1SafeModeReadyFlag { $script:TransactionOrder.Add("ready") }
+
+        $result = Enable-Phase2SafeModeTransaction -SourceRoot "C:\source" -DestinationRoot $SCRIPT:TestTempRoot -StatePath $CFG_StateFile
+
+        $result.Applied | Should -Be $true
+        $script:TransactionOrder | Should -Be @("copy", "runonce", "bcd", "verify", "ready")
     }
 
     It "Set-BootConfig returns dry-run status with -PassThru without applying a boot write" {
@@ -357,10 +706,15 @@ Describe "Write helper result contracts" {
         $result.Status | Should -Be "Skipped"
         $result.Applied | Should -Be $false
         Should -Invoke bcdedit -Exactly 0
+        Should -Invoke Backup-BootConfig -Exactly 0
     }
 
     It "Set-BootConfig returns failed status with -PassThru when bcdedit fails" {
         Mock bcdedit {
+            if ($args -contains "/enum") {
+                $global:LASTEXITCODE = 0
+                return @("Windows Boot Loader", "identifier {current}")
+            }
             $global:LASTEXITCODE = 1
             "failed"
         }
@@ -382,6 +736,19 @@ Describe "Write helper result contracts" {
 
         $result.Status | Should -Be "Success"
         $result.Applied | Should -Be $true
+    }
+
+    It "Set-BootConfig blocks the write when backup capture fails" {
+        Mock Backup-BootConfig {
+            [PSCustomObject]@{ Captured = $false; Entry = $null; Message = "BCD inventory failed" }
+        }
+        Mock bcdedit { throw "must not write" }
+
+        $result = Set-BootConfig "disabledynamictick" "yes" "Test boot config" -PassThru
+
+        $result.Status | Should -Be "Failed"
+        $result.Message | Should -Match "original value was not captured"
+        Should -Invoke bcdedit -Exactly 0
     }
 
     It "Set-BootConfig keeps the existing boolean contract without -PassThru" {
@@ -637,6 +1004,28 @@ Describe "Load-State" {
         $SCRIPT:DryRun | Should -Be $false
     }
 
+    It "loads preview state read-only without hardening the parent directory" {
+        $state = [PSCustomObject]@{ mode = "DRY-RUN"; profile = "CUSTOM"; logLevel = "VERBOSE" }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+        Mock Ensure-SecureWorkDir { throw "Read-only load must not harden storage" }
+
+        { Load-State -Path $CFG_StateFile -ReadOnly | Out-Null } | Should -Not -Throw
+
+        $SCRIPT:DryRun | Should -BeTrue
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+    }
+
+    It "does not preserve a corrupt state copy during read-only loading" {
+        Set-Content -LiteralPath $CFG_StateFile -Value '{not-json' -Encoding UTF8
+        Mock Ensure-SecureWorkDir { throw "Read-only load must not harden storage" }
+        Mock Copy-Item { throw "Read-only load must not copy corrupt state" }
+
+        { Load-State -Path $CFG_StateFile -ReadOnly } | Should -Throw "*read-only mode left it unchanged*"
+
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Copy-Item -Exactly 0
+    }
+
     It "does not mutate script runtime state under WhatIf" {
         $SCRIPT:Mode = "CONTROL"
         $SCRIPT:Profile = "RECOMMENDED"
@@ -765,33 +1154,233 @@ Describe "Copy-PhaseRuntimePayload" {
         Reset-TestState
         $script:PayloadSource = Join-Path $SCRIPT:TestTempRoot "payload-src"
         $script:PayloadDest = Join-Path $SCRIPT:TestTempRoot "payload-dest"
-        New-Item -ItemType Directory -Path (Join-Path $script:PayloadSource "helpers") -Force | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $script:PayloadSource "cfgs") -Force | Out-Null
-        New-Item -ItemType Directory -Path (Join-Path $script:PayloadSource "docs") -Force | Out-Null
-        foreach ($file in @(
-            "SafeMode-DriverClean.ps1",
-            "PostReboot-Setup.ps1",
-            "Guide-VideoSettings.ps1",
-            "helpers.ps1",
-            "config.env.ps1"
-        )) {
-            Set-Content (Join-Path $script:PayloadSource $file) -Value "# $file" -Encoding UTF8
+        Remove-Item -LiteralPath $script:PayloadSource -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:PayloadDest -Recurse -Force -ErrorAction SilentlyContinue
+        foreach ($file in (Get-PhaseRuntimePayloadRelativePaths)) {
+            $sourceFile = Join-Path $script:PayloadSource $file
+            New-Item -ItemType Directory -Path (Split-Path $sourceFile -Parent) -Force | Out-Null
+            Set-Content $sourceFile -Value "# $file" -Encoding UTF8
         }
-        Set-Content (Join-Path $script:PayloadSource "helpers/helper.ps1") -Value "# helper" -Encoding UTF8
-        Set-Content (Join-Path $script:PayloadSource "cfgs/net_highping.cfg") -Value "cfg" -Encoding UTF8
-        Set-Content (Join-Path $script:PayloadSource "docs/video.txt") -Value "video" -Encoding UTF8
-        Set-Content (Join-Path $script:PayloadSource "docs/nvidia-drs-settings.md") -Value "drs" -Encoding UTF8
         Mock Write-OK {}
     }
 
-    It "copies the shared runtime payload, cfgs, and repo-local docs in one pass" {
-        Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+    It "publishes the exact hashed runtime payload without touching persistent data" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        Set-Content (Join-Path $script:PayloadDest "state.json") -Value '{"profile":"RECOMMENDED"}' -Encoding UTF8
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
 
-        Test-Path (Join-Path $script:PayloadDest "SafeMode-DriverClean.ps1") | Should -Be $true
-        Test-Path (Join-Path $script:PayloadDest "helpers/helper.ps1") | Should -Be $true
-        Test-Path (Join-Path $script:PayloadDest "cfgs/net_highping.cfg") | Should -Be $true
-        Test-Path (Join-Path $script:PayloadDest "docs/video.txt") | Should -Be $true
-        Test-Path (Join-Path $script:PayloadDest "docs/nvidia-drs-settings.md") | Should -Be $true
+        $runtimeRoot | Should -Match ([regex]::Escape((Join-Path $script:PayloadDest "runtime-generations")) + '[\\/][a-f0-9]{32}$')
+        (Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot).Valid | Should -Be $true
+        (Get-PhaseRuntimeRoot -DestinationRoot $script:PayloadDest) | Should -Be $runtimeRoot
+        Test-Path (Join-Path $runtimeRoot "runtime-manifest.json") | Should -Be $true
+        Test-Path (Join-Path $script:PayloadDest "runtime-current.json") | Should -Be $true
+        Test-Path (Join-Path $script:PayloadDest "state.json") | Should -Be $true
+    }
+
+    It "rejects a missing published runtime file" {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        Remove-Item (Join-Path $runtimeRoot "helpers/logging.ps1") -Force
+
+        $result = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+
+        $result.Valid | Should -Be $false
+        $result.Message | Should -Match "missing or extra"
+    }
+
+    It "rejects an extra stale runtime file" {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        Set-Content (Join-Path $runtimeRoot "helpers/stale.ps1") -Value "# stale" -Encoding UTF8
+
+        $result = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+
+        $result.Valid | Should -Be $false
+        $result.Message | Should -Match "missing or extra"
+    }
+
+    It "rejects a runtime hash mismatch" {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        Add-Content (Join-Path $runtimeRoot "SafeMode-DriverClean.ps1") -Value "# tampered"
+
+        $result = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+
+        $result.Valid | Should -Be $false
+        $result.Message | Should -Match "hash mismatch"
+    }
+
+    It "preserves the previous verified publish when staging is interrupted" {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        $originalHash = (Get-FileHash (Join-Path $runtimeRoot "SafeMode-DriverClean.ps1") -Algorithm SHA256).Hash
+        Remove-Item (Join-Path $script:PayloadSource "helpers/logging.ps1") -Force
+
+        { Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest } | Should -Throw "*Required runtime file missing*"
+
+        (Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot).Valid | Should -Be $true
+        (Get-FileHash (Join-Path $runtimeRoot "SafeMode-DriverClean.ps1") -Algorithm SHA256).Hash | Should -Be $originalHash
+        @(Get-ChildItem $script:PayloadDest -Directory -Force | Where-Object Name -like '.runtime-staging-*').Count | Should -Be 0
+    }
+
+    It "keeps every previously armed generation present when a later publish commits" {
+        $firstRuntime = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        Set-Content (Join-Path $script:PayloadSource "SafeMode-DriverClean.ps1") -Value "# generation two" -Encoding UTF8
+
+        $secondRuntime = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+
+        $secondRuntime | Should -Not -Be $firstRuntime
+        Test-Path -LiteralPath $firstRuntime -PathType Container | Should -Be $true
+        (Test-PhaseRuntimePayload -RuntimeRoot $firstRuntime).Valid | Should -Be $true
+        (Test-PhaseRuntimePayload -RuntimeRoot $secondRuntime).Valid | Should -Be $true
+        (Get-PhaseRuntimeRoot -DestinationRoot $script:PayloadDest) | Should -Be $secondRuntime
+    }
+
+    It "preserves the old pointer and armed target when pointer commit fails" {
+        $firstRuntime = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        $script:AtomicJsonWriter = ${function:Save-JsonAtomic}
+        Mock Save-JsonAtomic {
+            param($Data, $Path, $Depth)
+            if ((Split-Path -Path $Path -Leaf) -eq "runtime-current.json") {
+                throw "injected pointer commit failure"
+            }
+            & $script:AtomicJsonWriter -Data $Data -Path $Path -Depth 10
+        }
+
+        { Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest } |
+            Should -Throw "*injected pointer commit failure*"
+
+        (Get-PhaseRuntimeRoot -DestinationRoot $script:PayloadDest) | Should -Be $firstRuntime
+        Test-Path -LiteralPath $firstRuntime -PathType Container | Should -Be $true
+        (Test-PhaseRuntimePayload -RuntimeRoot $firstRuntime).Valid | Should -Be $true
+        @(Get-ChildItem (Join-Path $script:PayloadDest "runtime-generations") -Directory).Count | Should -Be 1
+    }
+
+    It "leaves the previous pointer untouched when final-generation validation fails" {
+        $firstRuntime = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        $script:RuntimeValidator = ${function:Test-PhaseRuntimePayload}
+        $script:RuntimeValidationCalls = 0
+        Mock Test-PhaseRuntimePayload {
+            param($RuntimeRoot)
+            $script:RuntimeValidationCalls++
+            if ($script:RuntimeValidationCalls -eq 2) {
+                return [PSCustomObject]@{ Valid = $false; Status = "Failed"; Message = "injected final-generation validation failure" }
+            }
+            & $script:RuntimeValidator -RuntimeRoot $RuntimeRoot
+        }
+
+        { Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest } |
+            Should -Throw "*injected final-generation validation failure*"
+
+        (Get-PhaseRuntimeRoot -DestinationRoot $script:PayloadDest) | Should -Be $firstRuntime
+        Test-Path -LiteralPath $firstRuntime -PathType Container | Should -Be $true
+        @(Get-ChildItem (Join-Path $script:PayloadDest "runtime-generations") -Directory).Count | Should -Be 1
+    }
+
+    It "performs no filesystem or lock mutation under WhatIf" {
+        $result = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest -WhatIf
+
+        $result | Should -BeNullOrEmpty
+        Test-Path -LiteralPath $script:PayloadDest | Should -Be $false
+    }
+
+    It "rejects an unsafe runtime pointer instead of traversing outside the work directory" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        [PSCustomObject]@{ schemaVersion = 1; relativePath = "../outside" } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $script:PayloadDest "runtime-current.json") -Encoding UTF8
+
+        { Get-PhaseRuntimeRoot -DestinationRoot $script:PayloadDest } |
+            Should -Throw "*Phase runtime pointer is invalid*"
+    }
+
+    It "keeps the newly verified generation when legacy cleanup fails" {
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+        Set-Content (Join-Path $script:PayloadSource "SafeMode-DriverClean.ps1") -Value "# generation two" -Encoding UTF8
+        Mock Remove-LegacyPhaseRuntimePayload { throw "cleanup blocked" }
+
+        $runtimeRoot = Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest
+
+        (Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot).Valid | Should -Be $true
+        Get-Content (Join-Path $runtimeRoot "SafeMode-DriverClean.ps1") -Raw | Should -Match "generation two"
+    }
+
+    It "rejects a competing publisher without touching its staging paths" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        $lock = Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest
+        try {
+            { Copy-PhaseRuntimePayload -SourceRoot $script:PayloadSource -DestinationRoot $script:PayloadDest } | Should -Throw "*publication is already in progress*"
+
+            Test-Path (Join-Path $script:PayloadDest "runtime") | Should -Be $false
+            @(Get-ChildItem $script:PayloadDest -Directory -Force | Where-Object Name -like '.runtime-staging-*').Count | Should -Be 0
+        } finally {
+            Exit-PhaseRuntimePublishLock -Lock $lock
+        }
+    }
+
+    It "removes the exact newly created lock when owner-record write or flush fails" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        $lockPath = Join-Path $script:PayloadDest ".runtime-publish.lock"
+        Mock Initialize-PhaseRuntimePublishLockOwner { throw "simulated owner-record write failure" }
+
+        { Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest } |
+            Should -Throw "*Could not initialize the Phase runtime publication lock*exact failed lock was removed*"
+
+        Should -Invoke Initialize-PhaseRuntimePublishLockOwner -Exactly 1
+        Test-Path -LiteralPath $lockPath | Should -Be $false
+    }
+
+    It "recovers a corrupt unlocked publication record" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        $lockPath = Join-Path $script:PayloadDest ".runtime-publish.lock"
+        Set-Content -LiteralPath $lockPath -Value '{not-json' -Encoding UTF8
+
+        $lock = Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest
+        try {
+            $lock.Stream.CanWrite | Should -Be $true
+            $lock.Token | Should -Not -BeNullOrEmpty
+        } finally {
+            Exit-PhaseRuntimePublishLock -Lock $lock
+        }
+
+        Test-Path -LiteralPath $lockPath | Should -Be $false
+    }
+
+    It "never steals an active owner lock and remains available after that owner exits" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        $firstLock = Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest
+        try {
+            { Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest } |
+                Should -Throw "*publication is already in progress*"
+            $firstLock.Stream.CanWrite | Should -Be $true
+        } finally {
+            Exit-PhaseRuntimePublishLock -Lock $firstLock
+        }
+
+        $nextLock = Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest
+        try {
+            $nextLock.Token | Should -Not -Be $firstLock.Token
+        } finally {
+            Exit-PhaseRuntimePublishLock -Lock $nextLock
+        }
+    }
+
+    It "reclaims an unlocked stale record when its live PID belongs to an older process instance" {
+        New-Item -ItemType Directory -Path $script:PayloadDest -Force | Out-Null
+        $lockPath = Join-Path $script:PayloadDest ".runtime-publish.lock"
+        $currentProcess = Get-Process -Id $PID -ErrorAction Stop
+        [PSCustomObject]@{
+            pid = $PID
+            processStartUtc = $currentProcess.StartTime.ToUniversalTime().AddHours(-1).ToString("o")
+            processName = $currentProcess.ProcessName
+            token = "stale"
+            state = "owned"
+        } | ConvertTo-Json -Compress | Set-Content -LiteralPath $lockPath -Encoding UTF8
+
+        $lock = Enter-PhaseRuntimePublishLock -DestinationRoot $script:PayloadDest
+        try {
+            $lock.Token | Should -Not -Be "stale"
+            Test-Path -LiteralPath $lockPath -PathType Leaf | Should -Be $true
+        } finally {
+            Exit-PhaseRuntimePublishLock -Lock $lock
+        }
+
+        Test-Path -LiteralPath $lockPath | Should -Be $false
     }
 }
 

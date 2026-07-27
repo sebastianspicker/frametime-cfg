@@ -1,21 +1,21 @@
 ﻿# ==============================================================================
-#  helpers/tier-system.ps1  —  Profile & Tier-Aware Step Execution
+#  helpers/tier-system.ps1  -  Profile & Tier-Aware Step Execution
 # ==============================================================================
 #
 #  PROFILES (user-facing):
-#    SAFE          Only proven, safe tweaks. Auto-applied. No prompts.
+#    SAFE          Lower-impact project scope. Eligible steps auto-applied.
 #    RECOMMENDED   Safe + moderate tweaks. Moderate steps prompted.
-#    COMPETITIVE   Everything incl. community tips. All prompted.
+#    COMPETITIVE   Includes T3 experimental operations. All are prompted.
 #    CUSTOM        Full detail card for every step. Nothing auto.
-#    YOLO          Everything auto-executes (up to AGGRESSIVE). Zero prompts.
+#    YOLO          Eligible steps through AGGRESSIVE auto-execute without prompts.
 #
 #  TIER SYSTEM (internal):
-#    T1  Proven, measurable effect on 1%/0.1% lows.
-#    T2  Real effect, but setup-dependent or situational.
-#    T3  Community consensus, no hard benchmark proof.
+#    T1  Baseline project operation.
+#    T2  Setup-dependent or situational operation.
+#    T3  Experimental or weakly evidenced operation.
 #
 #  RISK LEVELS:
-#    SAFE        Read-only check, or universally harmless + auto-reversible
+#    SAFE        Read-only or lower-impact project category
 #    MODERATE    Registry/config change, easily reversible
 #    AGGRESSIVE  Service/driver/boot change, needs restart or careful undo
 #    CRITICAL    Security implications, driver removal, data-affecting
@@ -40,7 +40,7 @@
 #  │ CUSTOM       │ prompted │ prompted (full card)         │ prompted         │
 #  │ YOLO         │ auto     │ ≤AGGRESSIVE→auto             │ ≤AGGRESSIVE→auto │
 #  └──────────────┴──────────┴──────────────────────────────┴──────────────────┘
-#  DRY-RUN is a modifier that can be combined with any profile.
+#  Scoped DRY-RUN exposes SAFE through CUSTOM; Full DRY-RUN forces CUSTOM.
 
 if (-not (Get-Variable -Name RiskOrder -Scope Script -ErrorAction SilentlyContinue)) { $SCRIPT:RiskOrder = @{ "SAFE"=1; "MODERATE"=2; "AGGRESSIVE"=3; "CRITICAL"=4 } }
 function Test-YoloProfile { return $SCRIPT:Profile -eq "YOLO" }
@@ -63,7 +63,7 @@ function Test-RiskAllowed {
     param([string]$StepRisk)
     if (-not $StepRisk) { return $true }
     if (-not $SCRIPT:RiskOrder.ContainsKey($StepRisk)) {
-        Write-Warn "Unknown risk level '$StepRisk' — treating as blocked for safety."
+        Write-Warn "Unknown risk level '$StepRisk' - treating as blocked for safety."
         return $false
     }
     $max = Get-ProfileMaxRisk
@@ -95,10 +95,10 @@ function Show-StepInfoCard {
         default      { "White" }
     }
     $riskLabel = switch ($Risk) {
-        "SAFE"       { "SAFE — no risk, easily undone" }
-        "MODERATE"   { "MODERATE — can be undone anytime" }
-        "AGGRESSIVE" { "AGGRESSIVE — read carefully before applying" }
-        "CRITICAL"   { "CRITICAL — may affect system security" }
+        "SAFE"       { "SAFE - lower-impact project category; review required" }
+        "MODERATE"   { "MODERATE - persistent change; check recovery coverage" }
+        "AGGRESSIVE" { "AGGRESSIVE - restart or careful recovery may be required" }
+        "CRITICAL"   { "CRITICAL - may affect system security or data" }
         default      { $Risk }
     }
     $riskIcon = switch ($Risk) {
@@ -155,7 +155,7 @@ function Invoke-TieredStep {
     Write-Blank
     Write-TierBadge $Tier $Title
 
-    # ── Profile risk filter (T2/T3 only — T1 always runs) ───────────
+    # ── Profile risk filter (T2/T3 only - T1 always runs) ───────────
     if ($Tier -gt 1 -and $Risk -and -not (Test-RiskAllowed $Risk)) {
         $max = Get-ProfileMaxRisk
         Write-ConsoleLine "  $([char]0x25CB) [SKIP] Exceeds $($SCRIPT:Profile) profile ($Risk > $max threshold)" -ForegroundColor DarkGray
@@ -190,7 +190,7 @@ function Invoke-TieredStep {
 
     # ── DRY-RUN modifier ────────────────────────────────────────────
     if ($SCRIPT:DryRun) {
-        # Still respect profile tier filtering — SAFE DRY-RUN should not preview T3 steps
+        # Still respect profile tier filtering - SAFE DRY-RUN should not preview T3 steps
         $wouldSkip = $false
         switch ($SCRIPT:Profile) {
             "SAFE"        { if ($Tier -ge 3 -or ($Tier -eq 2 -and $Risk -notin @("SAFE","",$null))) { $wouldSkip = $true } }
@@ -205,10 +205,15 @@ function Invoke-TieredStep {
         Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would execute: $Title" -ForegroundColor Magenta
         if ($Depth)       { Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Modifies: $Depth" -ForegroundColor Magenta }
         if ($Improvement) { Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Expected: $Improvement" -ForegroundColor Magenta }
-        Write-DebugLog "DRY-RUN: '$Title' — preview only, no changes applied"
+        Write-DebugLog "DRY-RUN: '$Title' - preview only, no changes applied"
         # Run the action but Set-RegistryValue/Set-BootConfig intercept writes
-        try { & $Action } catch { Write-Warn "Step '$Title' preview issue (DRY-RUN): $_" }
-        # Defensive flush — should be a no-op because Backup-* functions self-guard in DRY-RUN.
+        try {
+            & $Action
+        } catch {
+            Add-DryRunPreviewIssue
+            Write-Warn "Step '$Title' preview issue (DRY-RUN): $_"
+        }
+        # Defensive flush - should be a no-op because Backup-* functions self-guard in DRY-RUN.
         try { Flush-BackupBuffer } catch { Write-DebugLog "Flush-BackupBuffer failed after DRY-RUN '$Title': $_" }
         $SCRIPT:CurrentStepTitle = $null
         return $false
@@ -228,7 +233,7 @@ function Invoke-TieredStep {
                 Write-DebugLog "SAFE/T2(SAFE): Auto-Execute '$Title'"
                 $run = $true
             } else {
-                # T2 without Risk="SAFE" or unexpected tier — skip with debug message
+                # T2 without Risk="SAFE" or unexpected tier - skip with debug message
                 Write-DebugLog "SAFE profile: Skipping '$Title' (Tier=$Tier, Risk=$Risk)"
                 $run = $false
             }
@@ -247,11 +252,11 @@ function Invoke-TieredStep {
                     Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
-                $r = Read-Host "  $Title — run? [y/N]"
+                $r = Read-Host "  $Title - run? [y/N]"
                 $run = ($r -match "^[jJyY]$")
             } else {
                 # T3: skip in RECOMMENDED
-                Write-ConsoleLine "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (community tip, no hard proof)." -ForegroundColor DarkCyan
+                Write-ConsoleLine "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (weak or incomplete evidence)." -ForegroundColor DarkCyan
                 $run = $false
             }
         }
@@ -268,18 +273,18 @@ function Invoke-TieredStep {
                     Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
-                $r = Read-Host "  $Title — run? [y/N]"
+                $r = Read-Host "  $Title - run? [y/N]"
                 $run = ($r -match "^[jJyY]$")
             } else {
                 # T3: prompt in COMPETITIVE
                 Write-Blank
                 $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-ConsoleLine "  $([char]0x25C6) [T3$rTag] Community tip $([char]0x2014) no hard benchmark proof." -ForegroundColor DarkCyan
+                Write-ConsoleLine "  $([char]0x25C6) [T3$rTag] Experimental operation with weak or incomplete evidence." -ForegroundColor DarkCyan
                 if ($Improvement) {
                     Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
                 }
                 Write-Blank
-                $r = Read-Host "  $Title — run anyway? [y/N]"
+                $r = Read-Host "  $Title - run anyway? [y/N]"
                 $run = ($r -match "^[jJyY]$")
             }
         }
@@ -289,10 +294,10 @@ function Invoke-TieredStep {
             Write-Blank
             $rTag = if ($Risk) { " [$Risk]" } else { "" }
             $tLabel = switch ($Tier) {
-                1 { "[T1$rTag] Proven — apply this step?" }
-                2 { "[T2$rTag] Setup-dependent — apply?" }
-                3 { "[T3$rTag] Community tip — apply?" }
-                default { "[T?$rTag] Unknown tier — apply?" }
+                1 { "[T1$rTag] Baseline operation - apply this step?" }
+                2 { "[T2$rTag] Setup-dependent - apply?" }
+                3 { "[T3$rTag] Experimental operation - apply?" }
+                default { "[T?$rTag] Unknown tier - apply?" }
             }
             $tColor = switch ($Tier) { 1 {"Green"} 2 {"Yellow"} 3 {"DarkCyan"} default {"White"} }
             Write-ConsoleLine "  $tLabel" -ForegroundColor $tColor
@@ -316,7 +321,7 @@ function Invoke-TieredStep {
             # Fallback: treat as RECOMMENDED
             $run = ($Tier -eq 1)
             if ($Tier -gt 1) {
-                $r = Read-Host "  $Title — run? [y/N]"
+                $r = Read-Host "  $Title - run? [y/N]"
                 $run = ($r -match "^[jJyY]$")
             }
         }
@@ -324,16 +329,26 @@ function Invoke-TieredStep {
 
     # ── Execute or skip ─────────────────────────────────────────────
     $actionOk = $true
+    $actionOutcome = $null
     if ($run) {
         Write-DebugLog "Executing: '$Title'"
+        $SCRIPT:CurrentTierStepOutcome = $null
         try { & $Action } catch {
             Write-Err "Step '$Title' failed: $_"
-            Write-ConsoleLine "  $([char]0x2139) What to do: This step was skipped safely. Your system is not affected." -ForegroundColor Cyan
-            Write-ConsoleLine "  $([char]0x2139) You can retry later via START.bat, or continue $([char]0x2014) remaining steps still work." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) What to do: This step did not complete; some earlier changes in it may already be applied." -ForegroundColor Cyan
+            Write-ConsoleLine "  $([char]0x2139) Backups were retained. Retry the step or use START.bat -> Restore/Rollback before continuing." -ForegroundColor Cyan
             $actionOk = $false
         }
+        $actionOutcome = $SCRIPT:CurrentTierStepOutcome
+        $SCRIPT:CurrentTierStepOutcome = $null
         # Update phase counters
-        if ($actionOk) { Add-PhaseApplied } else { Add-PhaseFailed }
+        if (-not $actionOk) {
+            Add-PhaseFailed
+        } elseif ($actionOutcome -eq 'Skipped') {
+            Add-PhaseSkipped
+        } else {
+            Add-PhaseApplied
+        }
     } else {
         Write-DebugLog "Skipped: '$Title'"
         Add-PhaseSkipped
@@ -341,12 +356,12 @@ function Invoke-TieredStep {
     }
 
     # Flush any pending backup entries to disk in one I/O pass.
-    # This is the primary flush point — backup functions buffer entries in memory
+    # This is the primary flush point - backup functions buffer entries in memory
     # during the step's action, and we persist them here once the step finishes.
     try { Flush-BackupBuffer } catch { Write-Warn "Backup entries could not be saved to disk after '$Title': $_  (entries retained in memory for next flush)" }
 
     $SCRIPT:CurrentStepTitle = $null
-    return ($run -and $actionOk)
+    return ($run -and $actionOk -and $actionOutcome -ne 'Skipped')
 }
 
 # Backward-compatible wrapper

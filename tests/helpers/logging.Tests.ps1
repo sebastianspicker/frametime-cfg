@@ -158,7 +158,7 @@ Describe "Write-TierBadge" {
 
     It "displays T1 badge" {
         Initialize-Log
-        { Write-TierBadge 1 "Proven setting" } | Should -Not -Throw
+        { Write-TierBadge 1 "Baseline setting" } | Should -Not -Throw
     }
 
     It "displays T2 badge" {
@@ -166,7 +166,7 @@ Describe "Write-TierBadge" {
     }
 
     It "displays T3 badge" {
-        { Write-TierBadge 3 "Community consensus" } | Should -Not -Throw
+        { Write-TierBadge 3 "Experimental setting" } | Should -Not -Throw
     }
 
     It "handles unknown tier" {
@@ -194,7 +194,7 @@ Describe "Write-Section" {
     It "shows progress bar when PhaseTotal is set" {
         $SCRIPT:PhaseTotal = 10
         Initialize-Log
-        { Write-Section "Step 5 — Test" } | Should -Not -Throw
+        { Write-Section "Step 5 - Test" } | Should -Not -Throw
         $SCRIPT:PhaseTotal = $null
     }
 }
@@ -222,8 +222,8 @@ Describe "Initialize-Log" {
         Initialize-Log
         Add-Content $CFG_LogFile "first run content" -Encoding UTF8
         Initialize-Log  # Second call should rotate
-        # The rotated file should exist — pick the newest one
-        $rotatedFiles = @(Get-ChildItem $CFG_LogDir -Filter "optimize_*.log" | Sort-Object LastWriteTime -Descending)
+        # The rotated file should exist - pick the newest one
+        $rotatedFiles = @(Get-ChildItem $CFG_LogDir -Filter "frametime_*.log" | Sort-Object LastWriteTime -Descending)
         $rotatedFiles.Count | Should -BeGreaterOrEqual 1
         # Newest rotated file should contain the original content
         $rotatedContent = Get-Content $rotatedFiles[0].FullName -Raw
@@ -246,5 +246,68 @@ Describe "Initialize-Log" {
             $CFG_LogDir = $originalLogDir
             $CFG_LogFile = $originalLogFile
         }
+    }
+
+    It "preserves an existing log and keeps persistence disabled in DRY-RUN" {
+        Ensure-Dir $CFG_LogDir
+        "preview-log-sentinel" | Set-Content -LiteralPath $CFG_LogFile -Encoding UTF8
+        $before = (Get-FileHash -LiteralPath $CFG_LogFile -Algorithm SHA256).Hash
+        $SCRIPT:DryRun = $true
+
+        Initialize-Log
+        Write-Info "must remain console-only"
+
+        (Get-FileHash -LiteralPath $CFG_LogFile -Algorithm SHA256).Hash | Should -Be $before
+        $SCRIPT:LogPersistenceEnabled | Should -BeFalse
+    }
+
+    It "does not append before persistent logging is initialized" {
+        Ensure-Dir $CFG_LogDir
+        "preselection-log-sentinel" | Set-Content -LiteralPath $CFG_LogFile -Encoding UTF8
+        $before = (Get-FileHash -LiteralPath $CFG_LogFile -Algorithm SHA256).Hash
+        $SCRIPT:LogPersistenceEnabled = $false
+
+        Write-DebugLog "corrupt state was ignored"
+
+        (Get-FileHash -LiteralPath $CFG_LogFile -Algorithm SHA256).Hash | Should -Be $before
+    }
+}
+
+Describe "DRY-RUN lifecycle output" {
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $true
+        $SCRIPT:FullDryRun = $true
+        $SCRIPT:FullDryRunRequested = $true
+        $SCRIPT:Profile = "CUSTOM"
+        $SCRIPT:RequestedDryRunGpu = "3"
+    }
+
+    It "keeps intermediate summaries distinct from the final live-run call to action" {
+        $intermediate = (Write-PhaseSummary -PhaseLabel "PHASE 1" -DryRun -ContinuePreview 6>&1) -join "`n"
+        $final = (Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -DryRun 6>&1) -join "`n"
+
+        $intermediate | Should -Match "lifecycle simulation continues"
+        $intermediate | Should -Not -Match "Live run:"
+        $final | Should -Match "Live run:"
+    }
+
+    It "reports accumulated preview issues" {
+        Add-DryRunPreviewIssue
+
+        $output = (Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -DryRun 6>&1) -join "`n"
+
+        $output | Should -Match "COMPLETE WITH 1 ISSUE"
+    }
+
+    It "uses preview-specific banner wording without clearing earlier output" {
+        Mock Clear-ConsoleSafe {}
+
+        $output = (Write-Banner 2 3 "Safe Mode simulation" 6>&1) -join "`n"
+
+        Should -Invoke Clear-ConsoleSafe -Times 0
+        $output | Should -Match "FULL PREVIEW"
+        $output | Should -Match "selected GPU branch \[3\]"
+        $output | Should -Not -Match "auto-applied|Always create a restore point"
     }
 }

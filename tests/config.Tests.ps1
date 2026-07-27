@@ -65,11 +65,11 @@ Describe "CS2 Autoexec configuration" {
         $content | Should -Not -Match 'effectiveAutoexec\["thread_pool_option"\]'
     }
 
-    It "Optimize-GameConfig treats m_rawinput as a no-op documentation stub" {
-        $content = Get-Content "$script:ProjectRoot/Optimize-GameConfig.ps1" -Raw
+    It "documents m_rawinput as a legacy compatibility marker" {
+        $content = Get-Content "$script:ProjectRoot/config.env.ps1" -Raw
 
-        $content | Should -Match "m_rawinput 1 kept as a harmless documentation/forward-compatibility stub"
-        $content | Should -Match "m_rawinput 1 is retained only as a no-op documentation stub"
+        $content | Should -Match "m_rawinput 1 - retained as a legacy compatibility and intent marker"
+        $content | Should -Match "current client may ignore unsupported legacy CVars"
         $content | Should -Not -Match "m_rawinput 1: reads from HID device"
         $content | Should -Not -Match "snd_use_hrtf 1"
         $content | Should -Not -Match "requires fps_max cap to function"
@@ -216,14 +216,14 @@ Describe "NIC Tweaks configuration" {
 # ── Path format validation ───────────────────────────────────────────────────
 Describe "Path format validation" {
 
-    It "uses the intentional v2.3 development identity" {
-        $CFG_Version | Should -Be "v2.3-dev"
+    It "uses the public alpha version identity" {
+        $CFG_Version | Should -Be "v3.0.0-alpha.1"
     }
 
-    It "displays the shared version identity in both GUI version fields" {
-        $guiContent = Get-Content (Join-Path $script:ProjectRoot "CS2-Optimize-GUI.ps1") -Raw
+    It "displays the shared version identity in native title and sidebar" {
+        $guiContent = Get-Content (Join-Path $script:ProjectRoot "frametime-gui.ps1") -Raw
 
-        $guiContent | Should -Match '\(El "TitleVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
+        $guiContent | Should -Match '\$Window\.Title\s*=\s*"frametime.cfg \$CFG_Version"'
         $guiContent | Should -Match '\(El "SettingsVersion"\)\.Text\s*=\s*"  \$CFG_Version"'
         $guiContent | Should -Not -Match 'v2\.[12](?:\b|["''])'
     }
@@ -257,6 +257,25 @@ Describe "Path format validation" {
         foreach ($path in $CFG_ShaderCache_Paths) {
             $path | Should -Not -Match "[^:]/" -Because "Shader cache path '$path' should use backslashes"
         }
+    }
+}
+
+Describe "Published runtime documentation contract" {
+
+    It "documents the canonical validated runtime handoff and rejects the obsolete integrity claim" {
+        $config = Get-Content (Join-Path $script:ProjectRoot "config.env.ps1") -Raw
+        $architecture = Get-Content (Join-Path $script:ProjectRoot "docs/architecture.md") -Raw
+        $gui = Get-Content (Join-Path $script:ProjectRoot "docs/gui.md") -Raw
+
+        $config | Should -Not -Match "No runtime integrity check is performed"
+        $config | Should -Match "C:\\FRAMETIME_CFG\\runtime"
+        $config | Should -Match "SHA-256-manifest validated"
+        $architecture | Should -Match "C:\\FRAMETIME_CFG\\runtime"
+        $architecture | Should -Match "exact file set and hashes"
+        $architecture | Should -Match "before administrator validation or helper loading"
+        $architecture | Should -Match "handoff is retained\s+when the\s+final benchmark"
+        $gui | Should -Match "validated published payload"
+        $gui | Should -Match "fails integrity validation"
     }
 }
 

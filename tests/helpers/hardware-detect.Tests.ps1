@@ -37,10 +37,10 @@ Describe "Get-IntelHybridCpuName" {
         }
     }
 
-    Context "Intel 14th gen (Raptor Lake Refresh — WMI reports as 13th Gen)" {
+    Context "Intel 14th gen (Raptor Lake Refresh - WMI reports as 13th Gen)" {
         It "detects i7-14700K as hybrid" {
             Mock Get-CimInstance {
-                # WMI on 14th gen desktop reports "13th Gen" — matched by model number regex
+                # WMI on 14th gen desktop reports "13th Gen" - matched by model number regex
                 [PSCustomObject]@{ Name = "13th Gen Intel(R) Core(TM) i7-14700K" }
             } -ParameterFilter { $ClassName -eq "Win32_Processor" }
 

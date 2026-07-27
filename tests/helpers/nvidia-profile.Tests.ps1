@@ -28,8 +28,20 @@ AfterAll {
 # ── DRS Settings Table ─────────────────────────────────────────────────────
 Describe "NV_DRS_SETTINGS table" {
 
-    It "contains at least 52 entries" {
-        $NV_DRS_SETTINGS.Count | Should -BeGreaterOrEqual 52
+    It "contains the 42 publicly identified alpha entries" {
+        $NV_DRS_SETTINGS.Count | Should -Be 42
+    }
+
+    It "excludes the removed leak-derived and unidentified entries" {
+        $removedIds = @(
+            3224887, 11313945, 12623113, 270883746, 270883750,
+            271076560, 539250342, 544173595, 276387096, 276387097
+        )
+        $publishedIds = @($NV_DRS_SETTINGS | ForEach-Object { [uint32]$_.Id })
+
+        foreach ($removedId in $removedIds) {
+            $publishedIds | Should -Not -Contain ([uint32]$removedId)
+        }
     }
 
     It "every entry has an Id field" {
@@ -179,10 +191,10 @@ Describe "Apply-NvidiaCS2Profile" {
                 -Status "Partial" `
                 -CanCompleteStep $false `
                 -Method "DRS" `
-                -Message "Only 51 of 52 DRS settings applied." `
-                -DrsApplied 51 `
+                -Message "Only 41 of 42 DRS settings applied." `
+                -DrsApplied 41 `
                 -DrsFailed 1 `
-                -DrsTotal 52
+                -DrsTotal 42
         }
         Mock Apply-NvidiaCS2ProfileRegistry {}
         Mock Write-Step {}
