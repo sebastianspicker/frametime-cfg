@@ -9,9 +9,18 @@
 
 BeforeAll {
     . "$PSScriptRoot/_IntegrationInit.ps1"
+
+    # Pester cannot expose a synthetic CmdArgs parameter when it mocks the
+    # native Windows powercfg.exe application. Shadow it with a test-only
+    # function so mock argument inspection is identical on every platform.
+    function global:powercfg {
+        param([Parameter(ValueFromRemainingArguments)][string[]]$CmdArgs)
+        $null = $CmdArgs
+    }
 }
 
 AfterAll {
+    Remove-Item Function:\global:powercfg -Force -ErrorAction SilentlyContinue
     if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
         Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -29,7 +38,7 @@ Describe "Registry backup and restore roundtrip" {
         # Initialize backup file
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -41,8 +50,8 @@ Describe "Registry backup and restore roundtrip" {
         # Mock reading the existing value
         Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
         Mock Get-ItemProperty {
-            return [PSCustomObject]@{ TestName = 42 }
-        } -ParameterFilter { $Name -eq "TestName" }
+            return [PSCustomObject]@{ GameDVR_Enabled = 42 }
+        } -ParameterFilter { $Name -eq "GameDVR_Enabled" }
         Mock Get-Item {
             $mock = New-Object PSObject
             $mock | Add-Member -MemberType ScriptMethod -Name GetValueKind -Value { "DWord" }
@@ -50,13 +59,13 @@ Describe "Registry backup and restore roundtrip" {
         } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
 
         # Perform backup
-        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "TestName" -StepTitle "Registry Test Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -StepTitle "Registry Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
         $entry.type | Should -Be "registry"
         $entry.path | Should -Be "HKCU:\System\GameConfigStore"
-        $entry.name | Should -Be "TestName"
+        $entry.name | Should -Be "GameDVR_Enabled"
         $entry.originalValue | Should -Be 42
         $entry.existed | Should -Be $true
         $entry.originalType | Should -Be "DWord"
@@ -79,9 +88,10 @@ Describe "Registry backup and restore roundtrip" {
 
     It "Backup-RegistryValue captures non-existent key and Restore removes it" {
         # Mock: key does not exist
-        Mock Test-Path { $false } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
+        $videoSettingsPath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\VideoSettings"
+        Mock Test-Path { $false } -ParameterFilter { $Path -eq $videoSettingsPath }
 
-        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\NewKey" -Name "NewProp" -StepTitle "Registry Test Step"
+        Backup-RegistryValue -Path $videoSettingsPath -Name "AutoHDREnabled" -StepTitle "Registry Test Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 1
         $entry = $SCRIPT:_backupPending[0]
@@ -92,8 +102,8 @@ Describe "Registry backup and restore roundtrip" {
         Flush-BackupBuffer
 
         # Restore should call Remove-ItemProperty for non-existent originals
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
-        Mock Get-ItemProperty { [PSCustomObject]@{ NewProp = "some_value" } } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore\NewKey" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq $videoSettingsPath }
+        Mock Get-ItemProperty { [PSCustomObject]@{ AutoHDREnabled = "some_value" } } -ParameterFilter { $Path -eq $videoSettingsPath }
         Mock Remove-ItemProperty {} -Verifiable
 
         Restore-StepChanges -StepTitle "Registry Test Step"
@@ -102,10 +112,10 @@ Describe "Registry backup and restore roundtrip" {
     }
 
     It "Multiple registry entries are backed up and restored as a group" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -like "HKCU:\System\GameConfigStore\Multi*" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
         Mock Get-ItemProperty {
-            if ($Name -eq "ValA") { return [PSCustomObject]@{ ValA = 10 } }
-            if ($Name -eq "ValB") { return [PSCustomObject]@{ ValB = 20 } }
+            if ($Name -eq "GameDVR_Enabled") { return [PSCustomObject]@{ GameDVR_Enabled = 10 } }
+            if ($Name -eq "GameDVR_FSEBehavior") { return [PSCustomObject]@{ GameDVR_FSEBehavior = 20 } }
         }
         Mock Get-Item {
             $mock = New-Object PSObject
@@ -113,8 +123,8 @@ Describe "Registry backup and restore roundtrip" {
             return $mock
         }
 
-        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\MultiA" -Name "ValA" -StepTitle "Multi Step"
-        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore\MultiB" -Name "ValB" -StepTitle "Multi Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -StepTitle "Multi Step"
+        Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_FSEBehavior" -StepTitle "Multi Step"
 
         $SCRIPT:_backupPending.Count | Should -Be 2
 
@@ -142,7 +152,7 @@ Describe "Service backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -166,7 +176,7 @@ Describe "Service backup and restore roundtrip" {
 
         Mock Get-ItemProperty {
             return [PSCustomObject]@{ DelayedAutostart = 0 }
-        } -ParameterFilter { $Name -eq "DelayedAutostart" }
+        } -ParameterFilter { $Path -like "*\Services\*" }
 
         Backup-ServiceState -ServiceName "DiagTrack" -StepTitle "Service Test Step"
 
@@ -218,7 +228,7 @@ Describe "BootConfig backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -260,6 +270,19 @@ Describe "BootConfig backup and restore roundtrip" {
         $entry = $SCRIPT:_backupPending[0]
         $entry.existed | Should -Be $false
         $entry.originalValue | Should -BeNullOrEmpty
+    }
+
+    It "Backup-BootConfig reports a failed BCD inventory" {
+        Mock bcdedit {
+            $global:LASTEXITCODE = 1
+            "access denied"
+        }
+
+        $capture = Backup-BootConfig -Key "disabledynamictick" -StepTitle "Boot Test Step" -PassThru
+
+        $capture.Captured | Should -BeFalse
+        $capture.Message | Should -Match "exit code 1"
+        $SCRIPT:_backupPending.Count | Should -Be 0
     }
 
     It "BootConfig restore calls bcdedit /set for existing values" {
@@ -316,7 +339,7 @@ Describe "PowerPlan backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -324,18 +347,73 @@ Describe "PowerPlan backup and restore roundtrip" {
         Mock Write-Info {}
     }
 
-    It "Backup-PowerPlan captures active plan GUID" {
+    It "Backup-PowerPlan durably captures and verifies the active plan GUID" {
         Mock powercfg {
+            $global:LASTEXITCODE = 0
             return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
         }
 
         Backup-PowerPlan -StepTitle "PowerPlan Test Step"
 
-        $SCRIPT:_backupPending.Count | Should -Be 1
-        $entry = $SCRIPT:_backupPending[0]
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 1
+        $entry = @($backup.entries)[0]
         $entry.type | Should -Be "powerplan"
         $entry.originalGuid | Should -Be "381b4222-f694-41f0-9685-ff5bb260df2e"
         $entry.originalName | Should -Be "Balanced"
+    }
+
+    It "aborts power-plan backup when durable persistence fails" {
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+        }
+        Mock Save-BackupData { throw "disk full" }
+
+        { Backup-PowerPlan -StepTitle "PowerPlan Test Step" } | Should -Throw '*disk full*'
+
+        $SCRIPT:_backupPending.Count | Should -Be 1
+    }
+
+    It "aborts when the active power plan cannot be identified" {
+        Mock powercfg {
+            $global:LASTEXITCODE = 1
+            return "access denied"
+        }
+
+        { Backup-PowerPlan -StepTitle "PowerPlan Test Step" } | Should -Throw '*durable power-plan restore point*'
+
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 0
+    }
+
+    It "reuses a durable original restore point when the active plan is suite-owned" {
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            return "Power Scheme GUID: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee  (frametime.cfg)"
+        }
+
+        { Backup-PowerPlan -StepTitle "frametime.cfg Power Plan" } | Should -Not -Throw
+
+        $SCRIPT:_backupPending.Count | Should -Be 0
+        $backup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($backup.entries).Count | Should -Be 1
+        @($backup.entries)[0].originalGuid | Should -Be "381b4222-f694-41f0-9685-ff5bb260df2e"
     }
 
     It "Backup-PowerPlan skips in DRY-RUN" {
@@ -344,6 +422,180 @@ Describe "PowerPlan backup and restore roundtrip" {
         Backup-PowerPlan -StepTitle "PowerPlan DRY Test"
 
         $SCRIPT:_backupPending.Count | Should -Be 0
+    }
+
+    It "does not update backup ownership metadata under WhatIf" {
+        $oldGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        $newGuid = '11111111-2222-3333-4444-555555555555'
+        $pendingEntry = [ordered]@{
+            type = 'powerplan'; originalGuid = '381b4222-f694-41f0-9685-ff5bb260df2e'
+            suiteOwnedGuids = @($oldGuid); step = 'PowerPlan Test Step'
+        }
+        $SCRIPT:_backupPending.Add($pendingEntry)
+        New-TestBackupFile -Entries @([ordered]@{
+            type = 'powerplan'; originalGuid = '381b4222-f694-41f0-9685-ff5bb260df2e'
+            suiteOwnedGuids = @($oldGuid); step = 'PowerPlan Test Step'
+        })
+
+        Update-PowerPlanBackupOwnership -OwnedGuids @($newGuid) -WhatIf
+
+        @($SCRIPT:_backupPending[0].suiteOwnedGuids) | Should -Be @($oldGuid)
+        $saved = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @(@($saved.entries)[0].suiteOwnedGuids) | Should -Be @($oldGuid)
+    }
+
+    It "does not update recorded ownership state under WhatIf" {
+        $oldGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        $newGuid = '11111111-2222-3333-4444-555555555555'
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = 'RECOMMENDED'; suiteOwnedPowerPlanGuids = @($oldGuid)
+        }) -Path $CFG_StateFile
+
+        Set-RecordedSuiteOwnedPowerPlanGuids -OwnedGuids @($newGuid) -WhatIf
+
+        $saved = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($saved.suiteOwnedPowerPlanGuids) | Should -Be @($oldGuid)
+    }
+
+    It "restore deletes only recorded suite-owned GUIDs and leaves foreign same-name plans alone" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $foreignSameNameGuid = "11111111-2222-3333-4444-555555555555"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        $script:restorePowerCommands = [System.Collections.Generic.List[string]]::new()
+        Mock powercfg {
+            $script:restorePowerCommands.Add(($CmdArgs -join ' '))
+            $global:LASTEXITCODE = 0
+            if ($CmdArgs[0] -eq '/list') {
+                return @(
+                    "Power Scheme GUID: $ownedGuid  (frametime.cfg)",
+                    "Power Scheme GUID: $foreignSameNameGuid  (frametime.cfg)"
+                )
+            }
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        $script:restorePowerCommands | Should -Contain "/setactive $originalGuid"
+        $script:restorePowerCommands | Should -Contain "/delete $ownedGuid"
+        $script:restorePowerCommands | Should -Not -Contain "/delete $foreignSameNameGuid"
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/list' }
+    }
+
+    It "retains only failed suite-owned deletions and retries them" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $deletedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $retryGuid = "11111111-2222-3333-4444-555555555555"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($deletedGuid, $retryGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($deletedGuid, $retryGuid)
+        }) -Path $CFG_StateFile
+        $script:failRetryDeletion = $true
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555" -and $script:failRetryDeletion) {
+                $global:LASTEXITCODE = 1
+                return 'access denied'
+            }
+            if ($CmdArgs[0] -eq '/list') {
+                $global:LASTEXITCODE = 0
+                if ($script:failRetryDeletion) {
+                    return "Power Scheme GUID: 11111111-2222-3333-4444-555555555555  (frametime.cfg)"
+                }
+                return "Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)"
+            }
+            $global:LASTEXITCODE = 0
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $false
+
+        $retainedBackup = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($retainedBackup.entries).Count | Should -Be 1
+        @(@($retainedBackup.entries)[0].suiteOwnedGuids) | Should -Be @($retryGuid)
+        $retainedState = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($retainedState.suiteOwnedPowerPlanGuids) | Should -Be @($retryGuid)
+
+        $script:failRetryDeletion = $false
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
+        $restoredState = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        @($restoredState.suiteOwnedPowerPlanGuids).Count | Should -Be 0
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+        Should -Invoke powercfg -Exactly 2 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555"
+        }
+    }
+
+    It "converges when state persistence fails after deletion and the stale GUID is already absent on retry" {
+        $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $ownedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        New-TestBackupFile -Entries @([ordered]@{
+            type = "powerplan"
+            originalGuid = $originalGuid
+            originalName = "Balanced"
+            suiteOwnedGuids = @($ownedGuid)
+            step = "PowerPlan Test Step"
+            timestamp = "2026-01-01"
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = "RECOMMENDED"
+            suiteOwnedPowerPlanGuids = @($ownedGuid)
+        }) -Path $CFG_StateFile
+        $script:deleteCalls = 0
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/delete') {
+                $script:deleteCalls++
+                $global:LASTEXITCODE = if ($script:deleteCalls -eq 1) { 0 } else { 1 }
+                return $(if ($global:LASTEXITCODE -eq 0) { '' } else { 'scheme does not exist' })
+            }
+            if ($CmdArgs[0] -eq '/list') {
+                $global:LASTEXITCODE = 0
+                return "Power Scheme GUID: $originalGuid  (Balanced)"
+            }
+            $global:LASTEXITCODE = 0
+        }
+        $script:StateWriter = ${function:Set-RecordedSuiteOwnedPowerPlanGuids}
+        $script:stateWriteCalls = 0
+        Mock Set-RecordedSuiteOwnedPowerPlanGuids {
+            param($OwnedGuids)
+            $script:stateWriteCalls++
+            if ($script:stateWriteCalls -eq 1) { throw "injected state persistence failure" }
+            & $script:StateWriter -OwnedGuids $OwnedGuids
+        }
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $false
+
+        $retained = Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json
+        @($retained.entries).Count | Should -Be 1
+        @(@($retained.entries)[0].suiteOwnedGuids).Count | Should -Be 0
+
+        Restore-StepChanges -StepTitle "PowerPlan Test Step" | Should -Be $true
+
+        @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
+        @((Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json).suiteOwnedPowerPlanGuids).Count | Should -Be 0
+        $script:deleteCalls | Should -Be 2
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/list' }
     }
 }
 
@@ -358,7 +610,7 @@ Describe "ScheduledTask backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -367,8 +619,12 @@ Describe "ScheduledTask backup and restore roundtrip" {
     }
 
     It "Backup-ScheduledTask captures existing enabled task" {
+        $script:TaskQueryCount = 0
         Mock Get-ScheduledTask {
-            return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
+            $script:TaskQueryCount++
+            if ($script:TaskQueryCount -eq 1) {
+                return [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; TaskPath = "\"; State = "Ready" }
+            }
         }
 
         Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step"
@@ -384,12 +640,23 @@ Describe "ScheduledTask backup and restore roundtrip" {
     It "Backup-ScheduledTask captures non-existent task" {
         Mock Get-ScheduledTask { $null }
 
-        Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step" -ScriptPath "C:\test.ps1"
+        $capture = Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step" -ScriptPath "C:\test.ps1" -PassThru
 
+        $capture.Captured | Should -BeTrue -Because $capture.Message
         $entry = $SCRIPT:_backupPending[0]
         $entry.existed | Should -Be $false
         $entry.wasEnabled | Should -Be $false
         $entry.scriptPath | Should -Be "C:\test.ps1"
+    }
+
+    It "Backup-ScheduledTask reports an authoritative query failure" {
+        Mock Get-ScheduledTask { throw "provider unavailable" }
+
+        $capture = Backup-ScheduledTask -TaskName "CS2_Optimize_CCD_Affinity" -StepTitle "Task Test Step" -PassThru
+
+        $capture.Captured | Should -BeFalse
+        $capture.Message | Should -Match "provider unavailable"
+        $SCRIPT:_backupPending.Count | Should -Be 0
     }
 
     It "Restore removes task that did not exist before" {
@@ -480,7 +747,7 @@ Describe "Corrupted backup.json recovery" {
 
         Mock Write-DebugLog {}
         Mock Write-Warn {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
     }
 
     It "Get-BackupDataRaw recovers from corrupted JSON" {
@@ -528,7 +795,7 @@ Describe "Restore security validation" {
         Reset-IntegrationState
         $SCRIPT:DryRun = $false
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -641,7 +908,7 @@ Describe "NIC adapter backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -701,7 +968,7 @@ Describe "QoS/URO backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -755,7 +1022,7 @@ Describe "Defender backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -799,7 +1066,7 @@ Describe "Pagefile backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -859,7 +1126,7 @@ Describe "DNS backup and restore roundtrip" {
 
         New-TestBackupFile -Entries @()
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -898,6 +1165,41 @@ Describe "DNS backup and restore roundtrip" {
         $result | Should -Be $false
         @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
     }
+
+    It "fails closed when the backed-up adapter name no longer resolves" {
+        Backup-DnsConfig -AdapterName "Ethernet" -InterfaceIndex 12 -OriginalDnsServers @("1.1.1.1") -StepTitle "DNS Test Step"
+        Flush-BackupBuffer
+
+        Mock Get-NetAdapter { $null }
+        Mock Set-DnsClientServerAddress {}
+
+        $result = Restore-StepChanges -StepTitle "DNS Test Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "fails closed when the backup lacks an adapter name" {
+        $entries = @(
+            [ordered]@{
+                type = "dns"; adapterName = ""; interfaceIndex = 12;
+                originalDnsServers = @("1.1.1.1"); step = "DNS Test Step";
+                timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+
+        Mock Get-NetAdapter {}
+        Mock Set-DnsClientServerAddress {}
+
+        $result = Restore-StepChanges -StepTitle "DNS Test Step"
+
+        $result | Should -Be $false
+        Should -Invoke Get-NetAdapter -Exactly 0
+        Should -Invoke Set-DnsClientServerAddress -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
 }
 
 # ── DRS backup/restore roundtrip ────────────────────────────────────────────
@@ -907,7 +1209,7 @@ Describe "DRS backup and restore roundtrip" {
         Reset-IntegrationState
         $SCRIPT:DryRun = $false
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}

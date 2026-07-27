@@ -1,42 +1,53 @@
-name: Feature Request
-description: Suggest a new optimization, tweak, or improvement
+name: Change proposal
+description: Propose a scoped feature or configuration change
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Have an idea for a new optimization? We prioritize evidence-based suggestions.
+        Describe the requested behavior and the implementation or measurement
+        evidence available for review.
 
   - type: textarea
     id: description
     attributes:
-      label: What would you like added or changed?
+      label: Proposed change
+      description: State the current behavior, requested behavior, and intended user.
     validations:
       required: true
 
   - type: textarea
     id: evidence
     attributes:
-      label: Evidence / source
+      label: Reproduction or evidence
       description: |
-        Link to benchmarks, testing methodology, or community discussion that supports this.
-        We don't add tweaks without evidence — even "community consensus" counts if sourced.
-      placeholder: |
-        e.g. CapFrameX results, djdallmann testing, Blur Busters article, etc.
+        Link vendor documentation or provide sanitized, reproducible benchmark,
+        trace, or test details. State uncertainty and conflicting results.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Runtime and recovery impact
+      description: Identify required privileges, persistent changes, failure modes, and rollback needs.
+    validations:
+      required: true
 
   - type: dropdown
     id: category
     attributes:
       label: Category
       options:
-        - Windows registry / scheduler
-        - NVIDIA driver / DRS
-        - AMD GPU
-        - Network / NIC
-        - CS2 CVars / autoexec
-        - CS2 video settings
+        - Windows registry or scheduler
+        - NVIDIA driver or DRS
+        - AMD or Intel GPU
+        - Network or NIC
+        - CS2 configuration
         - Power plan
-        - Services / debloat
+        - Services or AppX
+        - Desktop interface
+        - CI or repository maintenance
         - Documentation
         - Other
     validations:

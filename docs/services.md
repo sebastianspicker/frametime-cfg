@@ -1,157 +1,110 @@
-# Windows Services — Deep Dive
+# Windows Services
 
-> Covers Phase 1 Step 37 and partial Step 13 (telemetry services).
+This document covers the seven services in Phase 1 Step 37, the two telemetry
+services in Step 13, and the optional Windows Update service block in Step 15.
 
-The suite disables seven Windows services across two steps. Each service is disabled for a specific, measured reason — not because "less services = faster". This document explains what each service does, why it's disabled, what breaks if you disable it, and when to re-enable it.
+## Evidence boundary
 
----
+The repository can verify service discovery, requested startup state, stop
+operations, and backup handling. It does not contain committed process, disk,
+network, DPC, or CS2 benchmark traces that isolate the effect of disabling each
+service. A service being idle or periodically active does not establish a
+measurable game impact.
 
-## Step 37 Services (T3 — COMPETITIVE+)
+Disabling a service removes its functionality system-wide. Review the
+compatibility consequences and retain the Windows default when the machine is
+not dedicated to the documented use case.
 
-These require user confirmation and are applied only at COMPETITIVE profile or above.
+## Phase 1 Step 37
 
-### SysMain (Superfetch)
+Step 37 is a higher-tier action that disables these services when present:
 
-**What it does:** Prefetches frequently-used application data into RAM during idle periods, so apps launch faster from cold.
+| Service | Windows function | Main consequence when disabled |
+|---|---|---|
+| `SysMain` | Application prefetch and memory-use optimization. | Application cold launches can become slower. |
+| `WSearch` | Windows file, content, and application indexing. | Start, Explorer, Outlook, and content search can become slower or incomplete. |
+| `QWAVE` | Quality Windows Audio Video Experience APIs and QoS support. | Applications using qWave APIs can lose related QoS behavior. |
+| `XblAuthManager` | Xbox Live authentication. | Xbox Live and Game Pass sign-in can fail. |
+| `XblGameSave` | Xbox cloud-save synchronization. | Cloud saves stop synchronizing. |
+| `XboxNetApiSvc` | Xbox Live multiplayer networking services. | Xbox Live multiplayer and related networking can fail. |
+| `XboxGipSvc` | Xbox accessory management. | Xbox Wireless controllers, headsets, or accessories can stop working. |
 
-**Why disabled:** SysMain's prefetch engine monitors disk access patterns continuously and moves data between RAM and disk in the background. On spinning HDDs, this is a net win — cold launches go from 10+ seconds to 2–3 seconds. On NVMe drives, where cold read speeds exceed 3 GB/s, the prefetch benefit is negligible (a 100 MB load takes 33ms from NVMe vs. 32ms from RAM prefetch). The cost remains: SysMain's background I/O competes with CS2's shader cache reads and config file accesses.
+### SysMain
 
-**djdallmann measurement:** SysMain can consume 5–12% CPU and significant disk I/O during active prefetch passes, which can overlap with CS2 play sessions if the system was recently booted or a new application was run.
+SysMain can perform background prefetch work and can also improve application
+launch behavior. Storage type alone does not determine whether disabling it is
+beneficial. Compare application launch time, memory pressure, storage activity,
+and game traces before retaining the change.
 
-**What breaks:** Application cold launch times increase. First-launch of Steam, Chrome, or Office is noticeably slower. This is the main reason this is T3 — the trade-off is real and user-visible outside CS2.
+### Windows Search
 
-**When to re-enable:** If you notice significantly slower app startup times and your CS2 sessions are not showing measurable improvement, re-enable SysMain (`Set-Service SysMain -StartupType Automatic`).
+The Windows Search indexer performs background indexing according to Windows
+policy and idle detection. Disabling it prevents future index maintenance and
+can materially reduce search functionality. Prefer configuring indexed
+locations or maintenance timing when search is required.
 
-**Impact on CS2:** Low-to-moderate. Most measurable on systems with SATA SSDs or when SysMain prefetch passes happen to overlap with play sessions.
+### qWave
 
----
+Step 16 creates separate Windows QoS policies for CS2. Those policies are not a
+proof that qWave is redundant for every other application. Re-enable `QWAVE` if
+multimedia, streaming, or other QoS-aware software regresses.
 
-### WSearch (Windows Search)
+### Xbox services
 
-**What it does:** Indexes file system content (file names, document text, email) to enable fast Windows Search results.
+CS2 does not require Xbox Live services, but other installed games and devices
+can. Do not disable the group on a PC used for Game Pass, Microsoft Store games,
+Xbox cloud saves, Xbox multiplayer, or Xbox Wireless accessories unless the
+loss of those features is accepted.
 
-**Why disabled:** The indexer runs continuous background I/O passes, prioritized below active foreground I/O but still consuming disk throughput. The indexer's maintenance window is supposed to run at 3 AM during idle, but it reschedules to "next idle moment" if the system was off at 3 AM — which includes CS2 sessions for many players.
+## Phase 1 Step 13
 
-**What breaks:** Windows Search (Start menu search, File Explorer search) becomes dramatically slower for content-based queries. Searching for a file by name still works via filesystem scan; searching by content or metadata requires the index.
+Step 13 disables these services when present:
 
-**When to re-enable:** If you rely on Windows Search for work (searching Outlook, searching documents), re-enable WSearch. The CS2 impact is mild on NVMe systems; the Windows usability cost is high for productivity users.
+| Service | Windows function | Main consequence when disabled |
+|---|---|---|
+| `DiagTrack` | Connected User Experiences and Telemetry. | Windows diagnostic and usage-data workflows can change. |
+| `dmwappushservice` | Device Management WAP Push support. | Mobile-device management and Intune workflows can fail. |
 
----
+`dmwappushservice` must not be disabled on an organization-managed or MDM-enrolled
+PC without administrator approval. `DiagTrack` can also be controlled by
+organization policy. A local write can be reverted or overridden by management
+policy.
 
-### qWave (Quality Windows Audio/Video Experience)
+## Phase 1 Step 15
 
-**What it does:** A QoS probe service that periodically sends UDP probes to network endpoints to estimate available bandwidth and latency. Applications can use the qWave API to request priority for their network traffic.
+Step 15 is a `CRITICAL` T3 operation that targets `wuauserv`, `UsoSvc`, and
+`WaaSMedicSvc` when present. If the profile risk gate permits the step and the
+operator accepts it, the workflow captures all present service states, persists
+those records, then requests `Disabled` and stops each service. Any capture,
+persistence, mutation, or postcondition failure prevents the step from being
+recorded as complete.
 
-**Why disabled:** Two reasons:
+This is not a performance optimization. Disabling these services interferes
+with normal Windows security and quality updates. Skip the step on systems that
+depend on normal Windows servicing. Recovery restores recorded startup and
+running state, but organization policy or a later Windows change can override
+that state.
 
-1. **Redundant with Step 16.** The suite already applies DSCP EF=46 marking to CS2's network traffic via NDIS policies (Step 16). DSCP marking is applied at the packet level by the network stack, independently of qWave. qWave's probe packets and CS2's DSCP marking coexist, but qWave adds no additional benefit once DSCP is configured correctly.
+## Current requested state
 
-2. **Periodic DPC noise.** qWave's probe mechanism generates UDP packets on a timer, causing periodic NDIS DPC events. These are small (microsecond range) but measurable in LatencyMon traces as regular DPC spikes from `ndis.sys` that have no relation to CS2's own traffic.
+The suite requests `Disabled` and stops each selected service. Windows defaults
+vary by edition, build, installation history, and policy, so the document does
+not assign one universal default startup type.
 
-**What breaks:** Applications using the qWave API for QoS requests lose their priority (Windows Media Player's multimedia mode, for example). WMV hardware acceleration may degrade on some configurations. Most games do not use qWave.
+## Recovery
 
-**Important:** The DSCP policies written by Step 16 survive qWave being disabled. DSCP is enforced by NDIS, not by the qWave service. Disabling qWave does not remove CS2's packet prioritization.
+The backup system records the original startup type and running state before a
+supported service mutation. Restore the relevant step through the Recovery
+workflow rather than assuming `Manual` or `Automatic` for every machine.
 
-**When to re-enable:** If Windows Media Player or streaming applications behave unexpectedly, or if you want qWave's QoS for other applications.
+For manual recovery, inspect the recorded entry first, then restore that startup
+type and running state:
 
----
-
-### Xbox Services
-
-Four Xbox Live services are disabled as a group. Each has a specific function and a specific re-enable condition.
-
-#### XblAuthManager (Xbox Live Auth Manager)
-
-**What it does:** Handles Xbox Live authentication tokens for Windows Store games and applications. Periodically refreshes auth tokens in the background, making network requests to Xbox Live servers.
-
-**Why disabled:** Background periodic network requests from `XblAuthManager` appear in packet captures as intermittent HTTPS traffic to Xbox Live endpoints. These happen even when no Xbox or Windows Store content is running. The requests are small but generate occasional NIC receive interrupts and brief NDIS DPC activity.
-
-**What breaks:** Windows Store games requiring Xbox Live authentication will fail to sign in. Xbox Game Pass requires this service.
-
-**When to re-enable:** If you use Xbox Game Pass or any Windows Store game requiring Xbox Live signin.
-
----
-
-#### XblGameSave (Xbox Live Game Save)
-
-**What it does:** Syncs game save data to Xbox Live cloud storage for Xbox/Windows Store games.
-
-**Why disabled:** Like XblAuthManager, this service has periodic background I/O — reading local save files and syncing to Xbox Live. The sync events are disk and network I/O with unpredictable timing.
-
-**What breaks:** Xbox Live cloud saves stop syncing. Local saves are preserved — data is not lost, only cloud sync stops.
-
-**When to re-enable:** If you use any game with Xbox cloud saves that you want synchronized.
-
----
-
-#### XboxNetApiSvc (Xbox Live Networking Service)
-
-**What it does:** Provides network connectivity abstractions for Xbox Live — handling NAT traversal, relay servers, and peer-to-peer networking for Xbox Live multiplayer.
-
-**Why disabled:** Background periodic network activity for Xbox Live networking maintenance, even when no game is running.
-
-**What breaks:** Xbox Live multiplayer in Windows Store games. CS2 does not use Xbox Live networking.
-
-**When to re-enable:** If you use any Windows Store game with Xbox Live multiplayer.
-
----
-
-#### XboxGipSvc (Xbox Accessory Management Service)
-
-**What it does:** Manages Xbox wireless accessories — controllers, headsets, and other peripherals using the Xbox Wireless protocol.
-
-**Why disabled:** Background service overhead. No periodic network activity, but it runs a driver monitoring loop.
-
-**What breaks:** Xbox wireless controllers and headsets stop working. This is the most likely to affect users. USB-connected Xbox controllers use a different driver path and are unaffected. Only Xbox Wireless protocol devices need this service.
-
-**When to re-enable:** If you use an Xbox wireless controller or Xbox headset. Run: `Set-Service XboxGipSvc -StartupType Manual`.
-
----
-
-## Step 13 Services (T2 — RECOMMENDED+)
-
-### DiagTrack (Connected User Experiences and Telemetry)
-
-**What it does:** Collects Windows diagnostic and usage data and uploads it to Microsoft. Runs background data collection, compresses it, and transmits it periodically.
-
-**Why disabled:** Background CPU and network activity with no benefit to the user. The service runs as a long-lived daemon with periodic wakeups.
-
-**What breaks:** Microsoft telemetry upload stops. Windows Update recommendations and Windows Insider feedback are affected. No user-facing functionality is lost.
-
----
-
-### dmwappushservice (Device Management WAP Push)
-
-**What it does:** Handles WAP push messages for mobile device management (MDM) — primarily relevant in enterprise environments where devices are managed via Microsoft Intune or similar MDM solutions.
-
-**Why disabled:** Irrelevant on non-managed home gaming systems. On a standalone gaming PC not enrolled in enterprise MDM, this service does nothing. Disabling it removes its daemon overhead.
-
-**What breaks:** MDM/Intune provisioning stops working. On home gaming systems: nothing.
-
----
-
-## Service State Summary
-
-| Service | Default State | Suite Sets | What Breaks If Disabled | Re-enable If |
-|---------|--------------|------------|------------------------|--------------|
-| SysMain | Automatic | Disabled | Slower app cold launches | Noticeable launch time regression |
-| WSearch | Automatic | Disabled | Slow File Explorer search | You rely on content search |
-| qWave | Manual | Disabled | WMP QoS, some multimedia apps | Streaming apps behave poorly |
-| XblAuthManager | Manual | Disabled | Xbox Game Pass signin | You use Game Pass |
-| XblGameSave | Manual | Disabled | Xbox cloud saves | You use Xbox cloud saves |
-| XboxNetApiSvc | Manual | Disabled | Xbox Live multiplayer | You play Xbox Live multiplayer |
-| XboxGipSvc | Manual | Disabled | Xbox wireless controller/headset | You use Xbox wireless peripherals |
-| DiagTrack | Automatic | Disabled | Microsoft telemetry | Never (for home users) |
-| dmwappushservice | Manual | Disabled | MDM/Intune provisioning | Enterprise MDM enrolled |
-
----
-
-## Rollback
-
-All service states are backed up before modification. Restore any step via START.bat → [7] Restore / Rollback → select "Disable SysMain + Search + QWAVE + Xbox".
-
-Manual re-enable for any service:
 ```powershell
-Set-Service <ServiceName> -StartupType Manual   # or Automatic
-Start-Service <ServiceName>
+Set-Service <ServiceName> -StartupType <RecordedStartType>
+Start-Service <ServiceName>  # only if it was previously running
 ```
+
+After recovery, test search, application launch, media, Game Pass, Xbox devices,
+cloud saves, multiplayer, Windows diagnostics, and device-management behavior as
+applicable.

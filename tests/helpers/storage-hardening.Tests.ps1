@@ -28,53 +28,6 @@ Describe "Initialize-Backup hardening" {
     }
 }
 
-Describe "Prune-BackupVersions" {
-
-    BeforeEach { Reset-TestState }
-
-    It "removes the oldest versioned backups beyond CFG_BackupMaxVersions" {
-        $CFG_BackupMaxVersions = 2
-        @(
-            "backup.20260101-000001.json",
-            "backup.20260101-000002.json",
-            "backup.20260101-000003.json"
-        ) | ForEach-Object {
-            Set-Content (Join-Path $SCRIPT:TestTempRoot $_) -Value "{}" -Encoding UTF8
-        }
-
-        Prune-BackupVersions
-
-        $remaining = @(
-            Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" |
-                Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}\.json$' } |
-                Sort-Object Name
-        )
-        @($remaining.Name) | Should -Be @(
-            "backup.20260101-000002.json",
-            "backup.20260101-000003.json"
-        )
-    }
-
-    It "preserves at least one version when CFG_BackupMaxVersions is zero" {
-        $CFG_BackupMaxVersions = 0
-        @(
-            "backup.20260101-000001.json",
-            "backup.20260101-000002.json"
-        ) | ForEach-Object {
-            Set-Content (Join-Path $SCRIPT:TestTempRoot $_) -Value "{}" -Encoding UTF8
-        }
-
-        Prune-BackupVersions
-
-        $remaining = @(
-            Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" |
-                Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}\.json$' } |
-                Sort-Object Name
-        )
-        @($remaining.Name) | Should -Be @("backup.20260101-000002.json")
-    }
-}
-
 Describe "Get-BackupDataRaw corruption handling" {
 
     BeforeEach {
@@ -94,6 +47,19 @@ Describe "Get-BackupDataRaw corruption handling" {
             Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.*.json" |
                 Where-Object { $_.Name -match '^backup\.\d{8}-\d{6}(?:\d{3})?\.json$' }
         ).Count | Should -Be 0
+    }
+
+    It "leaves the only corrupted backup untouched when preservation fails" {
+        $corruptContent = "not json and must survive"
+        Set-Content $CFG_BackupFile -Value $corruptContent -Encoding UTF8
+        Mock Copy-Item { throw "disk full" }
+        Mock Write-Warn {}
+
+        { Get-BackupDataRaw } | Should -Throw '*Refusing to reset corrupted backup*'
+
+        Test-Path -LiteralPath $CFG_BackupFile | Should -Be $true
+        (Get-Content -LiteralPath $CFG_BackupFile -Raw).Trim() | Should -BeExactly $corruptContent
+        @(Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.corrupt.*.json").Count | Should -Be 0
     }
 }
 
@@ -130,6 +96,25 @@ Describe "Sensitive JSON ACL re-application" {
         Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_StateFile -and $Required }
     }
 
+    It "persists an explicitly authorized GUI preview selection into an absent directory" {
+        $originalStateFile = $CFG_StateFile
+        $previewRoot = Join-Path $SCRIPT:TestTempRoot "gui-preview-state"
+        $CFG_StateFile = Join-Path $previewRoot "state.json"
+        $SCRIPT:DryRun = $true
+        try {
+            Save-SuiteState -State ([PSCustomObject]@{
+                mode = "DRY-RUN"
+                profile = "SAFE"
+            }) -AllowDryRunPersistence
+
+            Test-Path -LiteralPath $CFG_StateFile | Should -BeTrue
+            (Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json).mode | Should -Be "DRY-RUN"
+        } finally {
+            $CFG_StateFile = $originalStateFile
+            Remove-Item -LiteralPath $previewRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
 }
 
 Describe "Critical ACL failures" {
@@ -159,26 +144,40 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
         Mock Write-OK {}
         Mock Write-Warn {}
         Mock Write-Err {}
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
         Mock Set-SecureAcl {}
         Mock Set-ItemProperty {}
+        Mock New-Item {}
     }
 
     It "uses CFG_RunOnceExecutionPolicy in the RunOnce command line" {
         $CFG_RunOnceExecutionPolicy = "AllSigned"
 
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-            $Name -eq "CS2_Phase3" -and
+            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
+            $Name -eq "FRAMETIME_CFG_FRAMETIME_Phase3" -and
+            $Value -match "-Verb RunAs" -and
             $Value -match "-ExecutionPolicy AllSigned"
+        }
+    }
+
+    It "keeps Safe Mode execution semantics for the Phase 2 handoff" {
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\SafeMode-DriverClean.ps1" }
+
+        Set-RunOnce -name "FRAMETIME_Phase2" -scriptPath "C:\FRAMETIME_CFG\SafeMode-DriverClean.ps1" -SafeMode
+
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Name -eq "*!FRAMETIME_Phase2" -and
+            $Value -match "-ExecutionPolicy Bypass"
         }
     }
 
     It "rejects invalid CFG_RunOnceExecutionPolicy values" {
         $CFG_RunOnceExecutionPolicy = "Nope"
 
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'invalid CFG_RunOnceExecutionPolicy' }
         Should -Invoke Set-ItemProperty -Exactly 0
@@ -187,7 +186,7 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
     It "rejects Undefined because client policy precedence can block RunOnce" {
         $CFG_RunOnceExecutionPolicy = "Undefined"
 
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'unsupported on client systems' }
         Should -Invoke Set-ItemProperty -Exactly 0
@@ -196,7 +195,7 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
     It "rejects Unrestricted to keep the RunOnce trust surface narrow" {
         $CFG_RunOnceExecutionPolicy = "Unrestricted"
 
-        Set-RunOnce -name "CS2_Phase3" -scriptPath "C:\CS2_OPTIMIZE\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'invalid CFG_RunOnceExecutionPolicy' }
         Should -Invoke Set-ItemProperty -Exactly 0

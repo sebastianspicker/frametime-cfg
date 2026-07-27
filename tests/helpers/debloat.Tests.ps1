@@ -40,6 +40,16 @@ Describe "Invoke-GamingDebloat" {
 
     Context "AppX Package Removal" {
 
+        It "includes Win11 25H2 candidate packages in the explicit allowlist" {
+            $packages = Get-GamingDebloatPackageNames
+
+            $packages | Should -Contain "Microsoft.OutlookForWindows"
+            $packages | Should -Contain "Microsoft.Windows.DevHome"
+            $packages | Should -Contain "MSTeams"
+            $packages | Should -Contain "Microsoft.BingSearch"
+            $packages | Should -Contain "Microsoft.PowerAutomateDesktop"
+        }
+
         It "handles no bloatware packages found (already clean)" {
             Mock Get-AppxPackage { $null }
             Mock Get-AppxProvisionedPackage { $null }
@@ -50,7 +60,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Write-DebugLog {}
             Mock Set-RegistryValue {}
             Mock Write-ActionOK {}
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
 
@@ -62,6 +72,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-AppxPackage {
                 [PSCustomObject]@{ Name = "Microsoft.BingNews"; PackageFullName = "Microsoft.BingNews_1.0.0_x64" }
             }
+            Mock Get-AppxProvisionedPackage { $null }
             Mock Get-ScheduledTask { $null }
             Mock Write-Step {}
             Mock Write-OK {}
@@ -71,8 +82,8 @@ Describe "Invoke-GamingDebloat" {
             Mock Write-ActionOK {}
 
             $script:hostOutput = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host {
-                if ($Object) { $script:hostOutput.Add([string]$Object) }
+            Mock Write-ConsoleLine {
+                if ($Message) { $script:hostOutput.Add([string]$Message) }
             }
 
             Invoke-GamingDebloat
@@ -86,18 +97,133 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-AppxPackage {
                 [PSCustomObject]@{ Name = "Microsoft.BingNews"; PackageFullName = "Microsoft.BingNews_1.0.0_x64" }
             }
+            Mock Get-AppxProvisionedPackage { $null }
             Mock Remove-AppxPackage {}
             Mock Get-ScheduledTask { $null }
             Mock Write-Step {}
             Mock Write-OK {}
             Mock Write-DebugLog {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Set-RegistryValue {}
             Mock Write-ActionOK {}
 
             Invoke-GamingDebloat
 
             Should -Invoke Remove-AppxPackage -Times 0
+        }
+
+        It "removes provisioned-only allowlist packages" {
+            $SCRIPT:DryRun = $false
+            Mock Get-AppxPackage { $null }
+            Mock Get-AppxProvisionedPackage {
+                @([PSCustomObject]@{
+                    DisplayName = "Microsoft.Windows.DevHome"
+                    PackageName = "Microsoft.Windows.DevHome_1.0.0.0_neutral_8wekyb3d8bbwe"
+                })
+            }
+            Mock Remove-AppxProvisionedPackage {}
+            Mock Get-ScheduledTask { $null }
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
+            Mock Stop-Service {}
+            Mock Set-Service {}
+            Mock Write-Step {}
+            Mock Write-OK {}
+            Mock Write-Info {}
+            Mock Write-DebugLog {}
+            Mock Write-Warn {}
+            Mock Set-RegistryValue {}
+            Mock Write-ActionOK {}
+
+            Invoke-GamingDebloat
+
+            Should -Invoke Remove-AppxProvisionedPackage -Times 1
+        }
+
+        It "does not call Remove-AppxProvisionedPackage in DRY-RUN" {
+            $SCRIPT:DryRun = $true
+            Mock Get-AppxPackage { $null }
+            Mock Get-AppxProvisionedPackage {
+                @([PSCustomObject]@{
+                    DisplayName = "Microsoft.Windows.DevHome"
+                    PackageName = "Microsoft.Windows.DevHome_1.0.0.0_neutral_8wekyb3d8bbwe"
+                })
+            }
+            Mock Remove-AppxProvisionedPackage {}
+            Mock Get-ScheduledTask { $null }
+            Mock Write-Step {}
+            Mock Write-OK {}
+            Mock Write-DebugLog {}
+            Mock Write-ConsoleLine {}
+            Mock Set-RegistryValue {}
+            Mock Write-ActionOK {}
+
+            Invoke-GamingDebloat
+
+            Should -Invoke Remove-AppxProvisionedPackage -Times 0
+        }
+    }
+
+    Context "Preflight inventory" {
+
+        It "reports matched AppX, provisioned packages, services, and tasks" {
+            Mock Get-AppxPackage {
+                if ($Name -eq "Microsoft.BingSearch") {
+                    [PSCustomObject]@{
+                        Name = $Name
+                        PackageFullName = "Microsoft.BingSearch_1.0.0.0_neutral_8wekyb3d8bbwe"
+                    }
+                }
+            }
+            Mock Get-AppxProvisionedPackage {
+                @([PSCustomObject]@{
+                    DisplayName = "Microsoft.Windows.DevHome"
+                    PackageName = "Microsoft.Windows.DevHome_1.0.0.0_neutral_8wekyb3d8bbwe"
+                })
+            }
+            Mock Get-Service {
+                if ($Name -eq "DiagTrack") {
+                    [PSCustomObject]@{ Name = $Name; StartType = "Automatic"; Status = "Running" }
+                }
+            }
+            Mock Get-ScheduledTask {
+                if ($TaskPath -eq "\Microsoft\Windows\Application Experience\") {
+                    [PSCustomObject]@{
+                        TaskName = "ProgramDataUpdater"
+                        TaskPath = $TaskPath
+                        State = "Ready"
+                    }
+                }
+            }
+
+            $inventory = Get-GamingDebloatInventory
+
+            $inventory.AppxAvailable | Should -BeTrue
+            @($inventory.InstalledPackages).Count | Should -Be 1
+            $inventory.InstalledPackages[0].Name | Should -Be "Microsoft.BingSearch"
+            @($inventory.ProvisionedPackages).Count | Should -Be 1
+            $inventory.ProvisionedPackages[0].Name | Should -Be "Microsoft.Windows.DevHome"
+            @($inventory.Services | Where-Object { $_.NeedsDisable }).Count | Should -Be 1
+            @($inventory.Tasks | Where-Object { $_.NeedsDisable }).Count | Should -Be 1
+        }
+
+        It "prints a preflight summary before mutation" {
+            $inventory = [PSCustomObject]@{
+                AppxAvailable = $true
+                InstalledPackages = @([PSCustomObject]@{ Name = "Microsoft.BingSearch" })
+                ProvisionedPackages = @([PSCustomObject]@{ Name = "Microsoft.Windows.DevHome" })
+                Services = @([PSCustomObject]@{ Name = "DiagTrack"; StartType = "Automatic"; NeedsDisable = $true })
+                Tasks = @([PSCustomObject]@{ TaskName = "ProgramDataUpdater"; TaskPath = "\Microsoft\Windows\Application Experience\"; NeedsDisable = $true })
+            }
+            Mock Write-Step {}
+            Mock Write-Info {}
+            Mock Write-Sub {}
+
+            Write-GamingDebloatInventorySummary -Inventory $inventory
+
+            Should -Invoke Write-Step -ParameterFilter { $t -eq "Debloat preflight inventory..." } -Times 1
+            Should -Invoke Write-Sub -ParameterFilter { $t -like "*Microsoft.BingSearch*" } -Times 1
+            Should -Invoke Write-Sub -ParameterFilter { $t -like "*DiagTrack*" } -Times 1
+            Should -Invoke Write-Sub -ParameterFilter { $t -like "*ProgramDataUpdater*" } -Times 1
         }
     }
 
@@ -111,7 +237,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-Service {
                 [PSCustomObject]@{ Name = $Name; StartType = "Automatic"; Status = "Running" }
             }
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
             Mock Write-Step {}
@@ -135,7 +261,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-Service {
                 [PSCustomObject]@{ Name = $Name; StartType = "Automatic"; Status = "Running" }
             }
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
             Mock Write-Step {}
@@ -153,13 +279,14 @@ Describe "Invoke-GamingDebloat" {
         It "skips service disable in DRY-RUN" {
             $SCRIPT:DryRun = $true
             Mock Get-AppxPackage { $null }
+            Mock Get-AppxProvisionedPackage { $null }
             Mock Get-ScheduledTask { $null }
             Mock Set-Service {}
             Mock Stop-Service {}
             Mock Write-Step {}
             Mock Write-OK {}
             Mock Write-DebugLog {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Set-RegistryValue {}
             Mock Write-ActionOK {}
 
@@ -200,9 +327,11 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-ScheduledTask {
                 @([PSCustomObject]@{ TaskName = "TestTask"; TaskPath = "\Microsoft\Windows\Test\"; State = "Ready" })
             }
-            Mock Backup-ScheduledTask {}
+            Mock Backup-ScheduledTask {
+                Add-TestScheduledTaskBackupCapture -TaskName $TaskName -TaskPath $TaskPath -StepTitle $StepTitle
+            }
             Mock Disable-ScheduledTask { $null }
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
             Mock Write-Step {}
@@ -221,6 +350,7 @@ Describe "Invoke-GamingDebloat" {
         It "skips task disable in DRY-RUN" {
             $SCRIPT:DryRun = $true
             Mock Get-AppxPackage { $null }
+            Mock Get-AppxProvisionedPackage { $null }
             Mock Get-ScheduledTask {
                 @([PSCustomObject]@{ TaskName = "ProgramDataUpdater"; TaskPath = "\Microsoft\Windows\Application Experience\" })
             }
@@ -228,7 +358,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Write-Step {}
             Mock Write-OK {}
             Mock Write-DebugLog {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Set-RegistryValue {}
             Mock Write-ActionOK {}
 
@@ -244,7 +374,7 @@ Describe "Invoke-GamingDebloat" {
             Mock Get-AppxPackage { $null }
             Mock Get-AppxProvisionedPackage { $null }
             Mock Get-ScheduledTask { $null }
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
             Mock Write-Step {}
@@ -276,11 +406,11 @@ Describe "Invoke-GamingDebloat" {
 
         It "skips AppX removal when cmdlets not available" {
             Mock Get-Command { $null } -ParameterFilter { $Name -eq "Get-AppxPackage" }
-            # This test verifies the guard works — on platforms where
+            # This test verifies the guard works - on platforms where
             # Get-AppxPackage doesn't exist, it should fall through to
             # telemetry services without error.
             Mock Get-ScheduledTask { $null }
-            Mock Backup-ServiceState {}
+            Mock Backup-ServiceState { Add-TestServiceBackupCapture -ServiceName $ServiceName -StepTitle $StepTitle }
             Mock Stop-Service {}
             Mock Set-Service {}
             Mock Write-Step {}

@@ -38,7 +38,7 @@ Describe "SAFE profile behavior matrix" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -158,7 +158,7 @@ Describe "RECOMMENDED profile behavior matrix" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -256,7 +256,7 @@ Describe "COMPETITIVE profile behavior matrix" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -348,7 +348,7 @@ Describe "CUSTOM profile behavior matrix" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -440,7 +440,7 @@ Describe "SkipAction callback fires correctly across profiles" {
 
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -487,7 +487,7 @@ Describe "YOLO profile behavior matrix" {
         $SCRIPT:Profile = "YOLO"
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}

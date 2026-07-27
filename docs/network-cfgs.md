@@ -1,159 +1,178 @@
-# Network Condition CFGs — Deep Dive
+# Network Condition CFGs
 
-> Covers the `cfgs/` directory deployed by Phase 1 Step 34.
+This document covers the network configuration files deployed by Phase 1 Step
+34. These files select different client buffering and timeout values. They
+cannot repair packet loss, congestion, Wi-Fi interference, or poor ISP routing.
 
-CS2's network CVars do not fix a bad connection — they trade latency for resilience. The four CFGs map to a 2×2 matrix of the two independent failure modes:
+| Connection condition | Configuration | Buffer depth | Timeout |
+|---|---|---:|---:|
+| Low ping and stable delivery | `net_stable` | 0 | 30 seconds |
+| High ping and stable delivery | `net_highping` | 2 | 60 seconds |
+| Low ping with jitter or loss | `net_unstable` | 4 | 60 seconds |
+| High ping with jitter or loss | `net_bad` | 3 | 60 seconds |
 
-| | **Stable route** | **Unstable (jitter / loss)** |
-|---|---|---|
-| **Low ping** | `net_stable` — +0ms | `net_unstable` — +31ms |
-| **High ping (60ms+)** | `net_highping` — +16ms | `net_bad` — +23ms |
+Use a file from the CS2 console, for example `exec net_unstable`. Return to the
+least-buffered repository baseline with `exec net_stable`.
 
-Use from the CS2 console: `exec net_stable`, `exec net_bad`, etc. Reset with `exec net_stable`.
+## Evidence boundary
 
----
+`cl_net_buffer_ticks` is the primary buffering control used by these files.
+`cl_net_buffer_ticks_use_interp` and
+`cl_tickpacket_desired_queuelength` are accepted current-console settings in the
+repository's reference material, but their public semantics and effect are less
+well documented. Treat them as experimental configuration choices.
 
-## The Two Failure Modes
+CS2 uses Source 2 subtick input processing. A buffer value expressed in ticks
+must not be converted to a fixed millisecond cost using an assumed 64 Hz or 128
+Hz server tick rate. The repository contains no packet capture or engine trace
+that establishes an exact latency cost for these values. Compare configurations
+on the same route and game build before retaining a deeper buffer.
 
-CS2 uses UDP at 128 ticks/second — one packet every 7.8ms. Two distinct problems can affect packet delivery, and each requires a different CVar:
+## Connection conditions
 
-### Jitter — `cl_net_buffer_ticks`
+### Jitter
 
-Jitter is variance in packet delivery timing. The server sends packets on a perfectly regular 7.8ms interval. If your connection introduces ±20ms of delivery variance, the client receives packets in bursts and gaps rather than at steady intervals.
+Jitter is variation in packet arrival time. Bursts and gaps can occur even when
+the average round-trip time looks acceptable. A deeper client buffer can make
+irregular delivery less visible, but it can also delay the state presented by
+the client. The exact tradeoff depends on current engine behavior and the live
+connection.
 
-`cl_net_buffer_ticks` holds received ticks in a ring buffer and drains them at a fixed rate. This converts irregular delivery into steady rendering. A buffer of 4 ticks can absorb up to ~31ms of delivery variance before it reaches the renderer.
+### Packet loss
 
-**Trade-off:** every tick you buffer adds one tick of latency. At 128-tick, `cl_net_buffer_ticks 4` adds exactly 31.25ms above your base ping.
+Packet loss means a datagram does not arrive. Client interpolation may conceal
+some visual discontinuity, but it cannot recover the missing packet.
+`cl_interp_ratio 2` is retained in the non-stable profiles as a
+community-derived compatibility choice. Current Source 2 builds may manage this
+internally or ignore legacy interpolation controls, so the document does not
+assign a fixed interpolation window to the value.
 
-### Packet Loss — `cl_interp_ratio`
+### High base latency
 
-Packet loss means a tick never arrives at all. Unlike jitter, a lost packet cannot be recovered — CS2 uses UDP with no retransmit. The client must bridge the gap using the positions it did receive.
+A connection with high base latency has less room for additional buffering. The
+`net_bad` profile therefore uses a depth of 3 instead of the depth of 4 used by
+`net_unstable`. This is a repository policy choice, not a measured universal
+optimum. Try the shallower profile first and keep the deeper profile only if it
+improves repeatable delivery symptoms without unacceptable responsiveness.
 
-`cl_interp_ratio` controls the rendering interpolation window. With ratio `1`, the client interpolates between the last two received positions (~7.8ms window). With ratio `2`, it uses the last two tick intervals (~15.6ms window) — wide enough to bridge a single fully dropped packet without a visible position pop.
+## Configuration reference
 
-**Trade-off:** slightly increased positional lag, because entity positions are rendered slightly behind real-time to maintain a smooth window.
+### `net_stable`
 
-### Why both are needed simultaneously
-
-Jitter and loss frequently co-occur. A congested Wi-Fi channel, a 4G cell with marginal signal, or a bad ISP peering point typically produces both erratic delivery timing *and* occasional outright dropped packets. Setting only `cl_net_buffer_ticks` without `cl_interp_ratio 2` means that the ticks which do arrive are buffered smoothly, but the gaps from dropped packets are still visible. The `net_unstable` and `net_bad` configs set both.
-
----
-
-## The High Ping Tension
-
-The difficult case is `net_bad` — high base ping combined with an unstable connection.
-
-An unstable connection wants a deep buffer (`cl_net_buffer_ticks 4`, +31ms). But if your base ping is already 80ms, adding 31ms on top produces a 111ms round-trip — at which point the jitter absorption is visibly making the problem worse rather than better.
-
-`net_bad` uses `cl_net_buffer_ticks 3` (+23ms) as the compromise. This absorbs most jitter bursts (jitter up to ~23ms is fully hidden) while keeping the added latency cost smaller than the full 4-tick buffer. On a 80ms base ping:
-
-- 4 ticks: 80 + 31 = 111ms effective latency
-- 3 ticks: 80 + 23 = 103ms effective latency
-- 2 ticks: 80 + 16 = 96ms effective latency ← `net_highping` value (stable route only)
-
-The 3-tick choice acknowledges that at 80ms+ base ping you are already in a degraded gameplay state. The buffer protects against the worst jitter spikes without making an already-bad experience worse.
-
----
-
-## Per-Config Reference
-
-### `net_stable` — low ping, stable connection
-
-```
-cl_interp_ratio "1"               // 7.8ms interpolation window
-cl_net_buffer_ticks "0"           // no buffer — immediate rendering
+```text
+cl_interp_ratio "1"
+cl_net_buffer_ticks "0"
 cl_tickpacket_desired_queuelength "0"
 cl_timeout "30"
 ```
 
-**Added latency:** 0ms. All CVars at their minimum. Use on wired ethernet or fiber with consistent sub-5ms jitter and <1% loss.
+Use this as the baseline on a connection with consistent delivery. It requests
+no additional repository-configured network buffer.
 
----
+### `net_highping`
 
-### `net_highping` — high ping, stable route
-
-```
-cl_interp_ratio "2"               // 15.6ms window — high-ping routes have mild loss
-cl_net_buffer_ticks "2"           // +16ms buffer — absorbs minor variance
+```text
+cl_interp_ratio "2"
+cl_net_buffer_ticks "2"
 cl_tickpacket_desired_queuelength "1"
-cl_timeout "60"                   // extended — high-ping routes spike briefly
+cl_timeout "60"
 ```
 
-**Added latency:** +16ms. Intended for consistently high but *stable* ping: connecting to a distant region server, Starlink with clear sky, or an ISP with inefficient routing that nonetheless delivers packets reliably.
+Use this only when round-trip time is consistently high but delivery remains
+stable. The longer timeout tolerates transient route delay. The buffer remains
+shallower than the unstable profiles.
 
-`cl_interp_ratio 2` is included because high-ping routes carry a higher baseline probability of mild loss even when they appear stable. The 2-tick buffer is kept small deliberately — the connection is already expensive; don't add unnecessary depth.
+### `net_unstable`
 
----
-
-### `net_unstable` — low ping, jitter + loss
-
-```
-cl_interp_ratio "2"               // 15.6ms window — covers dropped packets
-cl_net_buffer_ticks "4"           // +31ms buffer — absorbs up to 31ms jitter
+```text
+cl_interp_ratio "2"
+cl_net_buffer_ticks "4"
 cl_tickpacket_desired_queuelength "2"
 cl_timeout "60"
 ```
 
-**Added latency:** +31ms. Use when your base ping is acceptable but the delivery is erratic: Wi-Fi with interference, 4G hotspot, congested home network (streaming/downloads), or ISP peering instability.
+Use this for repeatable jitter or packet-loss symptoms on a connection whose
+base round-trip time is otherwise acceptable. It is the deepest buffer provided
+by the repository.
 
-This is the worst-case config for connection quality on a low-latency network — maximum buffer depth combined with loss coverage. If you are seeing rubberbanding or position pops with `net_stable` but your ping reads low in the scoreboard, this config addresses that.
+### `net_bad`
 
----
-
-### `net_bad` — high ping + jitter/loss
-
-```
-cl_interp_ratio "2"               // 15.6ms window — loss coverage
-cl_net_buffer_ticks "3"           // +23ms buffer — compromise vs. highping
+```text
+cl_interp_ratio "2"
+cl_net_buffer_ticks "3"
 cl_tickpacket_desired_queuelength "2"
 cl_timeout "60"
 ```
 
-**Added latency:** +23ms above baseline (on top of your existing high base ping). Use when you have both problems at once: satellite internet in poor conditions, mobile roaming, hotel or hostel Wi-Fi, tethering with weak signal.
+Use this for the combination of high base latency and unstable delivery. No
+client configuration can make a severely degraded route suitable for
+latency-sensitive play.
 
-At this connection quality, no CVar configuration produces competitive gameplay. These settings make the experience as consistent as possible within the constraint. The 3-tick buffer is a deliberate compromise — see the tension section above.
+## Diagnostics
 
----
+Step 34 deploys two optional diagnostic files:
 
-## Diagnosing Your Condition
-
-### Check jitter
-
-Enable the HUD telemetry overlay set up by Step 34:
-
-```
-cl_hud_telemetry_net_quality_graph 1
-cl_hud_telemetry_serverrecvmargin_graph 1
+```text
+exec debug_hud
+exec debug_hud_off
 ```
 
-Watch the graphs during a full map. Irregular spikes in the quality graph indicate jitter. Gaps (missing bars) indicate packet loss.
+`debug_hud` shows CS2 telemetry and requests these console reports:
 
-### Check base ping
-
-Scoreboard ping is your base round-trip time. Consistently above 60ms → `net_highping` or `net_bad`. Under 40ms with instability → `net_unstable`.
-
-### Check routing
-
+```text
+net_print_sdr_ping_times
+net_status
+cl_ticktiming print detail
 ```
+
+The diagnostic file uses the current `_show` telemetry names and sets detailed
+telemetry to display continuously during diagnosis:
+
+| CVar | Diagnostic value | Repository use |
+|---|---:|---|
+| `cl_hud_telemetry_frametime_poor` | `8.0` | Highlights frame-time samples above the configured threshold. |
+| `cl_hud_telemetry_ping_poor` | `60.0` | Highlights round-trip time above the configured threshold. |
+| `cl_hud_telemetry_net_misdelivery_poor` | `1.0` | Highlights command or snapshot anomaly rates above the configured threshold. |
+| `cl_hud_telemetry_net_detailed` | `2` | Continuously displays detailed network telemetry. |
+
+`debug_hud_off` returns visibility and threshold controls to the repository's
+quiet defaults. The diagnostic files contain no key bindings,
+`host_writeconfig`, `developer 1`, or personal HUD and input preferences.
+
+### Compare profiles
+
+1. Use the same network, matchmaking region, and background traffic conditions.
+2. Observe a full match or repeatable local test with `net_stable` first.
+3. Record base round-trip time, jitter or late-delivery indicators, and loss.
+4. Apply one alternative profile and repeat the observation.
+5. Return to `net_stable` if the alternative does not produce a repeatable
+   improvement.
+
+Scoreboard ping is a round-trip indicator, not a complete route-quality
+measurement. Use the detailed telemetry for late delivery and loss.
+
+### Route checks
+
+```text
 tracert <server-ip>
 ping <server-ip> -n 100
 ```
 
-Look for:
-- Hops with >10% loss in `tracert` (loss mid-route, not just last hop)
-- High standard deviation in `ping -n 100` output (jitter)
-- Unexpected geographic hops (routing inefficiency)
+These commands can reveal route changes and variation, but intermediate routers
+may rate-limit ICMP responses. Apparent loss at an intermediate hop is not proof
+of forwarded game-traffic loss when later hops respond normally.
 
-If `tracert` shows consistent loss at an intermediate hop, `net_client_steamdatagram_enable_override 1` (already set in all configs) routes through Valve's SDR network instead of direct IP, which often bypasses the problematic hop.
+`net_client_steamdatagram_enable_override 1` requests Valve's Steam Datagram
+Relay path. That path can differ from direct routing, but it is not guaranteed to
+reduce latency or loss. Compare the observed result on the target connection.
 
----
+## Settings outside this problem
 
-## Settings That Cannot Help
-
-These are common suggestions that do not apply to CS2 or do not address connection quality:
-
-- **`cl_cmdrate`** — removed in CS2. The Source 2 netcode sends inputs every frame. Silently ignored.
-- **`cl_updaterate`** — server-side setting. The client cannot increase the server's send rate by setting this higher.
-- **`rate`** — already at maximum (`1000000`) in `optimization.cfg`. Higher values are clamped by the server.
-- **TCP-layer settings** (RSC, LSO, TCP autotuninglevel) — CS2 uses UDP for game traffic. TCP optimizations do not affect it.
-- **DNS changes** — DNS resolves the matchmaking server address once at connection time. DNS latency does not affect in-game packet delivery.
+- `cl_cmdrate` is a legacy control and does not configure Source 2 input
+  processing as it did in CS:GO.
+- `cl_updaterate` does not let a client increase a server's update behavior.
+- `rate` is already set to `1000000` by the repository; servers can apply their
+  own limits.
+- TCP RSC, LSO, and TCP auto-tuning do not control CS2's UDP game datagrams.
+- DNS selection can change name-resolution behavior but does not change packet
+  delivery after a game endpoint has been resolved.

@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
-#  helpers/step-catalog.ps1  —  Step metadata table for GUI display
+#  helpers/step-catalog.ps1  -  Step metadata table for GUI display
 #  Each entry mirrors the Invoke-TieredStep call in the phase scripts.
-#  Does NOT contain executable logic — pure data for the Optimize panel.
+#  Does NOT contain executable logic - pure data for the Optimize panel.
 #  When a phase step changes, update this table with the phase script and docs
 #  so the GUI does not drift from the actual terminal workflow.
 # ==============================================================================
@@ -12,12 +12,12 @@ $SCRIPT:StepCatalog = @(
     [PSCustomObject]@{ Phase=1; Step=2;  Category="Hardware"; Title="XMP/EXPO Check";              Tier=1; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=3;  Category="GPU";      Title="Clear Shader Cache";           Tier=1; Risk="SAFE";       Depth="FILESYSTEM"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=4;  Category="Display";  Title="Fullscreen Optimizations";     Tier=1; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=5;  Category="GPU";      Title="NVIDIA Driver Version";        Tier=2; Risk="AGGRESSIVE"; Depth="DRIVER"; CheckOnly=$true;  Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=6;  Category="System";   Title="CS2 Power Plan";               Tier=1; Risk="MODERATE";   Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
+    [PSCustomObject]@{ Phase=1; Step=5;  Category="GPU";      Title="NVIDIA Driver Version Inventory"; Tier=1; Risk="SAFE"; Depth="CHECK"; CheckOnly=$true; Reboot=$false }
+    [PSCustomObject]@{ Phase=1; Step=6;  Category="System";   Title="frametime.cfg Power Plan";     Tier=1; Risk="MODERATE";   Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=7;  Category="GPU";      Title="HAGS";                         Tier=2; Risk="MODERATE";   Depth="REGISTRY"; CheckOnly=$false; Reboot=$true  }
     [PSCustomObject]@{ Phase=1; Step=8;  Category="System";   Title="Pagefile";                     Tier=2; Risk="MODERATE";   Depth="REGISTRY"; CheckOnly=$false; Reboot=$true  }
     [PSCustomObject]@{ Phase=1; Step=9;  Category="GPU";      Title="Resizable BAR";                Tier=2; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$true  }
-    [PSCustomObject]@{ Phase=1; Step=10; Category="System";   Title="Dynamic Tick + Platform Clock";Tier=3; Risk="MODERATE";   Depth="BOOT"; CheckOnly=$false; Reboot=$true  }
+    [PSCustomObject]@{ Phase=1; Step=10; Category="System";   Title="Dynamic Tick";                 Tier=3; Risk="MODERATE";   Depth="BOOT"; CheckOnly=$false; Reboot=$true  }
     [PSCustomObject]@{ Phase=1; Step=11; Category="Display";  Title="Disable MPO";                  Tier=3; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$true  }
     [PSCustomObject]@{ Phase=1; Step=12; Category="System";   Title="Game Mode";                    Tier=3; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=13; Category="System";   Title="Gaming Debloat";               Tier=2; Risk="MODERATE";   Depth="APP"; CheckOnly=$false; Reboot=$false }
@@ -41,11 +41,11 @@ $SCRIPT:StepCatalog = @(
     [PSCustomObject]@{ Phase=1; Step=31; Category="System";   Title="Disable Game DVR";             Tier=2; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=32; Category="System";   Title="Disable Overlays";             Tier=2; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=33; Category="Audio";    Title="Audio Optimization";           Tier=2; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=34; Category="CS2";      Title="Autoexec (73 CVars)";          Tier=2; Risk="SAFE";       Depth="APP"; CheckOnly=$false; Reboot=$false }
+    [PSCustomObject]@{ Phase=1; Step=34; Category="CS2";      Title="optimization.cfg (73 CVars)";  Tier=2; Risk="SAFE";       Depth="APP"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=1; Step=35; Category="System";   Title="Chipset Driver Check";         Tier=2; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=36; Category="Display";  Title="Visual Effects Performance";   Tier=3; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=37; Category="System";   Title="Disable Bloat Services";       Tier=3; Risk="MODERATE";   Depth="SERVICE"; CheckOnly=$false; Reboot=$false }
-    [PSCustomObject]@{ Phase=1; Step=38; Category="System";   Title="Safe Mode Activation";         Tier=1; Risk="MODERATE";   Depth="BOOT"; CheckOnly=$false; Reboot=$true  }
+    [PSCustomObject]@{ Phase=1; Step=36; Category="Display";  Title="Visual Effects + Auto HDR";    Tier=3; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
+    [PSCustomObject]@{ Phase=1; Step=37; Category="System";   Title="Disable SysMain + Windows Search"; Tier=3; Risk="MODERATE"; Depth="SERVICE"; CheckOnly=$false; Reboot=$false }
+    [PSCustomObject]@{ Phase=1; Step=38; Category="System";   Title="Activate Safe Mode";           Tier=1; Risk="MODERATE";   Depth="BOOT"; CheckOnly=$false; Reboot=$true  }
     # ── Phase 3 ───────────────────────────────────────────────────────────────
     [PSCustomObject]@{ Phase=3; Step=1;  Category="GPU";      Title="Install NVIDIA Driver";        Tier=1; Risk="MODERATE";   Depth="DRIVER"; CheckOnly=$false; Reboot=$true  }
     [PSCustomObject]@{ Phase=3; Step=2;  Category="GPU";      Title="MSI Interrupts";               Tier=2; Risk="MODERATE";   Depth="REGISTRY"; CheckOnly=$false; Reboot=$true  }
@@ -57,7 +57,7 @@ $SCRIPT:StepCatalog = @(
     [PSCustomObject]@{ Phase=3; Step=8;  Category="GPU";      Title="AMD GPU Settings";              Tier=2; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
     [PSCustomObject]@{ Phase=3; Step=9;  Category="Network";  Title="DNS Configuration";             Tier=3; Risk="SAFE";       Depth="NETWORK"; CheckOnly=$false; Reboot=$false }
     [PSCustomObject]@{ Phase=3; Step=10; Category="CPU";      Title="Process Priority + X3D CCD";    Tier=3; Risk="SAFE";       Depth="REGISTRY"; CheckOnly=$false; Reboot=$false }
-    [PSCustomObject]@{ Phase=3; Step=11; Category="System";   Title="VRAM Leak Awareness";           Tier=2; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
-    [PSCustomObject]@{ Phase=3; Step=12; Category="System";   Title="Knowledge Summary + Checklist"; Tier=1; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
+    [PSCustomObject]@{ Phase=3; Step=11; Category="System";   Title="VRAM Usage Review";              Tier=2; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
+    [PSCustomObject]@{ Phase=3; Step=12; Category="System";   Title="Final Checklist";             Tier=1; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
     [PSCustomObject]@{ Phase=3; Step=13; Category="Benchmark";Title="Final Benchmark + FPS Cap";     Tier=1; Risk="SAFE";       Depth="CHECK"; CheckOnly=$true;  Reboot=$false }
 )

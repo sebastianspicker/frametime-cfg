@@ -31,6 +31,9 @@ jobs:
         run: |
           echo "=== Scanning for hardcoded secrets ==="
           FOUND=0
+          # Scan all tracked first-party documentation, including files that
+          # would normally live in ignored local audit workspaces.
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
 
           # Patterns that should never appear in committed code
           PATTERNS=(
@@ -45,20 +48,20 @@ jobs:
           )
 
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -v '.git/'; then
+            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
               echo "::error::Potential secret found matching pattern: $pattern"
               FOUND=$((FOUND + 1))
             fi
           done
 
           # Check for generic password/secret assignments
-          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -v '.git/' | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
+          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
             echo "::error::Potential hardcoded credential assignment found"
             FOUND=$((FOUND + 1))
           fi
 
           # Check for private keys
-          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '.github/workflows/security.yml'; then
             echo "::error::Private key found in repository"
             FOUND=$((FOUND + 1))
           fi
@@ -83,34 +86,35 @@ jobs:
         run: |
           echo "=== Checking PowerShell scripts for dangerous patterns ==="
           FOUND=0
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(docs/archive|vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
 
-          # Invoke-Expression / iex — remote code execution vector
-          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
-            echo "::error::Invoke-Expression/iex found — potential code injection vector"
+          # Invoke-Expression / iex - remote code execution vector
+          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
+            echo "::error::Invoke-Expression/iex found - potential code injection vector"
             FOUND=$((FOUND + 1))
           fi
 
           # DownloadString + Invoke-Expression (classic cradle)
-          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
+          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
             echo "::error::WebClient DownloadString/DownloadFile to executable found"
             FOUND=$((FOUND + 1))
           fi
 
           # Encoded command execution (obfuscation)
-          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
-            echo "::error::Encoded command execution found — potential obfuscated payload"
+          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
+            echo "::error::Encoded command execution found - potential obfuscated payload"
             FOUND=$((FOUND + 1))
           fi
 
           # Unrestricted execution policy set inside scripts
-          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -v '.git/'; then
-            echo "::warning::Set-ExecutionPolicy Unrestricted found — verify necessity"
+          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
+            echo "::warning::Set-ExecutionPolicy Unrestricted found - verify necessity"
           fi
 
           # Restart-Computer -Force without DRY-RUN gate or user prompt
           # All uses must be inside a DryRun guard or after Confirm-Risk/Read-Host.
           # 50-line lookback: Cleanup.ps1 has DryRun exit ~45 lines before the restart.
-          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
           if [ -n "$RESTART_HITS" ]; then
             while IFS= read -r line; do
               FILE=$(echo "$line" | cut -d: -f1)
@@ -126,7 +130,7 @@ jobs:
 
           # Remove-Item -Recurse -Force on bare variable paths (dangerous if empty/wrong)
           # Excludes test files (cleanup of temp dirs is expected) and literal paths.
-          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -v '.git/' | grep -v 'tests/' || true)
+          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
           if [ -n "$REMOVE_HITS" ]; then
             while IFS= read -r line; do
               FILE=$(echo "$line" | cut -d: -f1)
@@ -135,7 +139,7 @@ jobs:
               START=$((LINENO_HIT > 10 ? LINENO_HIT - 10 : 1))
               CONTEXT=$(sed -n "${START},${LINENO_HIT}p" "$FILE")
               if ! echo "$CONTEXT" | grep -qEi "Test-Path|if.*\\\$${VARNAME}"; then
-                echo "::warning::Remove-Item -Recurse -Force on \$$VARNAME at $FILE:$LINENO_HIT — verify path is validated"
+                echo "::warning::Remove-Item -Recurse -Force on \$$VARNAME at $FILE:$LINENO_HIT - verify path is validated"
               fi
             done <<< "$REMOVE_HITS"
           fi
@@ -170,8 +174,8 @@ jobs:
             fi
           done
 
-          if ! grep -Fq 'CS2-Optimize-GUI.ps1' START-GUI.bat; then
-            echo "::error::START-GUI.bat no longer launches CS2-Optimize-GUI.ps1"
+          if ! grep -Fq 'frametime-gui.ps1' START-GUI.bat; then
+            echo "::error::START-GUI.bat no longer launches frametime-gui.ps1"
             FOUND=$((FOUND + 1))
           fi
 
@@ -197,16 +201,16 @@ jobs:
 
           # Check for dangerous trigger that allows fork PRs to run with write access
           if grep -rn 'pull_request_target' .github/workflows/ 2>/dev/null | grep -v 'security\.yml'; then
-            echo "::error::pull_request_target trigger found — risk of fork PR privilege escalation"
+            echo "::error::pull_request_target trigger found - risk of fork PR privilege escalation"
             FOUND=$((FOUND + 1))
           fi
 
           # Unpinned third-party actions (not actions/ or github/ org)
           if grep -rEn 'uses:\s+[^#]*@v[0-9]' .github/workflows/ 2>/dev/null | grep -v 'actions/' | grep -v 'github/'; then
-            echo "::warning::Third-party action with tag (not SHA) found — pin to full SHA"
+            echo "::warning::Third-party action with tag (not SHA) found - pin to full SHA"
           fi
 
-          # Expression injection — untrusted event data in run: blocks
+          # Expression injection - untrusted event data in run: blocks
           # These GitHub context values are attacker-controlled and must not
           # appear directly in shell commands (use env: block instead).
           UNSAFE_EXPRS=(
@@ -228,20 +232,20 @@ jobs:
           EXPR_OPEN="${EXPR_OPEN}{{"
           for expr in "${UNSAFE_EXPRS[@]}"; do
             if grep -rPn "\\${EXPR_OPEN}\s*${expr}" .github/workflows/ 2>/dev/null | grep -v '#'; then
-              echo "::error::Potential expression injection found for ${expr} in workflow — use env: block instead"
+              echo "::error::Potential expression injection found for ${expr} in workflow - use env: block instead"
               FOUND=$((FOUND + 1))
             fi
           done
 
           # Overly broad permissions (write-all)
           if grep -rEn 'permissions:\s*write-all' .github/workflows/ 2>/dev/null; then
-            echo "::error::write-all permissions found — use least-privilege scoping"
+            echo "::error::write-all permissions found - use least-privilege scoping"
             FOUND=$((FOUND + 1))
           fi
 
           # workflow_dispatch inputs used directly in run: (template injection)
           if grep -rPn '\$\{\{\s*github\.event\.inputs\.' .github/workflows/ 2>/dev/null | grep -v 'env:' | grep -v '#'; then
-            echo "::warning::workflow_dispatch input used in expression — verify it is sanitized or passed via env:"
+            echo "::warning::workflow_dispatch input used in expression - verify it is sanitized or passed via env:"
           fi
 
           if [ "$FOUND" -gt 0 ]; then

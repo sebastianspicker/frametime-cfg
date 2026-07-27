@@ -182,6 +182,21 @@ Describe "Initialize-ScriptDefaults soft state loader" {
         $SCRIPT:LogLevel | Should -Be "NORMAL"
     }
 
+    It "derives missing mode from a valid profile" {
+        $state = [PSCustomObject]@{
+            profile = "SAFE"; logLevel = "VERBOSE"
+            # No mode property
+        }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Initialize-ScriptDefaults
+
+        $SCRIPT:Mode | Should -Be "AUTO"
+        $SCRIPT:Profile | Should -Be "SAFE"
+        $SCRIPT:LogLevel | Should -Be "VERBOSE"
+        $SCRIPT:DryRun | Should -Be $false
+    }
+
     It "defaults profile to RECOMMENDED when not present in state" {
         $state = [PSCustomObject]@{
             mode = "CONTROL"; logLevel = "NORMAL"
@@ -192,6 +207,22 @@ Describe "Initialize-ScriptDefaults soft state loader" {
         Initialize-ScriptDefaults
 
         $SCRIPT:Profile | Should -Be "RECOMMENDED"
+    }
+
+    It "defaults malformed logLevel without changing mode, profile, or dry-run state" {
+        $state = [PSCustomObject]@{
+            profile = "COMPETITIVE"
+            mode = "DRY-RUN"
+            logLevel = @("VERBOSE", "NORMAL")
+        }
+        Save-JsonAtomic -Data $state -Path $CFG_StateFile
+
+        Initialize-ScriptDefaults
+
+        $SCRIPT:Mode | Should -Be "DRY-RUN"
+        $SCRIPT:Profile | Should -Be "COMPETITIVE"
+        $SCRIPT:LogLevel | Should -Be "NORMAL"
+        $SCRIPT:DryRun | Should -Be $true
     }
 }
 

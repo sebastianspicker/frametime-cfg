@@ -5,17 +5,19 @@
 BeforeAll {
     . "$PSScriptRoot/_TestInit.ps1"
 
-    # Stub powercfg and Windows-only cmdlets before loading the module
-    if ($IsWindows -eq $false) {
-        if (-not (Get-Command powercfg -ErrorAction SilentlyContinue)) {
-            function global:powercfg { return "" }
-        }
+    # Give Pester stable parameter metadata on every platform. On Windows the
+    # native powercfg.exe command has no PowerShell parameter named CmdArgs, so
+    # mock bodies and parameter filters cannot inspect arguments consistently.
+    function global:powercfg {
+        param([Parameter(ValueFromRemainingArguments)][string[]]$CmdArgs)
+        $null = $CmdArgs
     }
 
     . "$PSScriptRoot/../../helpers/power-plan.ps1"
 }
 
 AfterAll {
+    Remove-Item Function:\global:powercfg -Force -ErrorAction SilentlyContinue
     if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
         Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -120,26 +122,425 @@ Describe "Set-PowerPlanValue" {
     }
 }
 
-# ── New-CS2PowerPlan ────────────────────────────────────────────────────────
-Describe "New-CS2PowerPlan" {
+# ── New-FrametimePowerPlan ────────────────────────────────────────────────────────
+Describe "New-FrametimePowerPlan" {
 
     BeforeEach { Reset-TestState }
 
     It "returns DRY-RUN-GUID in DRY-RUN mode" {
         $SCRIPT:DryRun = $true
-        $result = New-CS2PowerPlan
+        $result = New-FrametimePowerPlan
         $result | Should -Be "DRY-RUN-GUID"
     }
 
     It "does not call powercfg in DRY-RUN mode" {
         $SCRIPT:DryRun = $true
         Mock powercfg {}
-        New-CS2PowerPlan
+        New-FrametimePowerPlan
         Should -Invoke powercfg -Times 0
+    }
+
+    It "does not inspect or delete a foreign plan that has the same display name" {
+        $SCRIPT:DryRun = $false
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            if ($CmdArgs[0] -eq '/duplicatescheme') {
+                return "Power Scheme GUID: $newGuid  (High performance)"
+            }
+            return ""
+        }
+
+        New-FrametimePowerPlan | Should -Be $newGuid
+
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/list' }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/delete' }
+    }
+
+    It "does not accept a GUID echoed by a failed duplicate command" {
+        $SCRIPT:DryRun = $false
+        $highBaseGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Write-Warn {}
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/duplicatescheme' -and $CmdArgs[1] -eq $highBaseGuid) {
+                $global:LASTEXITCODE = 1
+                return "Could not duplicate Power Scheme GUID: $highBaseGuid"
+            }
+            if ($CmdArgs[0] -eq '/duplicatescheme') {
+                $global:LASTEXITCODE = 0
+                return "Power Scheme GUID: $newGuid"
+            }
+            $global:LASTEXITCODE = 0
+            return ""
+        }
+
+        New-FrametimePowerPlan | Should -Be $newGuid
+
+        Should -Invoke powercfg -Exactly 2 -ParameterFilter { $CmdArgs[0] -eq '/duplicatescheme' }
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/changename' -and $CmdArgs[1] -eq $newGuid
+        }
+    }
+
+    It "extracts the new GUID from multiline native command output" {
+        $SCRIPT:DryRun = $false
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock powercfg {
+            $global:LASTEXITCODE = 0
+            if ($CmdArgs[0] -eq '/duplicatescheme') {
+                return @('Power scheme duplicated successfully.', 'Power Scheme GUID: 11111111-2222-3333-4444-555555555555')
+            }
+            return ''
+        }
+
+        New-FrametimePowerPlan | Should -Be $newGuid
     }
 }
 
 # ── Apply-PowerPlan ─────────────────────────────────────────────────────────
+Describe "Invoke-FrametimePowerPlanTransaction" {
+
+    BeforeEach {
+        Reset-TestState
+        New-TestStateFile | Out-Null
+        $SCRIPT:DryRun = $false
+        Mock Write-Warn {}
+        Mock Update-PowerPlanBackupOwnership {}
+    }
+
+    It "activates the replacement before deleting only the tracked prior suite GUID" {
+        $activeGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        $script:transactionCommands = [System.Collections.Generic.List[string]]::new()
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock powercfg {
+            $script:transactionCommands.Add(($CmdArgs -join ' '))
+            $global:LASTEXITCODE = 0
+        }
+
+        Invoke-FrametimePowerPlanTransaction | Should -Be $newGuid
+
+        $script:transactionCommands[0] | Should -Be "/setactive $newGuid"
+        $script:transactionCommands[1] | Should -Be "/delete $oldOwnedGuid"
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/list' }
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" -and
+                $Guids -contains "11111111-2222-3333-4444-555555555555"
+        }
+    }
+
+    It "performs no creation, configuration, activation, or persistence under WhatIf" {
+        Mock Get-ActivePowerPlanGuid { throw "must not query live state" }
+        Mock Get-SuiteOwnedPowerPlanGuids { throw "must not query ownership" }
+        Mock New-FrametimePowerPlan { throw "must not create" }
+        Mock Apply-PowerPlan { throw "must not configure" }
+        Mock Set-SuiteOwnedPowerPlanGuids { throw "must not persist" }
+        Mock powercfg { throw "must not execute" }
+
+        Invoke-FrametimePowerPlanTransaction -WhatIf | Should -Be "DRY-RUN-GUID"
+
+        Should -Invoke Get-ActivePowerPlanGuid -Exactly 0
+        Should -Invoke New-FrametimePowerPlan -Exactly 0
+        Should -Invoke Apply-PowerPlan -Exactly 0
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 0
+        Should -Invoke powercfg -Exactly 0
+    }
+
+    It "retains and records the active replacement when rollback reactivation fails" {
+        $previousGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        $script:persistCallCount = 0
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {
+            $script:persistCallCount++
+            if ($script:persistCallCount -eq 1) { throw "state disk full" }
+        }
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+        Mock powercfg { $global:LASTEXITCODE = 0 } -ParameterFilter {
+            $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555"
+        }
+        Mock powercfg { $global:LASTEXITCODE = 1 } -ParameterFilter {
+            $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq "381b4222-f694-41f0-9685-ff5bb260df2e"
+        }
+
+        $transactionError = $null
+        try { Invoke-FrametimePowerPlanTransaction } catch { $transactionError = $_ }
+
+        $transactionError.Exception.Message | Should -Match ([regex]::Escape($newGuid))
+        $transactionError.Exception.Message | Should -Match 'remains active'
+        $script:persistCallCount | Should -Be 2
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 2
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555"
+        }
+    }
+
+    It "preserves the prior active and owned plan when configuration fails" {
+        $activeGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan { throw "configuration failed" }
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw '*configuration failed*'
+
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/setactive' }
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555" }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            @($Guids).Count -eq 1 -and $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+    }
+
+    It "preserves the prior active and owned plan when duplication fails" {
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { throw "duplicatescheme returned no GUID" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw '*duplicatescheme returned no GUID*'
+
+        Should -Invoke Apply-PowerPlan -Exactly 0
+        Should -Invoke powercfg -Exactly 0
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            @($Guids).Count -eq 1 -and $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+    }
+
+    It "preserves the prior active and owned plan when activation fails" {
+        $activeGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock powercfg {
+            if ($CmdArgs[0] -eq '/setactive') {
+                $global:LASTEXITCODE = 1
+                return 'activation denied'
+            }
+            $global:LASTEXITCODE = 0
+        }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw '*Failed to activate*'
+
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555" }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            @($Guids).Count -eq 1 -and $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+    }
+
+    It "retains ownership when rollback cannot delete a created replacement" {
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan { throw "configuration failed" }
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock powercfg {
+            $global:LASTEXITCODE = 5
+            return 'access denied'
+        }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw "*remains recorded*"
+
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            @($Guids).Count -eq 2 -and
+                $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" -and
+                $Guids -contains "11111111-2222-3333-4444-555555555555"
+        }
+        Should -Invoke Update-PowerPlanBackupOwnership -Exactly 1 -ParameterFilter {
+            @($OwnedGuids).Count -eq 2 -and $OwnedGuids -contains "11111111-2222-3333-4444-555555555555"
+        }
+    }
+
+    It "restores state and durable backup ownership after a successful rollback" {
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        $script:backupOwnershipCalls = 0
+        $script:rollbackCommands = [System.Collections.Generic.List[string]]::new()
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {}
+        Mock Update-PowerPlanBackupOwnership {
+            $script:backupOwnershipCalls++
+            if ($script:backupOwnershipCalls -eq 1) { throw "backup write failed after expansion" }
+        }
+        Mock powercfg {
+            $script:rollbackCommands.Add(($CmdArgs -join ' '))
+            $global:LASTEXITCODE = 0
+        }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw '*backup write failed after expansion*'
+
+        $script:rollbackCommands | Should -Contain "/setactive 381b4222-f694-41f0-9685-ff5bb260df2e"
+        $script:rollbackCommands | Should -Contain "/delete $newGuid"
+        Should -Invoke Set-SuiteOwnedPowerPlanGuids -Exactly 1 -ParameterFilter {
+            @($Guids).Count -eq 1 -and $Guids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+        Should -Invoke Update-PowerPlanBackupOwnership -Exactly 1 -ParameterFilter {
+            @($OwnedGuids).Count -eq 1 -and $OwnedGuids -contains "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+    }
+
+    It "does not retire prior ownership when state persistence fails after activation" {
+        $previousGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids { throw "state write failed after activation" }
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        { Invoke-FrametimePowerPlanTransaction } | Should -Throw '*state write failed after activation*'
+
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq "381b4222-f694-41f0-9685-ff5bb260df2e"
+        }
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "11111111-2222-3333-4444-555555555555"
+        }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        }
+    }
+
+    It "keeps the committed replacement active when retirement metadata narrowing fails" {
+        $previousGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        $oldOwnedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        $script:stateWriteCalls = 0
+        Mock Get-ActivePowerPlanGuid { "381b4222-f694-41f0-9685-ff5bb260df2e" }
+        Mock Get-SuiteOwnedPowerPlanGuids { @("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") }
+        Mock New-FrametimePowerPlan { "11111111-2222-3333-4444-555555555555" }
+        Mock Apply-PowerPlan {}
+        Mock Set-SuiteOwnedPowerPlanGuids {
+            $script:stateWriteCalls++
+            if ($script:stateWriteCalls -eq 2) { throw "injected retirement narrowing failure" }
+        }
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        Invoke-FrametimePowerPlanTransaction | Should -Be $newGuid
+
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq $newGuid
+        }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter {
+            $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq $previousGuid
+        }
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq $oldOwnedGuid
+        }
+        Should -Invoke powercfg -Exactly 0 -ParameterFilter {
+            $CmdArgs[0] -eq '/delete' -and $CmdArgs[1] -eq $newGuid
+        }
+    }
+}
+
+Describe "Get-SuiteOwnedPowerPlanGuids" {
+
+    BeforeEach {
+        Reset-TestState
+        New-TestStateFile | Out-Null
+    }
+
+    It "returns an empty collection when legacy state has no ownership properties" {
+        $state = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        $state.PSObject.Properties.Remove('suiteOwnedPowerPlanGuids')
+        $state.PSObject.Properties.Remove('suiteOwnedPowerPlanGuid')
+        Save-SuiteState -State $state
+
+        @(Get-SuiteOwnedPowerPlanGuids).Count | Should -Be 0
+    }
+
+    It "does not persist ownership under WhatIf" {
+        $ownedGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+        Set-SuiteOwnedPowerPlanGuids -Guids @($ownedGuid) -WhatIf
+
+        $saved = Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json
+        $saved.PSObject.Properties.Name | Should -Not -Contain 'suiteOwnedPowerPlanGuids'
+    }
+}
+
+Describe "Invoke-FrametimePowerPlanWithFallback" {
+
+    BeforeEach {
+        Reset-TestState
+        $SCRIPT:DryRun = $false
+        Mock Write-Warn {}
+        Mock Write-Info {}
+        Mock Write-OK {}
+    }
+
+    It "returns a completable result only for the intended owned plan" {
+        $newGuid = "11111111-2222-3333-4444-555555555555"
+        Mock Invoke-FrametimePowerPlanTransaction { $newGuid }
+
+        $result = Invoke-FrametimePowerPlanWithFallback
+
+        $result.Status | Should -Be 'Success'
+        $result.CanCompleteStep | Should -BeTrue
+        $result.Guid | Should -Be $newGuid
+    }
+
+    It "reports a successful Windows fallback as skipped rather than complete" {
+        Mock Invoke-FrametimePowerPlanTransaction { throw 'transaction failed' }
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        $result = Invoke-FrametimePowerPlanWithFallback
+
+        $result.Status | Should -Be 'Fallback'
+        $result.CanCompleteStep | Should -BeFalse
+    }
+
+    It "reports failure when neither fallback can be activated" {
+        Mock Invoke-FrametimePowerPlanTransaction { throw 'transaction failed' }
+        Mock powercfg {
+            $global:LASTEXITCODE = 1
+            return "activation failed"
+        }
+
+        $result = Invoke-FrametimePowerPlanWithFallback
+
+        $result.Status | Should -Be 'Failed'
+        $result.CanCompleteStep | Should -BeFalse
+        Should -Invoke powercfg -Exactly 2
+    }
+
+    It "requires the Phase 1 caller to gate persisted completion on the structured result" {
+        $source = Get-Content "$PSScriptRoot/../../Optimize-SystemBase.ps1" -Raw
+
+        $source | Should -Match '(?s)Invoke-FrametimePowerPlanWithFallback.*Status -eq ''Failed''.*throw.*Status -eq ''Fallback''.*Skip-Step.*CanCompleteStep.*Complete-Step'
+        $source.IndexOf('Backup-PowerPlan -StepTitle "frametime.cfg Power Plan"') |
+            Should -BeLessThan $source.IndexOf('Invoke-FrametimePowerPlanWithFallback')
+    }
+}
+
 Describe "Apply-PowerPlan" {
 
     BeforeEach { Reset-TestState }
@@ -169,7 +570,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-ChipsetVendor { return "AMD" }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -188,7 +589,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-ChipsetVendor { return "Intel" }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -211,7 +612,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -231,7 +632,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {
@@ -251,7 +652,7 @@ Describe "Apply-PowerPlan" {
             Mock Get-AmdCpuInfo { return $null }
             Mock Write-Step {}
             Mock Write-OK {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
 
             $script:ppCalls = [System.Collections.Generic.List[hashtable]]::new()
             Mock Set-PowerPlanValue {

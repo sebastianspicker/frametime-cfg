@@ -54,7 +54,7 @@ Describe "Enable-DeviceMSI" {
                 })
             }
             Mock Write-Step {}
-            Mock Write-Host {}
+            Mock Write-ConsoleLine {}
             Mock Set-ItemProperty {}
             Mock Test-Path { $false }
             Mock New-Item {}
@@ -74,11 +74,82 @@ Describe "Enable-DeviceMSI" {
                 })
             }
             Mock Write-Step {}
-            Mock Write-Host {} -ParameterFilter { $Object -match "DRY-RUN" }
+            Mock Write-ConsoleLine {} -ParameterFilter { $Message -match "DRY-RUN" }
 
             Enable-DeviceMSI
 
-            Should -Invoke Write-Host -ParameterFilter { $Object -match "DRY-RUN" } -Scope It
+            Should -Invoke Write-ConsoleLine -ParameterFilter { $Message -match "DRY-RUN" } -Scope It
+        }
+
+        It "returns a completable structured dry-run result when every write is previewed" {
+            $SCRIPT:DryRun = $true
+            Mock Get-PnpDevice {
+                if ($Class -eq "Display") {
+                    [PSCustomObject]@{
+                        InstanceId = "PCI\VEN_10DE&DEV_2684\4&abc123"
+                        FriendlyName = "NVIDIA GeForce RTX 4090"
+                        Class = "Display"
+                    }
+                }
+            }
+            Mock Set-RegistryValue {
+                [PSCustomObject]@{ Status = "DryRun"; Applied = $false }
+            }
+            Mock Write-Step {}
+            Mock Write-ConsoleLine {}
+            Mock Write-Warn {}
+
+            $result = Enable-DeviceMSI
+
+            $result.Status | Should -Be "DryRun"
+            $result.CanCompleteStep | Should -BeTrue
+            $result.Applied | Should -BeFalse
+        }
+    }
+
+    Context "Registry write outcomes" {
+
+        It "returns failed and non-completable when a required MSI write fails" {
+            Mock Get-PnpDevice {
+                if ($Class -eq "Display") {
+                    [PSCustomObject]@{
+                        InstanceId = "PCI\VEN_10DE&DEV_2684\4&abc123"
+                        FriendlyName = "NVIDIA GeForce RTX 4090"
+                        Class = "Display"
+                    }
+                }
+            }
+            Mock Set-RegistryValue {
+                [PSCustomObject]@{ Status = "Failed"; Applied = $false; Message = "access denied" }
+            }
+            Mock Write-Step {}
+            Mock Write-Warn {}
+
+            $result = Enable-DeviceMSI
+
+            $result.Status | Should -Be "Failed"
+            $result.CanCompleteStep | Should -BeFalse
+            $result.Applied | Should -BeFalse
+        }
+
+        It "returns failed and non-completable when a required MSI write has no result" {
+            Mock Get-PnpDevice {
+                if ($Class -eq "Display") {
+                    [PSCustomObject]@{
+                        InstanceId = "PCI\VEN_10DE&DEV_2684\4&abc123"
+                        FriendlyName = "NVIDIA GeForce RTX 4090"
+                        Class = "Display"
+                    }
+                }
+            }
+            Mock Set-RegistryValue { $null }
+            Mock Write-Step {}
+            Mock Write-Warn {}
+
+            $result = Enable-DeviceMSI
+
+            $result.Status | Should -Be "Failed"
+            $result.CanCompleteStep | Should -BeFalse
         }
     }
 
@@ -104,15 +175,15 @@ Describe "Enable-DeviceMSI" {
             Mock Write-Step {}
             Mock Write-DebugLog {}
 
-            $script:hostOutput = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host {
-                if ($Object) { $script:hostOutput.Add([string]$Object) }
+            $script:consoleOutput = [System.Collections.Generic.List[string]]::new()
+            Mock Write-ConsoleLine {
+                if ($Message) { $script:consoleOutput.Add([string]$Message) }
             }
 
             Enable-DeviceMSI
 
             # Only PCI device should be reported, not USB
-            $msiReports = $script:hostOutput | Where-Object { $_ -match "DRY-RUN.*MSISupported" }
+            $msiReports = $script:consoleOutput | Where-Object { $_ -match "DRY-RUN.*MSISupported" }
             @($msiReports).Count | Should -Be 1
         }
     }
@@ -130,14 +201,14 @@ Describe "Enable-DeviceMSI" {
             }
             Mock Write-Step {}
 
-            $script:hostOutput = [System.Collections.Generic.List[string]]::new()
-            Mock Write-Host {
-                if ($Object) { $script:hostOutput.Add([string]$Object) }
+            $script:consoleOutput = [System.Collections.Generic.List[string]]::new()
+            Mock Write-ConsoleLine {
+                if ($Message) { $script:consoleOutput.Add([string]$Message) }
             }
 
             Enable-DeviceMSI
 
-            $msiLimitMsg = $script:hostOutput | Where-Object { $_ -match "MessageNumberLimit.*16" }
+            $msiLimitMsg = $script:consoleOutput | Where-Object { $_ -match "MessageNumberLimit.*16" }
             $msiLimitMsg | Should -Not -BeNullOrEmpty
         }
     }
@@ -250,5 +321,79 @@ Describe "Set-NicInterruptAffinity" {
         Set-NicInterruptAffinity
 
         Should -Invoke Set-ItemProperty -Times 0
+    }
+
+    Context "Registry write outcomes" {
+
+        BeforeEach {
+            Mock Get-ActiveNicAdapter {
+                [PSCustomObject]@{
+                    Name = "Ethernet"
+                    InterfaceDescription = "Intel I225-V"
+                }
+            }
+            Mock Get-PnpDevice {
+                [PSCustomObject]@{
+                    InstanceId = "PCI\VEN_8086&DEV_15F3\abc"
+                    FriendlyName = "Intel I225-V"
+                }
+            }
+            Mock Get-CachedCpuInfo { [PSCustomObject]@{ NumberOfCores = 8 } }
+            Mock Get-IntelHybridCpuName { $null }
+            Mock Get-ChipsetVendor { "AMD" }
+            Mock Write-Step {}
+            Mock Write-Warn {}
+            Mock Write-DebugLog {}
+            Mock Write-OK {}
+            Mock Write-Info {}
+        }
+
+        It "returns failed and non-completable when a required affinity write fails" {
+            Mock Set-RegistryValue {
+                [PSCustomObject]@{ Status = "Failed"; Applied = $false; Message = "access denied" }
+            }
+
+            $result = Set-NicInterruptAffinity
+
+            $result.Status | Should -Be "Failed"
+            $result.CanCompleteStep | Should -BeFalse
+            $result.Applied | Should -BeFalse
+        }
+
+        It "returns failed and non-completable when a required affinity write has no result" {
+            Mock Set-RegistryValue { $null }
+
+            $result = Set-NicInterruptAffinity
+
+            $result.Status | Should -Be "Failed"
+            $result.CanCompleteStep | Should -BeFalse
+        }
+
+        It "returns a completable success result only after both required writes succeed" {
+            Mock Set-RegistryValue {
+                [PSCustomObject]@{ Status = "Success"; Applied = $true }
+            }
+
+            $result = Set-NicInterruptAffinity
+
+            $result.Status | Should -Be "Success"
+            $result.CanCompleteStep | Should -BeTrue
+            $result.Applied | Should -BeTrue
+            Should -Invoke Set-RegistryValue -Exactly 2
+        }
+
+        It "returns a completable dry-run result only after both writes are previewed" {
+            $SCRIPT:DryRun = $true
+            Mock Set-RegistryValue {
+                [PSCustomObject]@{ Status = "DryRun"; Applied = $false }
+            }
+
+            $result = Set-NicInterruptAffinity
+
+            $result.Status | Should -Be "DryRun"
+            $result.CanCompleteStep | Should -BeTrue
+            $result.Applied | Should -BeFalse
+            Should -Invoke Set-RegistryValue -Exactly 2
+        }
     }
 }

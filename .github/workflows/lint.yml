@@ -7,24 +7,30 @@ on:
       - '**.ps1'
       - '**.psd1'
       - '*.bat'
+      - '*.md'
       - 'cfgs/**'
-      - 'README.md'
       - 'docs/**'
-      - '.github/workflows/**'
+      - 'ui/**'
+      - '.github/**'
+      - '.gitattributes'
+      - '.gitignore'
   pull_request:
     branches: [main]
     paths:
       - '**.ps1'
       - '**.psd1'
       - '*.bat'
+      - '*.md'
       - 'cfgs/**'
-      - 'README.md'
       - 'docs/**'
-      - '.github/workflows/**'
+      - 'ui/**'
+      - '.github/**'
+      - '.gitattributes'
+      - '.gitignore'
   workflow_dispatch:
 
 # Restrict GITHUB_TOKEN to read-only by default (principle of least privilege).
-# Individual jobs can escalate if needed — none in this workflow do.
+# Individual jobs can escalate if needed - none in this workflow do.
 permissions:
   contents: read
 
@@ -49,32 +55,11 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/Documents/PowerShell/Modules/PSScriptAnalyzer
-          key: psscriptanalyzer-2-${{ runner.os }}-${{ hashFiles('.github/workflows/lint.yml') }}
+          key: psscriptanalyzer-1.24.0-${{ runner.os }}-${{ hashFiles('.github/scripts/run-psscriptanalyzer.ps1', 'PSScriptAnalyzerSettings.psd1') }}
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
-            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          }
-          $pssaPaths = Get-ChildItem -Recurse -Filter "*.ps1" |
-            Where-Object { $_.Name -ne "_TestInit.ps1" }
-          if (-not $pssaPaths) {
-            throw "No PowerShell files found for PSScriptAnalyzer"
-          }
-          $results = @()
-          foreach ($file in $pssaPaths) {
-            try {
-              $results += Invoke-ScriptAnalyzer -Path $file.FullName -Settings .\PSScriptAnalyzerSettings.psd1 -ErrorAction Stop
-            } catch {
-              throw "PSScriptAnalyzer failed on $($file.FullName): $($_.Exception.Message)"
-            }
-          }
-          if ($results) {
-            $results | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message
-            throw "$($results.Count) PSScriptAnalyzer issue(s) found"
-          }
-          Write-Host "PSScriptAnalyzer: all clean" -ForegroundColor Green
+        run: .\.github\scripts\run-psscriptanalyzer.ps1
 
   syntax-check:
     name: Verify syntax (parse check)
@@ -87,18 +72,7 @@ jobs:
 
       - name: Verify syntax (parse check)
         shell: pwsh
-        run: |
-          $errors = 0
-          Get-ChildItem -Recurse -Filter "*.ps1" | ForEach-Object {
-            $parseErrors = $null
-            $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$parseErrors)
-            foreach ($e in $parseErrors) {
-              Write-Error "$($_.Name):$($e.Extent.StartLineNumber) - $($e.Message)"
-              $errors++
-            }
-          }
-          if ($errors -gt 0) { throw "$errors parse error(s) found" }
-          Write-Host "Syntax check: all files parse cleanly" -ForegroundColor Green
+        run: .\.github\scripts\verify-syntax.ps1
 
   windows-powershell-compat:
     name: Windows PowerShell 5.1 compatibility
@@ -111,39 +85,12 @@ jobs:
 
       - name: Smoke-test shipped entry scripts in Windows PowerShell
         shell: powershell
-        run: |
-          $scripts = @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'Boot-SafeMode.ps1',
-            'SafeMode-DriverClean.ps1',
-            'PostReboot-Setup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'CS2-Optimize-GUI.ps1'
-          )
-
-          foreach ($script in $scripts) {
-            Write-Host "=== Windows PowerShell smoke test: $script ==="
-            $records = & powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -SmokeTest 2>&1
-            $output = $records | Out-String
-            $errorRecords = @($records | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-            if ($LASTEXITCODE -ne 0) {
-              throw "Smoke test failed for $script`n$output"
-            }
-            if ($errorRecords.Count -gt 0) {
-              throw "Smoke test emitted error records for $script`n$output"
-            }
-            if ($output -notmatch 'SMOKE TEST OK') {
-              throw "Smoke test marker missing for $script`n$output"
-            }
-            Write-Host $output
-          }
+        run: .\.github\scripts\smoke-entrypoints.ps1 -Engine powershell
 
   pester:
     name: Pester tests
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -153,14 +100,11 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/Documents/PowerShell/Modules/Pester
-          key: pester5-2-${{ runner.os }}-${{ hashFiles('.github/workflows/lint.yml') }}
+          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
 
-      - name: Install Pester 5.x
+      - name: Install Pester 5.7.1
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable Pester -ErrorAction SilentlyContinue | Where-Object Version -ge '5.0')) {
-            Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0 -MaximumVersion 5.99.99
-          }
+        run: .\.github\scripts\install-pester.ps1
 
       - name: Run Pester tests
         shell: pwsh
@@ -171,15 +115,54 @@ jobs:
           $cfg.Output.Verbosity = "Detailed"
           $cfg.TestResult.Enabled = $true
           $cfg.TestResult.OutputFormat = "NUnitXml"
-          $cfg.TestResult.OutputPath = "./test-results.xml"
+          $cfg.TestResult.OutputPath = "./test-results-windows.xml"
           Invoke-Pester -Configuration $cfg
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: pester-test-results
-          path: ./test-results.xml
+          name: pester-test-results-windows
+          path: ./test-results-windows.xml
+          retention-days: 14
+
+  pester-macos:
+    name: Pester tests (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Cache Pester module
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.local/share/powershell/Modules/Pester
+          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
+
+      - name: Install Pester 5.7.1
+        shell: pwsh
+        run: ./.github/scripts/install-pester.ps1
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = "./tests"
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = "Detailed"
+          $cfg.TestResult.Enabled = $true
+          $cfg.TestResult.OutputFormat = "NUnitXml"
+          $cfg.TestResult.OutputPath = "./test-results-macos.xml"
+          Invoke-Pester -Configuration $cfg
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: pester-test-results-macos
+          path: ./test-results-macos.xml
           retention-days: 14
 
   estimate-keys:
@@ -194,11 +177,13 @@ jobs:
       - name: Verify EstimateKey references are retired
         shell: bash
         run: |
-          if grep -rEn --include='*.ps1' --include='*.psd1' --include='*.yml' --include='*.yaml' --include='*.md' \
-            'EstimateKey|CFG_ImprovementEstimates' . |
+          if git grep -n -E 'EstimateKey|CFG_ImprovementEstimates' -- \
+            '*.ps1' '*.psd1' '*.yml' '*.yaml' '*.md' |
             grep -v 'CHANGELOG.md' |
             grep -v '.github/workflows/lint.yml' |
-            grep -v 'docs/agent/'; then
+            grep -v '.github/REPO_SETTINGS.md' |
+            grep -v 'tests/workflow-contracts.Tests.ps1' |
+            grep -Ev '(^|/)(vendor|third_party|third-party|3rdparty|external)/'; then
             echo "::error::Retired EstimateKey references remain"
             exit 1
           fi
@@ -217,14 +202,11 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/Documents/PowerShell/Modules/Pester
-          key: pester5-2-${{ runner.os }}-${{ hashFiles('.github/workflows/lint.yml') }}
+          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
 
-      - name: Install Pester 5.x
+      - name: Install Pester 5.7.1
         shell: pwsh
-        run: |
-          if (-not (Get-Module -ListAvailable Pester -ErrorAction SilentlyContinue | Where-Object Version -ge '5.0')) {
-            Install-Module Pester -Force -Scope CurrentUser -MinimumVersion 5.0 -MaximumVersion 5.99.99
-          }
+        run: .\.github\scripts\install-pester.ps1
 
       - name: Run E2E process tests
         shell: pwsh
@@ -241,53 +223,8 @@ jobs:
 
       - name: Smoke-test shipped entry scripts
         shell: pwsh
-        run: |
-          $scripts = @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'Boot-SafeMode.ps1',
-            'SafeMode-DriverClean.ps1',
-            'PostReboot-Setup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'CS2-Optimize-GUI.ps1'
-          )
-
-          foreach ($script in $scripts) {
-            Write-Host "=== Smoke test: $script ==="
-            $records = & pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -SmokeTest 2>&1
-            $output = $records | Out-String
-            $errorRecords = @($records | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-            if ($LASTEXITCODE -ne 0) {
-              throw "Smoke test failed for $script`n$output"
-            }
-            if ($errorRecords.Count -gt 0) {
-              throw "Smoke test emitted error records for $script`n$output"
-            }
-            if ($output -notmatch 'SMOKE TEST OK') {
-              throw "Smoke test marker missing for $script`n$output"
-            }
-            Write-Host $output
-          }
+        run: .\.github\scripts\smoke-entrypoints.ps1 -Engine pwsh
 
       - name: Verify launcher contracts
         shell: pwsh
-        run: |
-          $startBat = Get-Content .\START.bat -Raw
-          foreach ($target in @(
-            'Run-Optimize.ps1',
-            'Cleanup.ps1',
-            'FpsCap-Calculator.ps1',
-            'Verify-Settings.ps1',
-            'Boot-SafeMode.ps1',
-            'PostReboot-Setup.ps1'
-          )) {
-            if ($startBat -notmatch [regex]::Escape($target)) {
-              throw "START.bat is missing launcher target: $target"
-            }
-          }
-
-          $startGuiBat = Get-Content .\START-GUI.bat -Raw
-          if ($startGuiBat -notmatch [regex]::Escape('CS2-Optimize-GUI.ps1')) {
-            throw "START-GUI.bat is missing CS2-Optimize-GUI.ps1"
-          }
+        run: .\.github\scripts\verify-launcher-contracts.ps1

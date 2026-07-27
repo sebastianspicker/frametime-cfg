@@ -55,8 +55,13 @@ $SCRIPT:MockTracker = @{
 
 function Reset-MockTracker {
     <#  Clears all tracked mock calls. Call in BeforeEach for test isolation.  #>
-    foreach ($key in @($SCRIPT:MockTracker.Keys)) {
-        $SCRIPT:MockTracker[$key] = [System.Collections.Generic.List[object]]::new()
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($PSCmdlet.ShouldProcess("MockTracker", "Reset mock call tracking")) {
+        foreach ($key in @($SCRIPT:MockTracker.Keys)) {
+            $SCRIPT:MockTracker[$key] = [System.Collections.Generic.List[object]]::new()
+        }
     }
 }
 
@@ -68,6 +73,11 @@ New-Item -ItemType Directory -Path $SCRIPT:IntegrationTempRoot -Force | Out-Null
 # ── Convenience: Reset full integration state ────────────────────────────────
 function Reset-IntegrationState {
     <#  Resets both test state and mock tracker. Use in BeforeEach blocks.  #>
-    Reset-TestState
-    Reset-MockTracker
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+
+    if ($PSCmdlet.ShouldProcess($SCRIPT:IntegrationTempRoot, "Reset integration test state")) {
+        Reset-TestState
+        Reset-MockTracker
+    }
 }

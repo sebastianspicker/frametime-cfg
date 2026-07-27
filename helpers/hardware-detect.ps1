@@ -1,10 +1,9 @@
 ﻿# ==============================================================================
-#  helpers/hardware-detect.ps1  —  RAM, GPU, NIC, Chipset Detection
+#  helpers/hardware-detect.ps1  -  RAM, GPU, NIC, Chipset Detection
 # ==============================================================================
 
 # ── CPU cache (lazy-initialized) ─────────────────────────────────────────────
 # Win32_Processor queries take ~50-200ms each. Cache the result for all callers.
-# Call Reset-CachedCpuInfo in tests to clear the cache between mocked scenarios.
 $Script:_cachedCpuInfo = $null
 function Get-CachedCpuInfo {
     if ($null -eq $Script:_cachedCpuInfo) {
@@ -13,7 +12,6 @@ function Get-CachedCpuInfo {
     }
     return $Script:_cachedCpuInfo
 }
-function Reset-CachedCpuInfo { $Script:_cachedCpuInfo = $null }
 
 # ── XMP / RAM ────────────────────────────────────────────────────────────────
 
@@ -44,7 +42,7 @@ function Get-RamInfo {
 
         # XMP/EXPO detection: WMI cannot reliably distinguish XMP from JEDEC when
         # the module runs at its rated speed. We can only detect "below rated speed"
-        # (definitely not XMP) vs "at rated speed" (ambiguous — could be either).
+        # (definitely not XMP) vs "at rated speed" (ambiguous - could be either).
         # AtRatedSpeed=true means no action needed; AtRatedSpeed=false means the
         # user should enable XMP/EXPO in BIOS to reach the module's rated speed.
         $atRatedSpeed = if ($activeMTs -gt 0 -and $speedMhz -gt 0) {
@@ -64,12 +62,6 @@ function Get-RamInfo {
         Write-DebugLog "RAM info error: $_"
         return $null
     }
-}
-
-function Test-XmpActive {
-    $ram = Get-RamInfo
-    if (-not $ram) { return $null }
-    return $ram.XmpActive
 }
 
 # ── NVIDIA Driver ────────────────────────────────────────────────────────────
@@ -103,24 +95,50 @@ function Get-NvidiaDriverVersion {
     } catch { Write-DebugLog "NVIDIA driver detection error: $_"; return $null }
 }
 
-# Known problematic driver ranges (as of 2025/2026)
-# R570+ (576.x and above) causes stutter on some CS2 systems
-$NVIDIA_PROBLEMATIC_MAJOR = 576
-$NVIDIA_STABLE_VERSION    = "566.36"
-
 # ── Benchmark Parser ─────────────────────────────────────────────────────────
 
+function ConvertTo-BenchmarkNumber {
+    param(
+        [AllowNull()][string]$Value,
+        [switch]$AllowZero
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch '^(?:0|[1-9]\d*)(?:\.\d+)?$') { return $null }
+
+    $parsed = 0.0
+    $ok = [double]::TryParse(
+        $trimmed,
+        [System.Globalization.NumberStyles]::Float,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [ref]$parsed)
+    if (-not $ok -or [double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) { return $null }
+    if ($parsed -lt 0 -or (-not $AllowZero -and $parsed -le 0)) { return $null }
+    return $parsed
+}
+
 function Parse-BenchmarkOutput($text) {
-    $pattern = '\[VProf\]\s*FPS:\s*Avg\s*=\s*([\d.]+)\s*,\s*P1\s*=\s*([\d.]+)'
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    $pattern = '\[VProf\]\s*FPS:\s*Avg\s*=\s*(\S+?)\s*,\s*P1\s*=\s*(\S+)'
     $m = [regex]::Matches($text, $pattern)
     if ($m.Count -eq 0) { return $null }
-    $avgs = @($m | ForEach-Object { [float]::Parse($_.Groups[1].Value, [System.Globalization.CultureInfo]::InvariantCulture) })
-    $p1s  = @($m | ForEach-Object { [float]::Parse($_.Groups[2].Value, [System.Globalization.CultureInfo]::InvariantCulture) })
+    $avgs = [System.Collections.Generic.List[double]]::new()
+    $p1s  = [System.Collections.Generic.List[double]]::new()
+    foreach ($match in $m) {
+        $avg = ConvertTo-BenchmarkNumber $match.Groups[1].Value
+        $p1 = ConvertTo-BenchmarkNumber $match.Groups[2].Value -AllowZero
+        if ($null -ne $avg -and $null -ne $p1) {
+            $avgs.Add($avg) | Out-Null
+            $p1s.Add($p1) | Out-Null
+        }
+    }
+    if ($avgs.Count -eq 0) { return $null }
     return @{
         Avg    = [math]::Round(($avgs | Measure-Object -Average).Average, 1)
         P1     = [math]::Round(($p1s  | Measure-Object -Average).Average, 1)
-        Runs   = $m.Count
-        RawAvg = $avgs; RawP1 = $p1s
+        Runs   = $avgs.Count
+        RawAvg = $avgs.ToArray(); RawP1 = $p1s.ToArray()
     }
 }
 
@@ -147,7 +165,7 @@ function Test-TrustedLocalPath {
         $current = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
         while ($current) {
             if (($current.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
-            $parent = Split-Path -LiteralPath $current.FullName -Parent
+            $parent = Split-Path -Path $current.FullName -Parent
             if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current.FullName) { break }
             if (-not (Test-Path -LiteralPath $parent -ErrorAction SilentlyContinue)) { break }
             $current = Get-Item -LiteralPath $parent -Force -ErrorAction SilentlyContinue
@@ -193,17 +211,17 @@ function Get-CS2InstallPath {
 
     $vdf = "$steamPath\steamapps\libraryfolders.vdf"
     if (Test-Path $vdf) {
-        # Read as UTF-8 explicitly — PS 5.1 defaults to ANSI codepage, which
+        # Read as UTF-8 explicitly - PS 5.1 defaults to ANSI codepage, which
         # mangles Unicode library paths (e.g., non-ASCII usernames or drive labels).
         $content = Get-Content $vdf -Raw -Encoding UTF8
         $paths = [regex]::Matches($content, '"path"\s+"([^"]+)"') | ForEach-Object { $_.Groups[1].Value -replace '\\\\', '\' -replace '/', '\' }
         foreach ($lp in $paths) {
-            # SECURITY: VDF is a Valve text file in userspace — a tampered libraryfolders.vdf
+            # SECURITY: VDF is a Valve text file in userspace - a tampered libraryfolders.vdf
             # could contain paths with traversal sequences. Reject paths with .. components.
             # The path is only used in Test-Path and Get-Content on autoexec.cfg / optimization.cfg.
             # Symlink/junction attacks: if CS2 install path is a junction pointing to e.g. C:\Windows,
             # Set-Content would write to that location. The cs2.exe existence check below mitigates
-            # this — a junction to C:\Windows would fail the cs2.exe check. Accepted residual risk:
+            # this - a junction to C:\Windows would fail the cs2.exe check. Accepted residual risk:
             # if an attacker creates a junction containing a fake cs2.exe, we'd write autoexec there.
             if ($lp -match '\.\.') {
                 Write-DebugLog "VDF path rejected (path traversal): $lp"
@@ -227,20 +245,20 @@ function Get-CS2InstallPath {
 
 function Get-ActiveNicAdapter {
     <#  Returns the active (Up) wired network adapter object, or $null.
-        Centralized NIC selection logic — used by NIC tweaks, RSS config, etc.
+        Centralized NIC selection logic - used by NIC tweaks, RSS config, etc.
         Best-effort heuristic: may exclude USB Ethernet or include unintended adapters.  #>
     try {
         # Combine hardcoded essentials with configurable $CFG_VirtualAdapterFilter
         $filterPattern = "Wi-Fi|Wireless"
         # NOTE: $CFG_VirtualAdapterFilter is a regex alternation pattern (e.g., "Hyper-V|VPN|Virtual")
-        # — metacharacters in adapter names would need escaping before inclusion here.
+        # - metacharacters in adapter names would need escaping before inclusion here.
         if ((Get-Variable -Name CFG_VirtualAdapterFilter -ErrorAction SilentlyContinue) -and $CFG_VirtualAdapterFilter) {
             try {
                 $testPattern = "$filterPattern|$CFG_VirtualAdapterFilter"
                 $null = [regex]$testPattern
                 $filterPattern = $testPattern
             } catch {
-                Write-DebugLog "CFG_VirtualAdapterFilter contains invalid regex — ignored: $_"
+                Write-DebugLog "CFG_VirtualAdapterFilter contains invalid regex - ignored: $_"
             }
         }
         return Get-NetAdapter -ErrorAction Stop | Where-Object {
@@ -297,7 +315,7 @@ function Get-IntelHybridCpuName {
         )) {
             return $cpuName
         }
-        # CPU detected successfully but is not an Intel hybrid — return empty string
+        # CPU detected successfully but is not an Intel hybrid - return empty string
         # (falsy but distinguishable from $null which means detection failed)
         return ""
     } catch {
@@ -325,18 +343,18 @@ function Test-DualChannel {
     try {
         $sticks = @(Get-CimInstance Win32_PhysicalMemory)
         if ($sticks.Count -lt 2) {
-            return @{ DualChannel = $false; Sticks = $sticks.Count; Reason = "Only $($sticks.Count) RAM stick detected — single-channel." }
+            return @{ DualChannel = $false; Sticks = $sticks.Count; Reason = "Only $($sticks.Count) RAM module detected; possible single-channel layout requires manual verification." }
         }
         # Check BankLabel first, but some BIOSes report the same BankLabel for all DIMMs
         # (e.g., "BANK 0" for everything). Fall back to DeviceLocator which is more reliable
-        # on modern systems (e.g., "DIMM_A1", "DIMM_B1" — different letters = different channels).
+        # on modern systems (e.g., "DIMM_A1", "DIMM_B1" - different letters = different channels).
         $banks = @($sticks | ForEach-Object {
             if ($_.PSObject.Properties['BankLabel']) { $_.BankLabel }
         } | Where-Object { $_ } | Select-Object -Unique)
         if ($banks.Count -ge 2) {
-            return @{ DualChannel = $true;  Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks in $($banks.Count) banks — dual-channel likely." }
+            return @{ DualChannel = $true;  Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks in $($banks.Count) banks - dual-channel likely." }
         }
-        # BankLabel was same or empty — check DeviceLocator for channel letters (A/B, 0/1)
+        # BankLabel was same or empty - check DeviceLocator for channel letters (A/B, 0/1)
         $locators = @($sticks | ForEach-Object {
             if ($_.PSObject.Properties['DeviceLocator']) { $_.DeviceLocator }
         } | Where-Object { $_ } | Select-Object -Unique)
@@ -348,10 +366,10 @@ function Test-DualChannel {
                 elseif ($_ -match 'DIMM\s+([A-Z])\d') { $Matches[1] }
             } | Where-Object { $_ } | Select-Object -Unique
             if ($channels.Count -ge 2) {
-                return @{ DualChannel = $true; Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks across $($channels.Count) channels (DeviceLocator) — dual-channel likely." }
+                return @{ DualChannel = $true; Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks across $($channels.Count) channels (DeviceLocator) - dual-channel likely." }
             }
         }
-        return @{ DualChannel = $false; Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks but same bank/channel — possibly wrong slots." }
+        return @{ DualChannel = $false; Sticks = $sticks.Count; Reason = "$($sticks.Count) sticks but same bank/channel - possibly wrong slots." }
     } catch {
         return @{ DualChannel = $null; Sticks = 0; Reason = "Could not read RAM info." }
     }
@@ -361,10 +379,12 @@ function Test-DualChannel {
 
 function Get-AmdCpuInfo {
     <#
-    .SYNOPSIS  Detects AMD Ryzen CPU details for X3D-specific BIOS guidance.
+    .SYNOPSIS  Detects AMD Ryzen CPU details used by topology-aware checks.
     .DESCRIPTION
-        Returns structured info about AMD CPUs including X3D status, generation,
-        and per-model recommended PBO/CO settings from the X3D tuning guide.
+        Returns structured CPU identity, generation, and topology information.
+        Legacy tuning fields remain in the result for compatibility with existing
+        callers. They are repository defaults, not detected firmware values or
+        processor-vendor recommendations, and must not be presented as guidance.
 
         Return value semantics:
           @{ IsAMD=$true; IsX3D=$true; ... }  -> AMD X3D detected
@@ -390,7 +410,9 @@ function Get-AmdCpuInfo {
         $isZen5 = $name -match "\b9[0-9]{2,3}X3D\b"
         $isZen4 = $name -match "\b7[0-9]{2,3}X3D\b"
 
-        # Per-model recommended settings from X3D tuning guide
+        # Legacy repository metadata retained for caller compatibility. CPU model
+        # detection cannot establish safe Curve Optimizer, boost, or temperature
+        # values for an individual processor and firmware combination.
         $recommendedCO = if ($isZen5) { -20 } elseif ($isZen4) { -15 } else { -10 }
         $recommendedBoostOverride = if ($isZen5) { 200 } else { 0 }
         $expectedBoostMhz = if ($name -match "9800X3D") { 5200 }
@@ -432,24 +454,23 @@ function Get-AmdCpuInfo {
 
 function Get-Ddr5TimingInfo {
     <#
-    .SYNOPSIS  Extended DDR5 timing analysis for FCLK/MCLK 1:1 verification.
+    .SYNOPSIS  Returns reported DDR5 active and rated speeds.
     .DESCRIPTION
-        Builds on Get-RamInfo with DDR5-specific checks: FCLK:MCLK ratio,
-        rated vs active speed gap (detects downclocked EXPO kits), and
-        DIMM count for dual-channel verification.
+        Builds on Get-RamInfo with a reported active/rated speed comparison and
+        DIMM count. Windows inventory does not expose effective FCLK or UCLK here,
+        so this function cannot verify a clock ratio.
     #>
     $ram = Get-RamInfo
     if (-not $ram -or -not $ram.IsDDR5) { return $null }
 
     # Get-RamInfo already normalizes DDR5 active speed to MT/s.
     $activeMTs = $ram.ActiveMhz
-    # FCLK on AM5: max stable 1:1 is 2000 MHz (DDR5-6000, MCLK 3000).
-    # This is an approximation — actual FCLK ceiling varies by silicon quality.
-    # For display purposes only; not used in any gating logic.
+    # Compatibility-only display fields. These values are inferred from the
+    # reported data rate and do not measure FCLK, UCLK, or a stable clock ratio.
     $expectedFclk = [math]::Min($ram.ActiveMhz, 2000)
-    # Detect if kit is downclocked (rated > active, e.g., 8200 → 6000)
+    # Report whether the active speed is more than five percent below rated.
     $isDownclocked = ($ram.SpeedMhz -gt ($activeMTs * 1.05))
-    # Optimal AM5/X3D window is centered around DDR5-6000 MT/s.
+    # Legacy display band retained for callers. It is not clock-ratio validation.
     $isOptimal1to1 = ($activeMTs -ge 5600 -and $activeMTs -le 6400)
 
     return @{
@@ -473,9 +494,8 @@ function Test-WheaErrors {
     <#
     .SYNOPSIS  Checks Windows Event Log for WHEA (hardware) errors.
     .DESCRIPTION
-        Queries System log for WHEA-Logger events which indicate hardware
-        instability (CPU, RAM, PCIe). After PBO/CO tuning, WHEA errors
-        mean the undervolt is too aggressive.
+        Queries the System log for WHEA-Logger events. Such events provide
+        hardware-error evidence but do not identify one setting or root cause.
 
         Returns:
           @{ Count=0; Recent=@(); HasErrors=$false }  -> clean

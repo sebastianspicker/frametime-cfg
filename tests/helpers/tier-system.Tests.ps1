@@ -172,7 +172,7 @@ Describe "Invoke-TieredStep" {
         # Mock all console output functions to keep test output clean
         Mock Write-Blank {}
         Mock Write-TierBadge {}
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-Info {}
         Mock Show-StepInfoCard {}
@@ -304,6 +304,17 @@ Describe "Invoke-TieredStep" {
             $result          | Should -Be $false
             $state.executed  | Should -Be $false
         }
+
+        It "records action exceptions as preview issues" {
+            $SCRIPT:Profile = "CUSTOM"
+            $SCRIPT:DryRun = $true
+
+            $result = Invoke-TieredStep -Tier 1 -Title "Broken preview" -Why "Testing" `
+                -Action { throw "preview failure" }
+
+            $result | Should -BeFalse
+            Get-DryRunPreviewIssueCount | Should -Be 1
+        }
     }
 
     Context "CUSTOM profile" {
@@ -395,6 +406,35 @@ Describe "Invoke-TieredStep" {
                 -SkipAction { $state.skipCalled = $true }
 
             $state.skipCalled | Should -Be $true
+        }
+    }
+
+    Context "action outcome accounting" {
+        It "counts an action-recorded skip as skipped rather than applied" {
+            $SCRIPT:Profile = "SAFE"
+            Initialize-PhaseCounters
+            Mock Save-Progress {}
+            Mock Load-Progress {
+                [PSCustomObject]@{
+                    phase = 3; lastCompletedStep = 0; completedSteps = @(); skippedSteps = @(); timestamps = [PSCustomObject]@{}
+                }
+            }
+
+            $result = Invoke-TieredStep -Tier 1 -Title "Structured skip" -Why "Testing" `
+                -Risk "SAFE" -Action { Skip-Step 3 2 "No matching device" }
+
+            $result | Should -BeFalse
+            $SCRIPT:_phaseApplied | Should -Be 0
+            $SCRIPT:_phaseSkipped | Should -Be 1
+            $SCRIPT:_phaseFailed | Should -Be 0
+        }
+
+        It "does not claim a failed multi-write action left the system unaffected" {
+            $source = Get-Content -LiteralPath "$PSScriptRoot/../../helpers/tier-system.ps1" -Raw
+
+            $source | Should -Not -Match 'Your system is not affected'
+            $source | Should -Match 'some earlier changes in it may already be applied'
+            $source | Should -Match 'Backups were retained'
         }
     }
 }

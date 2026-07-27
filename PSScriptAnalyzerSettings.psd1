@@ -1,23 +1,17 @@
-# PSScriptAnalyzer settings for CS2 Optimization Suite
+# PSScriptAnalyzer settings for frametime.cfg
 # Run: Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
 #
-# Last reviewed: 2026-03-21 (E3 CI audit)
-# All exclusions validated against current codebase — each has documented justification.
+# All exclusions validated against current codebase - each has documented justification.
 @{
     Severity = @('Error', 'Warning')
 
     ExcludeRules = @(
         # ── Intentional by design ─────────────────────────────────────────
-        # This is a CLI tool — Write-Host with colors is the correct output
+        # This is a CLI tool - Write-Host with colors is the correct output
         'PSAvoidUsingWriteHost',
 
         # UTF-8 without BOM is preferred (modern tooling, git compatibility)
         'PSUseBOMForUnicodeEncodedFile',
-
-        # Empty catches are intentional best-effort patterns (7 instances):
-        # Setup-Profile.ps1 state load, PostReboot-Setup.ps1 state save,
-        # process-priority.ps1 affinity, CS2-Optimize-GUI.ps1 teardown (4x)
-        'PSAvoidUsingEmptyCatchBlock',
 
         # $global:ProgressPreference needed for PS 5.1 Invoke-WebRequest compat
         'PSAvoidGlobalVars',
@@ -30,7 +24,7 @@
         # ShouldProcess would be redundant
         'PSUseShouldProcessForStateChangingFunctions',
 
-        # Internal functions not exported as a module — verb/noun conventions
+        # Internal functions not exported as a module - verb/noun conventions
         # are relaxed for readability (Load-State, Apply-*, Ensure-Dir, etc.)
         'PSUseApprovedVerbs',
 
@@ -43,7 +37,8 @@
         'PSAvoidOverwritingBuiltInCmdlets',
 
         # Some params are used inside scriptblocks passed to Invoke-DrsSession
-        # which PSScriptAnalyzer can't track; others are API-contract placeholders
+        # which PSScriptAnalyzer cannot track; others are intentionally accepted
+        # by shared function signatures
         'PSReviewUnusedParameter',
 
         # Pagefile code in Optimize-SystemBase.ps1 requires WMI .Put() methods

@@ -1,11 +1,11 @@
 # ==============================================================================
 #  tests/integration/backup-restore-entrypoints.Tests.ps1
-#  Integration coverage for Restore-AllChanges and Restore-Interactive.
+#  Integration coverage for Restore-Interactive entrypoint behavior.
 # ==============================================================================
 
 BeforeAll {
     $tempBase = if ($env:TEMP) { $env:TEMP } else { [System.IO.Path]::GetTempPath() }
-    $script:FallbackTestTempRoot = Join-Path $tempBase "cs2opt-tests-integration-fallback"
+    $script:FallbackTestTempRoot = Join-Path $tempBase "frametime-tests-integration-fallback"
     try {
         . "$PSScriptRoot/_IntegrationInit.ps1"
     } finally {
@@ -15,10 +15,13 @@ BeforeAll {
     }
 
     function Set-RestorePromptResponses {
+        [CmdletBinding(SupportsShouldProcess)]
         param([string[]]$Values)
-        $script:RestorePromptResponses = [System.Collections.Generic.Queue[string]]::new()
-        foreach ($value in $Values) {
-            $script:RestorePromptResponses.Enqueue($value)
+        if ($PSCmdlet.ShouldProcess("Restore prompt response queue", "Set scripted responses")) {
+            $script:RestorePromptResponses = [System.Collections.Generic.Queue[string]]::new()
+            foreach ($value in $Values) {
+                $script:RestorePromptResponses.Enqueue($value)
+            }
         }
     }
 }
@@ -31,50 +34,6 @@ AfterAll {
         $script:FallbackTestTempRoot -ne $SCRIPT:TestTempRoot -and
         (Test-Path $script:FallbackTestTempRoot)) {
         Remove-Item $script:FallbackTestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-Describe "Restore-AllChanges integration" {
-
-    BeforeEach {
-        Reset-IntegrationState
-        $SCRIPT:DryRun = $false
-
-        New-TestBackupFile -Entries @(
-            [ordered]@{
-                type = "defender"
-                exclusionPaths = @("C:\Games\CS2")
-                exclusionProcesses = @()
-                step = "Step Alpha"
-                timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            },
-            [ordered]@{
-                type = "defender"
-                exclusionPaths = @()
-                exclusionProcesses = @("cs2.exe")
-                step = "Step Beta"
-                timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-            }
-        )
-
-        Mock Write-Host {}
-        Mock Write-DebugLog {}
-        Mock Write-OK {}
-        Mock Write-Warn {}
-        Mock Write-Step {}
-        Mock Write-Info {}
-        Mock Remove-MpPreference {}
-        Mock Test-BackupLock { $false }
-        Mock Set-BackupLock {}
-        Mock Remove-BackupLock {}
-        Mock Read-Host { "y" }
-    }
-
-    It "processes all step groups and cleans up backup.json after completion" {
-        Restore-AllChanges
-
-        Should -Invoke Remove-MpPreference -Exactly 2
-        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
     }
 }
 
@@ -101,7 +60,7 @@ Describe "Restore-Interactive integration" {
             }
         )
 
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-DebugLog {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -136,7 +95,7 @@ Describe "Restore-Interactive integration" {
         Should -Invoke Remove-MpPreference -Exactly 1
         $remaining = @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries)
         $remaining.Count | Should -Be 1
-        $remaining[0].step | Should -Be "Step Alpha"
+        $remaining[0].step | Should -Be "Step Beta"
     }
 
     It "does not claim a full restore when any step group is skipped" {
@@ -144,18 +103,19 @@ Describe "Restore-Interactive integration" {
 
         Restore-Interactive
 
-        Should -Invoke Write-OK -Exactly 0 -ParameterFilter { $t -match 'All settings restored to pre-optimization state' }
+        Should -Invoke Write-OK -Exactly 0 -ParameterFilter { $t -match 'All recorded supported settings were restored' }
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'skipped step group' }
     }
 
-    It "leaves unprocessed step groups in backup.json when the operator aborts mid-run" {
+    It "does not mutate any step group when the operator aborts during confirmation" {
         Set-RestorePromptResponses @("A", "R", "A")
 
         Restore-Interactive
 
-        Should -Invoke Remove-MpPreference -Exactly 1
+        Should -Invoke Remove-MpPreference -Exactly 0
         $remaining = @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries)
-        $remaining.Count | Should -Be 1
-        $remaining[0].step | Should -Be "Step Beta"
+        $remaining.Count | Should -Be 2
+        $remaining[0].step | Should -Be "Step Alpha"
+        $remaining[1].step | Should -Be "Step Beta"
     }
 }

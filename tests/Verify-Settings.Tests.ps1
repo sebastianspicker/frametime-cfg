@@ -6,6 +6,62 @@ BeforeAll {
     . "$PSScriptRoot/helpers/_TestInit.ps1"
     . "$PSScriptRoot/../Verify-Settings.ps1"
 
+    $script:ProjectRoot = (Resolve-Path "$PSScriptRoot/..").Path
+
+    function Get-VerificationSourceText {
+        param([string]$RelativePath)
+        Get-Content (Join-Path $script:ProjectRoot $RelativePath) -Raw
+    }
+
+    function Test-VerifySettingsRegistryDefinition {
+        param(
+            [string]$Source,
+            [string]$Path,
+            [string]$Name,
+            [string]$ExpectedPattern
+        )
+        $pattern = 'Test-RegistryCheck\s+"' + [regex]::Escape($Path) + '"\s+"' + [regex]::Escape($Name) + '"\s+' + $ExpectedPattern
+        return $Source -match $pattern
+    }
+
+    function Test-GuiStartupRegistryDefinition {
+        param(
+            [string]$Source,
+            [string]$Path,
+            [string]$Name,
+            [string]$ExpectedPattern
+        )
+        $pattern = '@\{\s*Path\s*=\s*"' + [regex]::Escape($Path) + '";\s*Name\s*=\s*"' + [regex]::Escape($Name) + '";\s*Expected\s*=\s*' + $ExpectedPattern
+        return $Source -match $pattern
+    }
+
+    function Test-GuiInlineRegistryDefinition {
+        param(
+            [string]$Source,
+            [string]$Path,
+            [string]$Name,
+            [string]$ExpectedPattern
+        )
+        $pattern = '@\{\s*P\s*=\s*"' + [regex]::Escape($Path) + '";\s*N\s*=\s*"' + [regex]::Escape($Name) + '";\s*E\s*=\s*' + $ExpectedPattern
+        return $Source -match $pattern
+    }
+
+    function Test-SystemAnalysisRegistryDefinition {
+        param(
+            [string]$Source,
+            [string]$Path,
+            [string]$Name,
+            [string]$ExpectedPattern
+        )
+        $readPattern = 'Get-RegVal\s+"' + [regex]::Escape($Path) + '"\s+"' + [regex]::Escape($Name) + '"'
+        $match = [regex]::Match($Source, $readPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $match.Success) { return $false }
+
+        $remainingLength = [math]::Min(900, $Source.Length - $match.Index)
+        $nearbySource = $Source.Substring($match.Index, $remainingLength)
+        return $nearbySource -match ('-eq\s+' + $ExpectedPattern)
+    }
+
     function Initialize-VerifyBaselineState {
         $script:VerifyLabelStatus = @{}
         $script:VerifyServiceStatus = @{}
@@ -13,15 +69,14 @@ BeforeAll {
         $script:BcdOutput = @(
             "Windows Boot Loader",
             "identifier              {current}",
-            "0x26000060              Yes",
-            "0x26000092              Yes"
+            "0x26000060              Yes"
         )
         $script:HagsValue = 2
         $script:UserPreferencesMask = [byte[]](0x90, 0x12, 0x03, 0x80, 0x10, 0x00, 0x00, 0x00)
         $script:VerifyNicResults = @(
             (New-VerifyCheckResult -Status "OK" -Label "NIC tweak: EEE" -Detail "(Disabled)")
         )
-        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "OK" -Label "Active power plan = CS2 Optimized" -Detail "(cs2-guid)"
+        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "OK" -Label "Active power plan = frametime.cfg" -Detail "(cs2-guid)"
         $script:VerifyQosResults = @(
             (New-VerifyCheckResult -Status "OK" -Label "QoS policy: CS2_UDP_Ports" -Detail "(DSCP 46)"),
             (New-VerifyCheckResult -Status "OK" -Label "QoS policy: CS2_App" -Detail "(DSCP 46)")
@@ -58,17 +113,78 @@ AfterAll {
     }
 }
 
+Describe "Verification table drift" {
+
+    BeforeAll {
+        $script:VerifySettingsSource = Get-VerificationSourceText "Verify-Settings.ps1"
+        $script:GuiPanelsSource = Get-VerificationSourceText "helpers/gui-panels.ps1"
+        $script:SystemAnalysisSource = Get-VerificationSourceText "helpers/system-analysis.ps1"
+    }
+
+    It "keeps shared registry checks aligned across active verification surfaces" {
+        $checks = @(
+            [PSCustomObject]@{ Id="mpo"; Path="HKLM:\SOFTWARE\Microsoft\Windows\Dwm"; Name="OverlayTestMode"; Expected="5"; Surfaces=@("verify","gui-startup","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="game-mode"; Path="HKCU:\SOFTWARE\Microsoft\GameBar"; Name="AutoGameModeEnabled"; Expected="1"; Surfaces=@("verify","gui-startup","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="game-dvr-capture"; Path="HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR"; Name="AppCaptureEnabled"; Expected="0"; Surfaces=@("verify","gui-startup","gui-inline") },
+            [PSCustomObject]@{ Id="game-dvr-master"; Path="HKCU:\System\GameConfigStore"; Name="GameDVR_Enabled"; Expected="0"; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="fse-behavior"; Path="HKCU:\System\GameConfigStore"; Name="GameDVR_FSEBehavior"; Expected="2"; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="fast-startup"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power"; Name="HiberbootEnabled"; Expected="0"; Surfaces=@("verify","gui-startup","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="timer-resolution"; Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"; Name="GlobalTimerResolutionRequests"; Expected="1"; Surfaces=@("verify","gui-startup","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="mouse-speed"; Path="HKCU:\Control Panel\Mouse"; Name="MouseSpeed"; Expected='"0"'; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="mouse-threshold-1"; Path="HKCU:\Control Panel\Mouse"; Name="MouseThreshold1"; Expected='"0"'; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="mouse-threshold-2"; Path="HKCU:\Control Panel\Mouse"; Name="MouseThreshold2"; Expected='"0"'; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="mouse-queue"; Path="HKLM:\SYSTEM\CurrentControlSet\Services\mouclass\Parameters"; Name="MouseDataQueueSize"; Expected="50"; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="audio-ducking"; Path="HKCU:\Software\Microsoft\Multimedia\Audio"; Name="UserDuckingPreference"; Expected="3"; Surfaces=@("verify","gui-inline") },
+            [PSCustomObject]@{ Id="steam-overlay"; Path="HKCU:\Software\Valve\Steam"; Name="GameOverlayDisabled"; Expected="1"; Surfaces=@("verify","gui-inline","system-analysis") },
+            [PSCustomObject]@{ Id="visual-effects"; Path="HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"; Name="VisualFXSetting"; Expected="2"; Surfaces=@("verify","gui-inline","system-analysis") }
+        )
+
+        foreach ($check in $checks) {
+            if ("verify" -in $check.Surfaces) {
+                Test-VerifySettingsRegistryDefinition -Source $script:VerifySettingsSource -Path $check.Path -Name $check.Name -ExpectedPattern $check.Expected |
+                    Should -BeTrue -Because "$($check.Id) must match in Verify-Settings.ps1"
+            }
+            if ("gui-startup" -in $check.Surfaces) {
+                Test-GuiStartupRegistryDefinition -Source $script:GuiPanelsSource -Path $check.Path -Name $check.Name -ExpectedPattern $check.Expected |
+                    Should -BeTrue -Because "$($check.Id) must match in GUI startup drift checks"
+            }
+            if ("gui-inline" -in $check.Surfaces) {
+                Test-GuiInlineRegistryDefinition -Source $script:GuiPanelsSource -Path $check.Path -Name $check.Name -ExpectedPattern $check.Expected |
+                    Should -BeTrue -Because "$($check.Id) must match in GUI inline verification"
+            }
+            if ("system-analysis" -in $check.Surfaces) {
+                Test-SystemAnalysisRegistryDefinition -Source $script:SystemAnalysisSource -Path $check.Path -Name $check.Name -ExpectedPattern $check.Expected |
+                    Should -BeTrue -Because "$($check.Id) must match in system analysis"
+            }
+        }
+    }
+
+    It "does not require the unapplied Platform Tick boot setting in verifier surfaces" {
+        ($script:VerifySettingsSource -match "Platform Tick|0x26000092") | Should -BeFalse
+        ($script:SystemAnalysisSource -match "Platform Tick|0x26000092") | Should -BeFalse
+    }
+}
+
 Describe "Invoke-VerifySettings" {
 
     BeforeEach {
         Reset-TestState
         Initialize-VerifyBaselineState
 
+        $writeHostCommand = [string]::Concat("Write", "-Host")
         Mock Write-LogoBanner {}
         Mock Write-Blank {}
-        Mock Write-Host {
+        Mock -CommandName $writeHostCommand {
+            param(
+                [Parameter(Position = 0, ValueFromRemainingArguments)]
+                [object[]]$Object,
+                [ConsoleColor]$ForegroundColor,
+                [ConsoleColor]$BackgroundColor,
+                [switch]$NoNewline,
+                [object]$Separator
+            )
             if ($null -ne $Object) {
-                $script:VerifyOutput.Add("$Object") | Out-Null
+                $script:VerifyOutput.Add(($Object -join " ")) | Out-Null
             }
         }
         Mock Test-RegistryCheck {
@@ -80,15 +196,15 @@ Describe "Invoke-VerifySettings" {
 
             switch ($status) {
                 "OK" {
-                    Write-Host "  OK  $Label"
+                    & $writeHostCommand "  OK  $Label"
                     $Script:_verifyOkCount++
                 }
                 "CHANGED" {
-                    Write-Host "  CHANGED  $Label"
+                    & $writeHostCommand "  CHANGED  $Label"
                     $Script:_verifyChangedCount++
                 }
                 "MISSING" {
-                    Write-Host "  MISSING  $Label"
+                    & $writeHostCommand "  MISSING  $Label"
                     $Script:_verifyMissingCount++
                 }
                 default {
@@ -105,15 +221,15 @@ Describe "Invoke-VerifySettings" {
 
             switch ($status) {
                 "OK" {
-                    Write-Host "  OK  $Label"
+                    & $writeHostCommand "  OK  $Label"
                     $Script:_verifyOkCount++
                 }
                 "CHANGED" {
-                    Write-Host "  CHANGED  $Label"
+                    & $writeHostCommand "  CHANGED  $Label"
                     $Script:_verifyChangedCount++
                 }
                 "MISSING" {
-                    Write-Host "  MISSING  $Label"
+                    & $writeHostCommand "  MISSING  $Label"
                     $Script:_verifyMissingCount++
                 }
                 default {
@@ -131,7 +247,6 @@ Describe "Invoke-VerifySettings" {
         Mock Test-VerifyScheduledTasks { $script:VerifyScheduledTaskResult }
         Mock Test-VerifyNvidiaDrsProfile { $script:VerifyDrsResult }
         Mock Test-VerifyRuntimeCompatibility { [PSCustomObject]@{ Supported = $true; Message = "" } }
-        Mock Update-LastVerifiedTimestamp {}
         Mock bcdedit {
             $global:LASTEXITCODE = 0
             $script:BcdOutput
@@ -170,7 +285,7 @@ Describe "Invoke-VerifySettings" {
         $counts.changedCount | Should -Be 0
         $counts.missingCount | Should -Be 0
         $counts.okCount | Should -BeGreaterThan 0
-        (@($script:VerifyOutput) -join "`n") | Should -Match "All settings intact . your optimizations are still active!"
+        (@($script:VerifyOutput) -join "`n") | Should -Match "All checked settings match their expected values\."
     }
 
     It "marks the Game Mode category as changed when AutoGameModeEnabled is disabled" {
@@ -202,9 +317,9 @@ Describe "Invoke-VerifySettings" {
         Invoke-VerifySettings
 
         $counts = Get-VerifyCounters
-        $counts.changedCount | Should -Be 2
+        $counts.changedCount | Should -Be 1
         (@($script:VerifyOutput) -join "`n") | Should -Match "Dynamic Tick is ACTIVE"
-        (@($script:VerifyOutput) -join "`n") | Should -Match "Platform Tick is INACTIVE"
+        (@($script:VerifyOutput) -join "`n") | Should -Not -Match "Platform Tick"
     }
 
     It "marks the network section as missing when no active NIC can be resolved" {
@@ -266,13 +381,13 @@ Describe "Invoke-VerifySettings" {
     }
 
     It "marks the power plan category as changed when the CS2 plan is not active" {
-        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = CS2 Optimized" -Detail "(active: balanced-guid, expected: cs2-guid)"
+        $script:VerifyPowerPlanResult = New-VerifyCheckResult -Status "CHANGED" -Label "Active power plan = frametime.cfg" -Detail "(active: balanced-guid, expected: cs2-guid)"
 
         Invoke-VerifySettings
 
         $counts = Get-VerifyCounters
         $counts.changedCount | Should -Be 1
-        (@($script:VerifyOutput) -join "`n") | Should -Match "Active power plan = CS2 Optimized"
+        (@($script:VerifyOutput) -join "`n") | Should -Match "Active power plan = frametime.cfg"
     }
 
     It "marks QoS policies as missing when a required policy is absent" {
@@ -331,7 +446,6 @@ Describe "Invoke-VerifySettings" {
 
         (@($script:VerifyOutput) -join "`n") | Should -Match "only supported on Windows"
         Should -Invoke Test-RegistryCheck -Exactly 0
-        Should -Invoke Update-LastVerifiedTimestamp -Exactly 0
     }
 }
 
@@ -366,11 +480,11 @@ Describe "Test-VerifyPowerPlan" {
             if ($joined -eq '/list') {
                 return @"
 Power Scheme GUID: 11111111-1111-1111-1111-111111111111  (Balanced)
-Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (CS2 Optimized)
+Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (frametime.cfg)
 "@
             }
             if ($joined -eq '/getactivescheme') {
-                return 'Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (CS2 Optimized)'
+                return 'Power Scheme GUID: 22222222-2222-2222-2222-222222222222  (frametime.cfg)'
             }
             if ($joined -match '^/query 22222222-2222-2222-2222-222222222222 ') {
                 if ($joined -match [regex]::Escape($PP_USBSS)) {
@@ -401,41 +515,28 @@ Describe "Test-VerifyScheduledTasks" {
         }
     }
 
-    It "returns changed when the affinity task action payload does not match" {
+    It "returns changed when a legacy automatic affinity task remains" {
         Mock Get-ScheduledTask {
             [PSCustomObject]@{
                 State = 'Ready'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\CS2_OPTIMIZE\wrong.ps1"'
-                    }
-                )
+                Actions = @()
             }
         }
 
         $result = Test-VerifyScheduledTasks
 
         $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'action mismatch'
+        $result.Label | Should -Match 'Legacy task'
+        $result.Detail | Should -Match 'automatic CCD affinity is disabled'
     }
 
-    It "returns changed when the affinity task state is unhealthy" {
-        Mock Get-ScheduledTask {
-            [PSCustomObject]@{
-                State = 'Unknown'
-                Actions = @(
-                    [PSCustomObject]@{
-                        Execute = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe'
-                        Arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$CS2_AffinityScriptPath`""
-                    }
-                )
-            }
-        }
+    It "reports manual-only policy rather than a missing task on dual-CCD X3D" {
+        Mock Get-ScheduledTask { $null }
 
         $result = Test-VerifyScheduledTasks
 
-        $result.Status | Should -Be "CHANGED"
-        $result.Detail | Should -Match 'state: Unknown'
+        $result.Status | Should -Be "INFO"
+        $result.Label | Should -Be "CCD affinity policy"
+        $result.Detail | Should -Match 'manual only'
     }
 }

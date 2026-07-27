@@ -68,7 +68,6 @@ Describe "Initialize-Backup" {
         Mock Write-Warn {}
         Mock Set-BackupLock { $script:InitOrder.Add("lock") | Out-Null }
         Mock Move-Item { $script:InitOrder.Add("move") | Out-Null }
-        Mock Prune-BackupVersions { $script:InitOrder.Add("prune") | Out-Null }
         Mock New-BackupFile { $script:InitOrder.Add("new") | Out-Null }
         Mock Set-SecureAcl { $script:InitOrder.Add("acl") | Out-Null }
 
@@ -95,6 +94,32 @@ Describe "Initialize-Backup" {
 
         $script:InitOrder[0] | Should -Be "lock"
         ($script:InitOrder -join ',') | Should -Be 'lock,acl'
+    }
+
+    It "releases its lock when backup initialization fails after acquisition" {
+        Mock Test-BackupLock { $false }
+        Mock Set-BackupLock {}
+        Mock New-BackupFile { throw "disk full" }
+        Mock Remove-BackupLock {}
+
+        { Initialize-Backup } | Should -Throw "*disk full*"
+
+        Should -Invoke Set-BackupLock -Exactly 1
+        Should -Invoke Remove-BackupLock -Exactly 1
+    }
+
+    It "does not inspect, acquire, or create backup state in DRY-RUN" {
+        $SCRIPT:DryRun = $true
+        Mock Write-DebugLog {}
+        Mock New-BackupFile {}
+
+        Initialize-Backup
+
+        Should -Invoke Test-BackupLock -Exactly 0
+        Should -Invoke Set-BackupLock -Exactly 0
+        Should -Invoke New-BackupFile -Exactly 0
+        Test-Path -LiteralPath $CFG_BackupFile | Should -BeFalse
+        Test-Path -LiteralPath $CFG_BackupLockFile | Should -BeFalse
     }
 }
 
@@ -302,7 +327,7 @@ Describe "Restore-StepChanges" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -321,7 +346,7 @@ Describe "Restore-StepChanges" {
     It "restores registry value and removes entry on success" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "Restored";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = 99; originalType = "DWord"; existed = $true;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
@@ -344,7 +369,7 @@ Describe "Restore-StepChanges" {
     It "removes registry value that did not exist before" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "NewValue";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = $null; originalType = $null; existed = $false;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
@@ -352,9 +377,13 @@ Describe "Restore-StepChanges" {
         New-TestBackupFile -Entries $entries
 
         Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
-        # Mock Get-ItemProperty to indicate the value still exists (so Remove-ItemProperty is called)
-        Mock Get-ItemProperty { [PSCustomObject]@{ NewValue = 42 } } -ParameterFilter { $Path -match "HKCU:" -and $Name -eq "NewValue" }
-        Mock Remove-ItemProperty {}
+        # The first key read sees the value. The post-removal verification does not.
+        $script:newValueRemoved = $false
+        Mock Get-ItemProperty {
+            if ($script:newValueRemoved) { return [PSCustomObject]@{} }
+            [PSCustomObject]@{ GameDVR_Enabled = 42 }
+        } -ParameterFilter { $Path -match "HKCU:" }
+        Mock Remove-ItemProperty { $script:newValueRemoved = $true }
 
         $result = Restore-StepChanges -StepTitle "Test Step"
 
@@ -365,7 +394,7 @@ Describe "Restore-StepChanges" {
     It "skips removal when registry value is already absent" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GoneValue";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = $null; originalType = $null; existed = $false;
                 step = "Test Step"; timestamp = "2026-01-01"
             }
@@ -373,8 +402,8 @@ Describe "Restore-StepChanges" {
         New-TestBackupFile -Entries $entries
 
         Mock Test-Path { $true } -ParameterFilter { $Path -match "HKCU:" }
-        # Value is already gone — Get-ItemProperty returns object without the property
-        Mock Get-ItemProperty { [PSCustomObject]@{} } -ParameterFilter { $Path -match "HKCU:" -and $Name -eq "GoneValue" }
+        # Value is already gone - Get-ItemProperty returns object without the property
+        Mock Get-ItemProperty { [PSCustomObject]@{} } -ParameterFilter { $Path -match "HKCU:" }
         Mock Remove-ItemProperty {}
 
         $result = Restore-StepChanges -StepTitle "Test Step"
@@ -386,7 +415,7 @@ Describe "Restore-StepChanges" {
     It "keeps entries on restore failure" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "FailVal";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = 1; originalType = "DWord"; existed = $true;
                 step = "Fail Step"; timestamp = "2026-01-01"
             }
@@ -408,12 +437,12 @@ Describe "Restore-StepChanges" {
     It "restores only the specified step's entries" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "A";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = 1; originalType = "DWord"; existed = $true;
                 step = "Step A"; timestamp = "2026-01-01"
             },
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "B";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_FSEBehavior";
                 originalValue = 2; originalType = "DWord"; existed = $true;
                 step = "Step B"; timestamp = "2026-01-01"
             }
@@ -434,7 +463,7 @@ Describe "Restore-StepChanges" {
         # PS 5.1 ConvertFrom-Json unwraps ["single"] to "single" (scalar)
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "MultiVal";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = "OnlyOneString"; originalType = "MultiString"; existed = $true;
                 step = "Multi Step"; timestamp = "2026-01-01"
             }
@@ -455,7 +484,7 @@ Describe "Restore-StepChanges" {
     It "skips binary restore when values are outside [0,255]" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "BadBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = @(0, 255, 300); originalType = "Binary"; existed = $true;
                 step = "Binary Step"; timestamp = "2026-01-01"
             }
@@ -475,7 +504,7 @@ Describe "Restore-StepChanges" {
         # ConvertFrom-Json may produce negative Int64 for large unsigned values
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "NegBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = @(10, -1, 128); originalType = "Binary"; existed = $true;
                 step = "Neg Binary Step"; timestamp = "2026-01-01"
             }
@@ -494,7 +523,7 @@ Describe "Restore-StepChanges" {
     It "restores valid binary values within [0,255]" {
         $entries = @(
             [ordered]@{
-                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GoodBin";
+                type = "registry"; path = "HKCU:\System\GameConfigStore"; name = "GameDVR_Enabled";
                 originalValue = @(0, 128, 255); originalType = "Binary"; existed = $true;
                 step = "Good Binary Step"; timestamp = "2026-01-01"
             }
@@ -555,7 +584,7 @@ Describe "Service restore allowlist" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -605,27 +634,96 @@ Describe "Service restore allowlist" {
     }
 }
 
+Describe "Service restore failure retention" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Write-ConsoleLine {}
+        Mock Write-Step {}
+        Mock Write-OK {}
+        Mock Write-Warn {}
+        Mock Write-DebugLog {}
+        Mock Write-Info {}
+    }
+
+    It "retains the service entry when delayed auto-start restore fails" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "DiagTrack"; originalStartType = "Auto";
+                originalStatus = "Stopped"; delayedAutoStart = $true;
+                step = "Service Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service { [PSCustomObject]@{ Name = "DiagTrack"; Status = "Stopped" } }
+        Mock Set-Service {}
+        Mock Set-ItemProperty { throw "Delayed flag write failed" }
+        Mock Start-Service {}
+
+        $result = Restore-StepChanges -StepTitle "Service Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-Service -Exactly 1
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter { $Name -eq "DelayedAutostart" }
+        Should -Invoke Start-Service -Exactly 0
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "retains the service entry when restart restore fails" {
+        $entries = @(
+            [ordered]@{
+                type = "service"; name = "DiagTrack"; originalStartType = "Auto";
+                originalStatus = "Running"; delayedAutoStart = $false;
+                step = "Service Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Get-Service { [PSCustomObject]@{ Name = "DiagTrack"; Status = "Stopped" } }
+        Mock Set-Service {}
+        Mock Set-ItemProperty {}
+        Mock Start-Service { throw "Service failed to start" }
+
+        $result = Restore-StepChanges -StepTitle "Service Step"
+
+        $result | Should -Be $false
+        Should -Invoke Set-Service -Exactly 1
+        Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Start-Service -Exactly 1
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+}
+
 # ── Backup lock system ───────────────────────────────────────────────────────
 Describe "Backup lock system" {
 
-    BeforeEach { Reset-TestState }
+    BeforeEach {
+        Remove-BackupLock | Out-Null
+        Reset-TestState
+        $SCRIPT:_backupLockToken = $null
+        if ($SCRIPT:_backupLockStream) { $SCRIPT:_backupLockStream.Dispose() }
+        $SCRIPT:_backupLockStream = $null
+    }
 
     It "Set-BackupLock creates lock file with PID" {
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Test-Path $CFG_BackupLockFile | Should -Be $true
         $lockData = Get-Content $CFG_BackupLockFile -Raw | ConvertFrom-Json
         $lockData.pid | Should -Be $PID
+        $lockData.token | Should -Match '^[a-f0-9]{32}$'
+        $lockData.processStartUtc | Should -Not -BeNullOrEmpty
+        Remove-BackupLock | Out-Null
     }
 
     It "Set-BackupLock secures the lock file" {
         Mock Set-SecureAcl {}
 
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter {
             $Path -eq $CFG_BackupLockFile -and $Required
         }
+        Remove-BackupLock | Out-Null
     }
 
     It "Remove-BackupLock removes lock file" {
@@ -636,9 +734,63 @@ Describe "Backup lock system" {
     }
 
     It "Test-BackupLock returns true for live process" {
-        Set-BackupLock
+        Set-BackupLock | Out-Null
 
         Test-BackupLock | Should -Be $true
+        Remove-BackupLock | Out-Null
+    }
+
+    It "uses CreateNew so a second contender cannot overwrite the owner's lock" {
+        $ownerToken = Set-BackupLock -PassThru
+        $before = Get-Content $CFG_BackupLockFile -Raw
+
+        { Set-BackupLock } | Should -Throw
+
+        (Get-Content $CFG_BackupLockFile -Raw) | Should -BeExactly $before
+        ((Get-Content $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $ownerToken
+        Remove-BackupLock | Out-Null
+    }
+
+    It "rejects release with a non-owner token" {
+        $ownerToken = Set-BackupLock -PassThru
+
+        Remove-BackupLock -Token ([guid]::NewGuid().ToString('N'))
+
+        Test-Path -LiteralPath $CFG_BackupLockFile | Should -Be $true
+        ((Get-Content -LiteralPath $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $ownerToken
+        Remove-BackupLock | Out-Null
+    }
+
+    It "preserves script-scoped ownership when the helper is dot-sourced again" {
+        $ownerToken = Set-BackupLock -PassThru
+        $ownerStream = $SCRIPT:_backupLockStream
+
+        . "$PSScriptRoot/../../helpers/backup-restore.ps1"
+
+        $SCRIPT:_backupLockToken | Should -Be $ownerToken
+        [object]::ReferenceEquals($SCRIPT:_backupLockStream, $ownerStream) | Should -Be $true
+        Remove-BackupLock | Out-Null
+    }
+
+    It "does not release another contender's lock after initialization loses the race" {
+        $foreignToken = [guid]::NewGuid().ToString('N')
+        $foreignData = @{
+            pid = $PID
+            started = (Get-Date).ToUniversalTime().ToString('o')
+            processStartUtc = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+            token = $foreignToken
+            state = 'owned'
+        } | ConvertTo-Json -Compress
+        Set-Content -LiteralPath $CFG_BackupLockFile -Value $foreignData -Encoding UTF8
+        Mock Test-BackupLock { $false }
+        Mock Write-Warn {}
+        $SCRIPT:_backupLockToken = $null
+
+        { Initialize-Backup } | Should -Throw
+        Remove-BackupLock
+
+        Test-Path -LiteralPath $CFG_BackupLockFile | Should -Be $true
+        ((Get-Content -LiteralPath $CFG_BackupLockFile -Raw | ConvertFrom-Json).token) | Should -Be $foreignToken
     }
 
     It "Test-BackupLock returns false when no lock exists" {
@@ -730,7 +882,7 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -809,8 +961,12 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
         )
         New-TestBackupFile -Entries $entries
 
+        $script:TaskQueryCount = 0
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
+            $script:TaskQueryCount++
+            if ($script:TaskQueryCount -eq 1) {
+                [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; TaskPath = "\"; State = "Ready" }
+            }
         }
         Mock Unregister-ScheduledTask {}
 
@@ -818,6 +974,29 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
 
         $result | Should -Be $true
         Should -Invoke Unregister-ScheduledTask -Exactly 1
+        Should -Invoke Get-ScheduledTask -Exactly 2
+    }
+
+    It "retains the restore record when task removal cannot be verified" {
+        $entries = @(
+            [ordered]@{
+                type = "scheduledtask"; taskName = "CS2_Optimize_CCD_Affinity"; taskPath = "\";
+                existed = $false;
+                wasEnabled = $false; scriptPath = ""; step = "New Task Step"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+
+        Mock Get-ScheduledTask {
+            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; TaskPath = "\"; State = "Ready" }
+        }
+        Mock Unregister-ScheduledTask {}
+
+        $result = Restore-StepChanges -StepTitle "New Task Step"
+
+        $result | Should -Be $false
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+        Should -Invoke Write-Warn -ParameterFilter { $t -match 'still present after removal' }
     }
 
     It "refuses to delete a tampered scheduled-task scriptPath outside the suite workspace" {
@@ -830,8 +1009,12 @@ Describe "Restore-StepChanges scheduled task wasEnabled" {
         )
         New-TestBackupFile -Entries $entries
 
+        $script:TaskQueryCount = 0
         Mock Get-ScheduledTask {
-            [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; State = "Ready" }
+            $script:TaskQueryCount++
+            if ($script:TaskQueryCount -eq 1) {
+                [PSCustomObject]@{ TaskName = "CS2_Optimize_CCD_Affinity"; TaskPath = "\"; State = "Ready" }
+            }
         }
         Mock Unregister-ScheduledTask {}
         Mock Remove-Item {}
@@ -907,7 +1090,7 @@ Describe "Registry restore allowlist" {
 
     BeforeEach {
         Reset-TestState
-        Mock Write-Host {}
+        Mock Write-ConsoleLine {}
         Mock Write-Step {}
         Mock Write-OK {}
         Mock Write-Warn {}
@@ -965,5 +1148,74 @@ Describe "Registry restore allowlist" {
 
     It "allows canonical provider registry restore paths" {
         Test-RegistryRestoreAllowed -Path "Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisableLastAccessUpdate" | Should -BeTrue
+    }
+
+    It "restores a safe cs2.exe value name on the exact AppCompat Layers key" {
+        $pathName = "C:\Games\Counter-Strike 2\cs2.exe"
+        $entries = @(
+            [ordered]@{
+                type = "registry"; path = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+                name = $pathName; existed = $true; originalValue = "~ DISABLEDXMAXIMIZEDWINDOWEDMODE"; originalType = "String";
+                step = "Registry Path Name"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Restore-StepChanges -StepTitle "Registry Path Name"
+
+        $result | Should -BeTrue
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter { $Name -eq $pathName }
+    }
+
+    It "allows a safe cs2.exe value name on the exact DirectX preferences key" {
+        Test-RegistryRestoreAllowed `
+            -Path "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" `
+            -Name "D:\SteamLibrary\game\bin\win64\cs2.exe" | Should -BeTrue
+    }
+
+    It "canonicalizes a safe mixed-separator cs2.exe value name during restore" {
+        $pathName = "C:/Program Files (x86)/Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
+        $canonicalName = "C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe"
+        $entries = @(
+            [ordered]@{
+                type = "registry"; path = "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences";
+                name = $pathName; existed = $true; originalValue = "GpuPreference=2;"; originalType = "String";
+                step = "Registry Mixed Path"; timestamp = "2026-01-01"
+            }
+        )
+        New-TestBackupFile -Entries $entries
+        Mock Test-Path { $true }
+        Mock Set-ItemProperty {}
+
+        $result = Restore-StepChanges -StepTitle "Registry Mixed Path"
+
+        $result | Should -BeTrue
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter { $Name -eq $canonicalName }
+    }
+
+    It "rejects a UNC cs2.exe value name on an exception key" {
+        Test-RegistryRestoreAllowed `
+            -Path "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" `
+            -Name "\\server\share\cs2.exe" | Should -BeFalse
+    }
+
+    It "rejects traversal in a cs2.exe value name on an exception key" {
+        Test-RegistryRestoreAllowed `
+            -Path "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" `
+            -Name "C:\Games\..\Windows\cs2.exe" | Should -BeFalse
+    }
+
+    It "rejects a path-shaped value name on a sibling registry key" {
+        Test-RegistryRestoreAllowed `
+            -Path "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences\Sibling" `
+            -Name "C:\Games\cs2.exe" | Should -BeFalse
+    }
+
+    It "rejects a non-cs2 executable value name on an exception key" {
+        Test-RegistryRestoreAllowed `
+            -Path "HKCU:\SOFTWARE\Microsoft\DirectX\UserGpuPreferences" `
+            -Name "C:\Games\launcher.exe" | Should -BeFalse
     }
 }

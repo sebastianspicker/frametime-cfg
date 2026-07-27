@@ -1,216 +1,128 @@
-# Backup & Restore System — Deep Dive
+# Backup and restore
 
-> Covers the backup-restore module (`helpers/backup-restore.ps1`) and `C:\CS2_OPTIMIZE\backup.json`.
+The backup module is implemented in `helpers/backup-restore.ps1`. It records
+supported rollback data in `C:\FRAMETIME_CFG\backup.json`. This file does not
+cover every operation in the three-phase workflow.
 
-Every modification the suite makes is recorded before it happens. If something goes wrong — a setting causes an unexpected problem, a driver install fails, or you simply want to undo a step — the backup system lets you restore to pre-optimization state at any granularity: a single step, a group, or everything.
+## Storage and persistence
 
----
+Registry and BCD write wrappers capture their inputs automatically. Services,
+power plans, scheduled tasks, NIC properties, QoS and URO, pagefile settings,
+DNS, and NVIDIA DRS use explicit `Backup-*` calls. The restore dispatcher also
+retains compatibility with Defender exclusion entries written by older state.
 
-## How Automatic Backup Works
+The shared registry and boot-configuration wrappers write and verify their
+restore records before mutation. Selected service groups, power-plan
+activation, scheduled-task changes, and NVIDIA DRS changes use the same
+pre-mutation persistence rule. Other entries remain buffered until the step
+boundary. `Complete-Step` flushes the buffer before saving progress, and a flush
+failure prevents the progress record from being saved.
 
-The suite's two primary write primitives — `Set-RegistryValue` and `Set-BootConfig` — automatically call the backup functions before writing. You don't need to do anything to enable backups. The current value of every registry key and boot config entry is recorded before it is overwritten.
+`backup.lock` prevents concurrent optimization or restore processes from
+writing the file. JSON writes are atomic and the file ACL is hardened. If
+`backup.json` cannot be parsed, the module first copies and hash-verifies it as
+`backup.corrupt.<timestamp>.json`; it resets the active file only after that
+preservation succeeds.
 
-For service state, power plans, DRS settings, and scheduled tasks, the helpers call their respective backup functions explicitly at the beginning of each action block.
+Within a step, registry, service, scheduled-task, BCD, power-plan, NIC, and DNS
+identities are deduplicated so a re-run retains the first captured value. Other
+entry types may have more than one record.
 
-All backup data is stored in a single JSON file: `C:\CS2_OPTIMIZE\backup.json`.
+## Implemented entry types
 
----
+The module writes and restores eleven entry types:
 
-## Backup Types
+| Type | Captured state | Restore behavior and boundary |
+|---|---|---|
+| `registry` | Path, value name, original value and type, and whether the value existed | Restores the typed value or removes the value if it was absent. It does not remove a now-empty key. Paths and names must pass the restore allowlist. |
+| `service` | Service name, start mode, delayed-start flag, and running status | Restores the supported start mode and starts a service that was previously running. It does not recreate a missing service or explicitly stop one that was previously stopped. |
+| `bootconfig` | Managed BCD element, original value, and whether it existed | Restores or deletes the element through `bcdedit`. Only the managed key and value combinations accepted by the restore allowlist are used. |
+| `powerplan` | Original active plan GUID and name, plus recorded suite-owned plan GUIDs | Activates the original plan and deletes only validated suite-owned plans. Restore fails if the original plan no longer exists. |
+| `scheduledtask` | Task path and name, prior existence, enabled state, and an optional suite script path | Restores enabled state for an existing task, or removes a suite-created task and trusted suite script. It does not serialize or recreate a task definition. |
+| `nic_adapter` | Adapter name and description, property name and kind, and original value | Restores the advanced property only when the current adapter identity matches. Properties that were not exposed and captured cannot be restored. |
+| `qos_uro` | Supplied QoS policy names and the observed URO state | Removes the recorded policies and restores URO when a usable state was captured. Policy definitions are not serialized. The current caller records only suite-named policies that existed before replacement, so this entry is not a complete QoS rollback. |
+| `defender` | Legacy exclusion paths and process names recorded by an older workflow | Removes those exclusions. Current alpha steps do not add Defender exclusions. The old entry does not record whether an exclusion already existed, so it cannot preserve that distinction during restore. |
+| `pagefile` | Automatic-management flag, pagefile path, and original initial and maximum sizes | Uses CIM to restore the captured mode and size. A reboot is required. If automation fails, the entry is retained and manual instructions are shown. Other-drive pagefiles are not changed or captured by this step. |
+| `dns` | Adapter name, interface index, and original IPv4 DNS server list | Resolves the current adapter by name, uses its current index, and restores the saved servers or DHCP. Restore stops if the adapter name no longer resolves. |
+| `drs` | NVIDIA profile identity, whether the suite created it, and prior DWORD values for managed settings | Deletes a suite-created profile or restores prior values in an existing profile. A setting that did not previously exist is left in place because the implementation has no delete-setting operation. NVIDIA DRS must be available when restore runs. |
 
-### `registry`
+Restore treats `backup.json` as untrusted input. Registry, service, BCD,
+scheduled-task, script-path, and power-plan identities are validated before
+commands run. Registry recovery accepts exact path and value-name pairs, with
+narrow patterns only for validated CS2 paths, adapter instances, display-class
+instances, and device interrupt subkeys. Unknown entry types are rejected.
 
-Recorded by `Backup-RegistryValue` before every `Set-RegistryValue` call.
+Successful entries are removed from `backup.json`. Failed entries and partial
+pagefile restores remain available for another attempt.
 
-```json
-{
-  "type": "registry",
-  "path": "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
-  "name": "HiberbootEnabled",
-  "originalValue": 1,
-  "originalType": "DWord",
-  "existed": true,
-  "step": "Disable Fast Startup",
-  "timestamp": "2026-03-13 14:22:01"
-}
-```
+Restore All processes individual entries in reverse capture order. When two
+steps changed the same target, the later mutation is undone before the earlier
+mutation. Step-specific restore also processes that step's entries in reverse
+capture order.
 
-If `existed: false`, the key did not exist before the suite created it. Restoring deletes the key rather than writing back a value.
+## Operations outside `backup.json`
 
-### `service`
+The following operations use separate recovery or have no automatic rollback:
 
-Recorded by `Backup-ServiceState` before any service start type or status change.
+- Installed and provisioned AppX package removals are not recorded. Recovery
+  depends on Windows package availability and manual reinstallation.
+- GPU driver packages removed in Phase 2 are not copied. Phase 3 installs the
+  selected replacement driver; this is not restoration of the previous package.
+- An existing `autoexec.cfg` receives `exec optimization.cfg`; if the file did
+  not exist, the suite creates a small stub. Neither state is recorded in
+  `backup.json`. Remove the line, or remove the created stub after confirming it
+  contains no user changes.
+- An existing `optimization.cfg` is copied once to `optimization.cfg.bak` before
+  overwrite. That copy is not restored by the Recovery workflow. A newly created
+  file has no prior copy.
+- The GUI copies the first existing `video.txt` to `video.txt.bak` before a
+  write. Later writes preserve that first backup. Recovery does not restore it.
+- Firmware, BIOS, vendor control-panel guidance, and other manual actions are
+  outside the backup system.
 
-```json
-{
-  "type": "service",
-  "name": "SysMain",
-  "originalStartType": "Automatic",
-  "originalStatus": "Running",
-  "step": "Disable SysMain + Search + QWAVE + Xbox",
-  "timestamp": "2026-03-13 14:35:00"
-}
-```
+The partial cases documented in the entry table also apply. In particular,
+QoS policy definitions, pre-existing Defender exclusion identity, newly added
+DRS settings, service stopped state, and scheduled-task definitions are not
+fully reconstructed.
 
-Restore sets the start type back and starts the service if it was Running.
+If `backup.json` and any separate `.bak` files are unavailable, the suite cannot
+infer the machine's original settings. Use the recorded values or the relevant
+Windows configuration interface instead of assuming a generic default.
 
-### `bootconfig`
+## Starting a restore
 
-Recorded by `Backup-BootConfig` before any `bcdedit` modification.
+`START.bat` option `[7] Restore / Rollback` groups records by step and offers a
+single-step or all-recorded restore. The GUI Recovery task presents the same
+step groups and enables restore after a row is selected.
 
-```json
-{
-  "type": "bootconfig",
-  "key": "disabledynamictick",
-  "originalValue": "No",
-  "existed": true,
-  "step": "Timer Optimization",
-  "timestamp": "2026-03-13 14:22:45"
-}
-```
+Both paths operate on `C:\FRAMETIME_CFG\backup.json`. Restore commands can fail
+when hardware, drivers, services, plans, or adapter identities have changed
+since capture; failed records remain in the file for review or retry.
 
-If `existed: false`, restore runs `bcdedit /deletevalue <key>` rather than setting the previous value.
+## Dry-run behavior
 
-### `powerplan`
+Full DRY-RUN renders planned operations but skips backup initialization,
+capture, locking, and flushes. Existing backup, state, progress, and log files
+remain unchanged, and no rollback artifact is created. See
+[Full DRY-RUN](dry-run.md) for the process contract and supported launch forms.
 
-Recorded by `Backup-PowerPlan` before the CS2 power plan is imported.
+## Maintainer verification
 
-```json
-{
-  "type": "powerplan",
-  "originalGuid": "381b4222-f694-41f0-9685-ff5bb260df2e",
-  "originalName": "Balanced",
-  "step": "CS2 Power Plan",
-  "timestamp": "2026-03-13 14:20:10"
-}
-```
+Run focused backup tests through the repository wrapper:
 
-Restore activates the original plan by GUID and deletes the suite's custom power plan.
-
-### `drs`
-
-Recorded by `Backup-DrsSettings` before writing NVIDIA DRS settings.
-
-```json
-{
-  "type": "drs",
-  "step": "NVIDIA CS2 Profile",
-  "profile": "Counter-strike 2",
-  "profileCreated": false,
-  "settings": [
-    { "id": 274197361, "previousValue": 0, "existed": true },
-    { "id": 8102046, "previousValue": 4, "existed": true },
-    ...
-  ],
-  "timestamp": "2026-03-13 15:01:22"
-}
-```
-
-If `profileCreated: true`, restore deletes the entire profile. If the profile existed before, restore writes back each setting's previous value individually via `nvapi64.dll`.
-
-### `scheduledtask`
-
-Recorded by `Backup-ScheduledTask` before creating the X3D CCD affinity task.
-
-```json
-{
-  "type": "scheduledtask",
-  "taskName": "CS2_Optimize_CCD_Affinity",
-  "taskPath": "\\",
-  "existed": false,
-  "wasEnabled": false,
-  "scriptPath": "C:\\CS2_OPTIMIZE\\cs2_affinity.ps1",
-  "step": "Process Priority + CCD Affinity",
-  "timestamp": "2026-03-13 15:05:00"
-}
-```
-
-If `existed: false` (the task was created by the suite), restore unregisters it and deletes the affinity script. If `existed: true`, restore uses `taskPath`, `taskName`, and `wasEnabled` to restore the exact task identity and enabled/disabled state rather than blindly re-enabling by name.
-
----
-
-## Accessing Restore
-
-### From START.bat
-
-```
-[7] Restore / Rollback
-```
-
-Shows the backup summary grouped by step, then presents:
-
-```
-[1]  Disable Fast Startup  (1 change)
-[2]  Timer Optimization    (3 changes)
-[3]  CS2 Power Plan        (1 change)
-...
-[A]  Restore ALL
-[0]  Cancel
-```
-
-Select a number to restore that step, or `A` to restore everything.
-
-### From the GUI
-
-Backup panel → shows the same grouped list → restore buttons per step.
-
----
-
-## Backup File Location
-
-`C:\CS2_OPTIMIZE\backup.json`
-
-The file is plain JSON — readable in any text editor. Each `entries` array element is one backed-up setting. The `step` field groups changes made by the same optimization step.
-
----
-
-## What Is NOT Backed Up
-
-- **Removed AppX packages** (Step 13 debloat) — Windows AppX removal is not trivially reversible. Removed packages can be reinstalled from the Microsoft Store manually, but the suite does not back up their state.
-- **Files deleted during GPU driver clean** (Phase 2) — driver binaries removed from `System32\DriverStore\FileRepository` are not recorded. The new driver install (Phase 3 Step 1) replaces them.
-- **Autoexec.cfg edits** — the suite only appends one line (`exec optimization.cfg`) to autoexec.cfg. The original file is preserved; removing that line reverts the change. `optimization.cfg` itself can simply be deleted.
-- **Video.txt writes** (GUI) — the original video.txt is renamed to `video.txt.bak` before any write. The `.bak` file serves as the backup.
-
----
-
-## DRY-RUN and Backups
-
-In DRY-RUN mode (`$SCRIPT:DryRun = $true`), `Set-RegistryValue` and `Set-BootConfig` print what they *would* write but do not write. Backup functions are also skipped in DRY-RUN — no backup entries are recorded for non-executed changes.
-
-DRY-RUN is activated by selecting any profile and answering "yes" to the dry run prompt in Phase 1. It is particularly useful for inspecting what a step would do before committing.
-
----
-
-## Manual Restore Without the Tool
-
-If the backup system itself is unavailable (e.g., `backup.json` was deleted), common settings can be restored manually:
-
-**Registry — Power plan (revert to Windows default):**
 ```powershell
-powercfg /setactive 381b4222-f694-41f0-9685-ff5bb260df2e  # Balanced
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 `
+    -Path .\tests\helpers\backup-restore.Tests.ps1 `
+          .\tests\helpers\backup-dryrun.Tests.ps1 `
+          .\tests\helpers\backup-restore-safety.Tests.ps1 `
+          .\tests\Optimize-GameConfig-rollback-safety.Tests.ps1 `
+          .\tests\integration\backup-restore-roundtrip.Tests.ps1 `
+          .\tests\integration\backup-restore-entrypoints.Tests.ps1
 ```
 
-**Boot config — revert timer settings:**
+Run the full wrapper after a change that affects shared write wrappers, progress
+persistence, or an optimization step:
+
 ```powershell
-bcdedit /deletevalue disabledynamictick
-bcdedit /deletevalue useplatformtick
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1
 ```
-
-**Fast Startup — re-enable:**
-```powershell
-Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name HiberbootEnabled -Value 1
-```
-
-**IFEO process priority — remove:**
-```powershell
-Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\cs2.exe\PerfOptions" -Force
-```
-
-**Services — re-enable:**
-```powershell
-Set-Service SysMain -StartupType Automatic
-Set-Service WSearch -StartupType Automatic
-Set-Service qWave   -StartupType Manual
-```
-
-**NVIDIA DRS — remove CS2 profile:** Open NVIDIA Profile Inspector → find "Counter-strike 2" → right-click → Delete profile → Save.
