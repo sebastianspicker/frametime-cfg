@@ -1014,12 +1014,6 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    if ($normalizedPath -notmatch '^C:\\CS2_OPTIMIZE\\[a-zA-Z0-9_.-]+\.ps1$') {
-        $message = "Set-RunOnce: phase handoff path contains unsupported characters: $scriptPath"
-        Write-Warn $message
-        if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
-        return
-    }
 
     if ($SCRIPT:DryRun) {
         Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would register phase handoff: $registrationName -> $scriptPath" -ForegroundColor Magenta
@@ -1668,7 +1662,9 @@ function Test-SystemCompatibility {
     }
 
     # Windows Server / LTSC - missing AppX, Xbox services, some consumer features
-    $productType = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    $productType = if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+        (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    }
     # ProductType: 1=Workstation, 2=DomainController, 3=Server
     if ($productType -and $productType -ne 1) {
         Write-Warn "Windows Server/DC edition detected (ProductType=$productType)."

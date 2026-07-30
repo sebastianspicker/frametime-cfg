@@ -460,13 +460,13 @@
           </StackPanel>
           <StackPanel DockPanel.Dock="Bottom" Margin="14,0,14,16">
             <Separator Margin="0,0,0,12"/>
-            <TextBlock x:Name="SbProfile" Text="Profile: —"   FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
+            <TextBlock x:Name="SbProfile" Text="Profile: Not available"   FontSize="11" Foreground="{DynamicResource TextSecondary}"/>
             <Border x:Name="SbDryRunBadge" Visibility="Collapsed"
                     Background="{DynamicResource BgCard}" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
                     CornerRadius="3" Padding="6,3" Margin="0,6,0,0" HorizontalAlignment="Left">
               <TextBlock x:Name="SbDryRun" Text="DRY-RUN" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
             </Border>
-            <TextBlock x:Name="SbPhase" Text="Phase: —" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"/>
+            <TextBlock x:Name="SbPhase" Text="Phase: Not available" FontSize="11" Foreground="{DynamicResource TextMuted}" Margin="0,6,0,0"/>
             <TextBlock x:Name="SettingsVersion" Text="" FontSize="10" Foreground="{DynamicResource TextMuted}" Margin="0,8,0,0"/>
           </StackPanel>
         </DockPanel>
