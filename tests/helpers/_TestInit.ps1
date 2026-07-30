@@ -380,7 +380,11 @@ function Reset-TestState {
     $SCRIPT:CurrentStepTitle = $null
     $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
     if ($SCRIPT:_backupLockStream) {
-        try { $SCRIPT:_backupLockStream.Dispose() } catch {}
+        try {
+            $SCRIPT:_backupLockStream.Dispose()
+        } catch {
+            Write-Debug "Ignoring test backup lock disposal failure: $($_.Exception.Message)"
+        }
         $SCRIPT:_backupLockStream = $null
     }
     $SCRIPT:_backupLockToken = $null
