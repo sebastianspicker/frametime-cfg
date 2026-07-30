@@ -136,10 +136,10 @@ display typography.
 
 ### Hierarchy
 
-- **Headline** (600, 22 DIP, 1.25): page titles only.
-- **Title** (600, 16 DIP, 1.3): functional sections and state summaries.
-- **Body** (400, 13 DIP, 1.4): instructions, explanations, and form content.
-- **Label** (600, 12 DIP, 1.3): controls, table headers, and compact metadata.
+- Headline (600, 22 DIP, 1.25): page titles only.
+- Title (600, 16 DIP, 1.3): functional sections and state summaries.
+- Body (400, 13 DIP, 1.4): instructions, explanations, and form content.
+- Label (600, 12 DIP, 1.3): controls, table headers, and compact metadata.
 - **Table data** (400, 12 DIP): dense comparisons; numerical columns use
   tabular alignment.
 
@@ -160,24 +160,24 @@ region. It may not exist merely to make a grid of cards.
 
 ### Buttons
 
-- **Shape:** compact rectangular controls with gently curved corners (4 DIP).
-- **Primary:** orange fill, near-black text, 36 DIP height; one per task region.
+- Shape: compact rectangular controls with gently curved corners (4 DIP).
+- Primary: orange fill, near-black text, 36 DIP height; one per task region.
 - **Hover / Focus:** brighter orange on hover and a persistent 2 DIP focus outline.
-- **Secondary:** raised neutral surface, visible control border, primary text.
-- **Destructive:** dark red fill with white text; never styled as the page primary.
+- Secondary: raised neutral surface, visible control border, primary text.
+- Destructive: dark red fill with white text; never styled as the page primary.
 
 ### Cards / Containers
 
 - **Corner Style:** restrained rounding (6 DIP).
-- **Background:** base or raised surface according to hierarchy.
+- Background: base or raised surface according to hierarchy.
 - **Shadow Strategy:** none.
-- **Border:** subtle dividers for grouping; controls use the higher-contrast border.
+- Border: subtle dividers for grouping; controls use the higher-contrast border.
 - **Internal Padding:** 16 DIP default, 12 DIP in dense regions.
 
 ### Inputs / Fields
 
-- **Style:** raised neutral fill, identifiable border, connected visible label.
-- **Focus:** 2 DIP orange outline in the custom theme and system highlight in
+- Style: raised neutral fill, identifiable border, connected visible label.
+- Focus: 2 DIP orange outline in the custom theme and system highlight in
   High Contrast.
 - **Error / Disabled:** persistent error text; disabled state remains legible
   and is not color-only.
@@ -200,14 +200,14 @@ scroll horizontally rather than truncate critical content.
 
 ### Do
 
-- **Do** show source, freshness, and recovery status beside consequential
+- Do show source, freshness, and recovery status beside consequential
   actions.
-- **Do** use the exact semantic tokens and test their effective backgrounds.
-- **Do** keep tables dense and use sentence-case labels.
-- **Do** expose loading, empty, stale, error, cancellation, and partial-failure
+- Do use the exact semantic tokens and test their effective backgrounds.
+- Do keep tables dense and use sentence-case labels.
+- Do expose loading, empty, stale, error, cancellation, and partial-failure
   states.
-- **Do** use native Windows controls and behavior wherever they meet the task.
-- **Do** preserve expert filters and exact domain vocabulary.
+- Do use native Windows controls and behavior wherever they meet the task.
+- Do preserve expert filters and exact domain vocabulary.
 
 ### Don't
 
