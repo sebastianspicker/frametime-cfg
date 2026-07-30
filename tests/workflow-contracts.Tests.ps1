@@ -38,6 +38,10 @@ Describe "lint workflow contract" {
         $script:SecurityWorkflow | Should -Match 'branches:\s+\[main\]'
     }
 
+    It "runs required lint checks for demo changes" {
+        [regex]::Matches($script:LintWorkflow, "'demo/\*\*'").Count | Should -Be 2
+    }
+
     It "smoke-tests the shipped entrypoints" {
         foreach ($scriptName in @(
             'Run-Optimize.ps1',
