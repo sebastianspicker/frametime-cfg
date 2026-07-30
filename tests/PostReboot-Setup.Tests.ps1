@@ -1012,8 +1012,8 @@ Describe "PostReboot-Setup.ps1 final benchmark completion contract" {
         Mock Get-BenchmarkHistory { @() }
         Mock Complete-Step {}
         Mock Test-StepCompleted {
-            param($phase, $step)
-            return ($phase -eq 3 -and $step -eq 1)
+            param($phase, $stepNum)
+            return ($phase -eq 3 -and $stepNum -eq 1)
         }
         Mock Remove-PhaseHandoff { [PSCustomObject]@{ Applied = $true; Message = "removed" } }
         Mock Restart-Computer {}
