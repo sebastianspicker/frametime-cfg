@@ -130,7 +130,7 @@ Windows SystemColors resources rather than approximating the theme.
 **Body Font:** Segoe UI Variable Text with Segoe UI fallback
 **Label/Mono Font:** Segoe UI; technical values remain in the same family
 
-**Character:** Familiar Windows typography keeps the application operational
+Character: Familiar Windows typography keeps the application operational
 and legible. Hierarchy comes from weight, spacing, and grouping rather than
 display typography.
 
@@ -186,7 +186,7 @@ region. It may not exist merely to make a grid of cards.
 
 Navigation is a vertical, grouped selection surface using sentence-case labels.
 Selection uses a filled neutral background, stronger text, and UI Automation
-selection state—never a thick colored side stripe. Keyboard selection and
+selection state, never a thick colored side stripe. Keyboard selection and
 Ctrl+number shortcuts are equivalent to pointer interaction.
 
 ### Tables

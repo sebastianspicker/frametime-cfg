@@ -112,6 +112,13 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     if (-not (Get-Command Start-Service -ErrorAction SilentlyContinue)) {
         function global:Start-Service { param($Name) $null }
     }
+    if (-not (Get-Command Stop-Service -ErrorAction SilentlyContinue)) {
+        function global:Stop-Service {
+            param($Name, [switch]$Force, $ErrorAction,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
     if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) {
         function global:Get-NetAdapter {
             param($Name, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)

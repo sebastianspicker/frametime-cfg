@@ -442,7 +442,7 @@ if ($startStep -le 1) {
             }
         }
         if ($SCRIPT:DryRun -and [string]::IsNullOrWhiteSpace([string]$driverExe)) {
-            $driverExe = Join-Path $CFG_WorkDir "nvidia_driver-preview.exe"
+            $driverExe = "$CFG_WorkDir\nvidia_driver-preview.exe"
             Write-Host "  [DRY-RUN] Would obtain and validate the matching NVIDIA driver package." -ForegroundColor Magenta
         }
         if (-not $driverExe -or (-not $SCRIPT:DryRun -and -not (Test-Path $driverExe))) {
