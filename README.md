@@ -7,6 +7,10 @@ normal boot, a Safe Mode boot, and a final normal boot. A WPF desktop interface
 exposes assessment, launch, verification, benchmark, network, video, and
 recovery functions.
 
+[Open the static interface demo](https://sebastianspicker.github.io/frametime-cfg/).
+The demo uses sanitized fixture data and cannot inspect or change a computer.
+Every action that represents a command or write is visibly marked as simulated.
+
 ## Alpha status
 
 The source currently identifies itself as `v3.0.0-alpha.1`. That version is not

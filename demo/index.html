@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Fixture-backed static demonstration of the frametime.cfg Windows desktop interface.">
+  <title>frametime.cfg interface demo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to demo content</a>
+  <div class="demo-notice" role="note">
+    <strong>Static demo</strong>
+    <span>Fixture data only. This page cannot inspect or change your computer.</span>
+    <a href="https://github.com/sebastianspicker/frametime-cfg">View source</a>
+  </div>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Demo task navigation">
+      <div><div class="brand">frametime.cfg</div><div class="brand-trace">WINDOWS CONFIGURATION STATUS</div></div>
+      <nav class="task-nav" aria-label="Task areas">
+        <button class="nav-button is-active" type="button" data-panel="overview" aria-current="page"><span>Overview</span><kbd>1</kbd></button>
+        <button class="nav-button" type="button" data-panel="assess"><span>Assess</span><kbd>2</kbd></button>
+        <button class="nav-button" type="button" data-panel="setup"><span>Setup and verify</span><kbd>3</kbd></button>
+        <button class="nav-button" type="button" data-panel="benchmark"><span>Benchmark</span><kbd>4</kbd></button>
+        <button class="nav-button" type="button" data-panel="network"><span>Network</span><kbd>5</kbd></button>
+        <button class="nav-button" type="button" data-panel="video"><span>Video settings</span><kbd>6</kbd></button>
+        <button class="nav-button" type="button" data-panel="recovery"><span>Recovery</span><kbd>7</kbd></button>
+      </nav>
+      <div class="sidebar-state">
+        <span>Profile: Recommended</span><span class="preview-state">PREVIEW</span><span>Phase: Not started</span><span>v3.0.0-alpha.1 demo</span>
+      </div>
+    </aside>
+    <main id="main-content" class="workspace" tabindex="-1">
+      <section class="panel" data-panel-view="overview" aria-labelledby="overview-title">
+        <header class="page-header"><div><h1 id="overview-title" tabindex="-1">Overview</h1><p>Sanitized fixture state for a representative Windows gaming PC.</p></div><span class="fixture-label">FIXTURE PC</span></header>
+        <div class="status-banner warning"><div><strong>Configuration review recommended</strong><span>2 of 8 fixture checks differ from project targets.</span></div><button class="button secondary" type="button" data-go="assess">Review assessment</button></div>
+        <h2>System summary</h2>
+        <div class="summary-grid">
+          <article class="summary-item"><span class="eyeline">CPU</span><strong>8-core desktop CPU</strong><span>High performance tier</span><small>Virtualization enabled</small></article>
+          <article class="summary-item"><span class="eyeline">GPU</span><strong>RTX-class graphics</strong><span>Fixture driver 000.00</span><small>NVIDIA branch</small></article>
+          <article class="summary-item"><span class="eyeline">RAM</span><strong>32 GB</strong><span>3200 MT/s</span><small class="good-text">At rated speed</small></article>
+          <article class="summary-item"><span class="eyeline">NETWORK</span><strong>Wired adapter</strong><span>1.0 Gbps link</span><small>DHCP DNS</small></article>
+          <article class="summary-item wide"><div><span class="eyeline">OS</span><strong>Windows 11 fixture</strong><span>Build 00000</span></div><div><span class="eyeline">CS2</span><strong>Fixture install found</strong><span>Not inspected</span></div></article>
+          <article class="summary-item"><span class="eyeline">PERFORMANCE</span><strong>Baseline recorded</strong><span>Average 284 FPS</span><small>1% low 176 FPS</small></article>
+        </div>
+        <h2>Recorded phase progress</h2>
+        <div class="phase-list" aria-label="Fixture phase progress">
+          <div><span>Phase 1</span><span class="progress"><i style="width:47%"></i></span><strong>18 / 38</strong></div>
+          <div><span>Phase 2</span><span class="progress"><i style="width:0"></i></span><strong>0 / 3</strong></div>
+          <div><span>Phase 3</span><span class="progress"><i style="width:0"></i></span><strong>0 / 13</strong></div>
+        </div>
+        <p class="context-note">Recorded execution and currently observed settings are separate facts.</p>
+        <h2>Next actions</h2>
+        <div class="action-row">
+          <button class="button primary command" type="button" data-sim-action="scan" data-go="assess">Assess system <span>Simulated</span></button>
+          <button class="button secondary command" type="button" data-sim-action="phase">Run phase 1 <span>Simulated</span></button>
+          <button class="button secondary command" type="button" data-sim-action="verify" data-go="setup">Verify supported settings <span>Simulated</span></button>
+          <button class="button secondary" type="button" data-go="recovery">Review recovery</button>
+          <button class="button secondary command" type="button" data-sim-action="launch">Launch CS2 <span>Simulated</span></button>
+        </div>
+      </section>
+      <section class="panel" data-panel-view="assess" aria-labelledby="assess-title" hidden>
+        <header class="page-header"><div><h1 id="assess-title" tabindex="-1">Assess system</h1><p id="scan-time">Fixture scan prepared. No host access is available.</p></div><button class="button primary command" type="button" data-sim-action="scan">Run full scan <span>Simulated</span></button></header>
+        <div class="table-wrap"><table><thead><tr><th>Category</th><th>Item</th><th>Current</th><th>Project target</th><th>Status</th><th>Impact</th></tr></thead><tbody>
+          <tr><td>System</td><td>Power plan</td><td>Balanced</td><td>High performance</td><td><span class="status-text warning-text">Review</span></td><td>Power behavior</td></tr>
+          <tr><td>System</td><td>Fast Startup</td><td>Enabled</td><td>Disabled</td><td><span class="status-text warning-text">Review</span></td><td>Clean reboot behavior</td></tr>
+          <tr><td>Hardware</td><td>Memory speed</td><td>3200 MT/s</td><td>Rated speed</td><td><span class="status-text good-text">Match</span></td><td>No action suggested</td></tr>
+          <tr><td>Game</td><td>CS2 configuration</td><td>Fixture found</td><td>Review first</td><td><span class="status-text info-text">Inspect</span></td><td>File-backed settings</td></tr>
+          <tr><td>Network</td><td>Adapter link</td><td>1.0 Gbps</td><td>Connected</td><td><span class="status-text good-text">Match</span></td><td>Wired fixture</td></tr>
+        </tbody></table></div>
+        <div class="action-row footer-actions"><button class="button primary" type="button" data-go="setup">Open setup and verify</button><button class="button secondary command" type="button" data-sim-action="export">Export report <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="storage">Refresh storage health <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="trim">Enable TRIM <span>Simulated</span></button></div>
+      </section>
+      <section class="panel" data-panel-view="setup" aria-labelledby="setup-title" hidden>
+        <header class="page-header"><div><h1 id="setup-title" tabindex="-1">Setup and verify</h1><p>Review each risk tier and system state before opening a terminal workflow.</p></div><span class="mode-indicator">Preview mode</span></header>
+        <fieldset class="profile-picker"><legend>Profile and preview mode</legend><p>Recommended runs T1 automatically and prompts for eligible T2 operations. This demo never launches a terminal.</p><div class="choice-row"><label><input type="radio" name="profile" value="Safe"> Safe</label><label><input type="radio" name="profile" value="Recommended" checked> Recommended</label><label><input type="radio" name="profile" value="Competitive"> Competitive</label><label><input type="radio" name="profile" value="Custom"> Custom</label><label><input type="radio" name="profile" value="YOLO"> YOLO</label><label><input type="checkbox" checked disabled> Preview changes without applying them</label></div></fieldset>
+        <div class="action-row"><button class="button primary command" type="button" data-sim-action="phase">Run phase 1 <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="safe-mode">Boot to Safe Mode <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="phase2">Review phase 2 <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="phase3">Run phase 3 <span>Simulated</span></button></div>
+        <div class="table-wrap spaced"><table><thead><tr><th>Ph</th><th>Step</th><th>Category</th><th>Title</th><th>Tier</th><th>Risk</th><th>Status</th><th>Reboot?</th></tr></thead><tbody>
+          <tr><td>1</td><td>06</td><td>System</td><td>Create recovery point</td><td>T1</td><td>SAFE</td><td><span class="status-text good-text">Recorded</span></td><td>No</td></tr>
+          <tr><td>1</td><td>23</td><td>System</td><td>Disable Fast Startup</td><td>T2</td><td>SAFE</td><td><span class="status-text warning-text">Pending</span></td><td>Yes</td></tr>
+          <tr><td>1</td><td>31</td><td>Game</td><td>Generate CS2 configuration</td><td>T2</td><td>MODERATE</td><td><span class="status-text info-text">Review</span></td><td>No</td></tr>
+          <tr><td>2</td><td>01</td><td>Driver</td><td>Clear Safe Mode flag</td><td>T1</td><td>SAFE</td><td><span class="status-text muted-text">Unavailable</span></td><td>Yes</td></tr>
+        </tbody></table></div>
+        <div class="action-row footer-actions"><button class="button primary command" type="button" data-sim-action="full-setup">Run full setup (phases 1 to 3) <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="verify">Verify supported settings <span>Simulated</span></button></div>
+      </section>
+      <section class="panel" data-panel-view="benchmark" aria-labelledby="benchmark-title" hidden>
+        <header class="page-header"><div><h1 id="benchmark-title" tabindex="-1">Benchmark &amp; FPS Cap</h1><p>Fixture summaries only. The toolkit does not capture per-frame telemetry.</p></div></header>
+        <div class="split-grid"><div class="functional-unit"><h2>Recorded comparisons</h2><table><thead><tr><th>Label</th><th>Avg FPS</th><th>1% Low</th><th>Δ Avg</th></tr></thead><tbody><tr><td>Baseline</td><td>284</td><td>176</td><td>-</td></tr><tr><td>Fixture retest</td><td>291</td><td>181</td><td class="good-text">+2.5%</td></tr></tbody></table></div><div class="functional-unit"><h2>FPS cap calculator</h2><label for="refresh-rate">Display refresh rate</label><select id="refresh-rate"><option>144 Hz</option><option selected>240 Hz</option><option>360 Hz</option></select><div class="cap-result"><span>Suggested fixture cap</span><strong id="cap-value">218 FPS</strong></div><button class="button secondary command" type="button" data-sim-action="copy">Copy cap <span>Simulated</span></button></div></div>
+        <div class="action-row footer-actions"><button class="button primary command" type="button" data-sim-action="benchmark">Add result <span>Simulated</span></button></div>
+      </section>
+      <section class="panel" data-panel-view="network" aria-labelledby="network-title" hidden>
+        <header class="page-header"><div><h1 id="network-title" tabindex="-1">Network</h1><p>Fixture latency results and reversible choices for review.</p></div><button class="button secondary command" type="button" data-sim-action="network-refresh">Refresh <span>Simulated</span></button></header>
+        <div class="table-wrap"><table><thead><tr><th>Valve region</th><th>Baseline</th><th>Retest</th><th>Status</th></tr></thead><tbody><tr><td>eu-central</td><td>18 ms</td><td>17 ms</td><td><span class="status-text good-text">Responsive</span></td></tr><tr><td>eu-west</td><td>31 ms</td><td>30 ms</td><td><span class="status-text good-text">Responsive</span></td></tr><tr><td>eu-north</td><td>48 ms</td><td>Timeout</td><td><span class="status-text warning-text">Review</span></td></tr></tbody></table></div>
+        <div class="action-row footer-actions"><button class="button primary command" type="button" data-sim-action="baseline">Run baseline test <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="retest">Run post-change retest <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="dns">Use Cloudflare DNS <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="block">Block selected region <span>Simulated</span></button></div>
+      </section>
+      <section class="panel" data-panel-view="video" aria-labelledby="video-title" hidden>
+        <header class="page-header"><div><h1 id="video-title" tabindex="-1">Video settings</h1><p>Compare a repository preset with a sanitized fixture file.</p></div></header>
+        <div class="diff-grid"><div class="functional-unit"><h2>Current fixture</h2><pre>setting.cpu_level     1
+setting.gpu_level     1
+setting.vsync_enabled 0
+setting.reflex         1</pre></div><div class="functional-unit"><h2>Competitive preset</h2><pre>setting.cpu_level     0
+setting.gpu_level     0
+setting.vsync_enabled 0
+setting.reflex         1</pre></div></div>
+        <p class="context-note">A real write preserves the first original as <code>video.txt.bak</code>. This page does not access files.</p>
+        <div class="action-row footer-actions"><button class="button primary command" type="button" data-sim-action="video-write">Write video.txt <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="video-refresh">Refresh comparison <span>Simulated</span></button></div>
+      </section>
+      <section class="panel" data-panel-view="recovery" aria-labelledby="recovery-title" hidden>
+        <header class="page-header"><div><h1 id="recovery-title" tabindex="-1">Recovery</h1><p>4 sanitized fixture entries. Recovery is not a system snapshot.</p></div><button class="button secondary command" type="button" data-sim-action="recovery-refresh">Refresh <span>Simulated</span></button></header>
+        <div class="status-banner info"><div><strong>Coverage is operation-specific</strong><span>Removed packages, external application state, and some file edits can require manual recovery.</span></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Step</th><th>Type</th><th>Key</th><th>Original</th><th>Timestamp</th></tr></thead><tbody><tr class="is-selected"><td>Power plan</td><td>power</td><td>activeScheme</td><td>Balanced</td><td>Fixture 10:12</td></tr><tr><td>Fast Startup</td><td>registry</td><td>HiberbootEnabled</td><td>1</td><td>Fixture 10:13</td></tr><tr><td>DNS</td><td>network</td><td>Fixture adapter</td><td>DHCP</td><td>Fixture 10:14</td></tr><tr><td>SysMain</td><td>service</td><td>startup/status</td><td>Auto / Running</td><td>Fixture 10:15</td></tr></tbody></table></div>
+        <div class="action-row footer-actions"><button class="button primary command" type="button" data-sim-action="restore-one">Restore selected step <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="export-json">Export JSON <span>Simulated</span></button><button class="button secondary command" type="button" data-sim-action="restore-all">Restore all <span>Simulated</span></button><button class="button danger command" type="button" data-sim-action="clear">Clear all backups <span>Simulated</span></button></div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script src="app.js"></script>
+</body>
+</html>
