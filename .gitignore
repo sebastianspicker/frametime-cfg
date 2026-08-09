@@ -78,6 +78,7 @@ service-account*.json
 
 # Local assistant and automation state
 .claude/
+/.cursor/
 /progress.md
 
 # Local-only automation and private workspace
@@ -93,6 +94,7 @@ service-account*.json
 HARNESS_PRINCIPLES.md
 code_review.md
 /docs/archive/
+/docs/agent/
 AGENT_AUDIT_REPORT.md
 debug-log-*.md
 scripts/topology_inventory.sh
