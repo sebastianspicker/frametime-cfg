@@ -170,3 +170,8 @@ transcript*.log
 *.bak
 *.orig
 *.rej
+/.mcp.json
+/AUDIT_LEDGER.md
+/work-in-progress/
+/wip/
+/logs/
