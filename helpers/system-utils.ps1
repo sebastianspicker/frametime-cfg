@@ -1662,7 +1662,9 @@ function Test-SystemCompatibility {
     }
 
     # Windows Server / LTSC - missing AppX, Xbox services, some consumer features
-    $productType = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    $productType = if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+        (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    }
     # ProductType: 1=Workstation, 2=DomainController, 3=Server
     if ($productType -and $productType -ne 1) {
         Write-Warn "Windows Server/DC edition detected (ProductType=$productType)."

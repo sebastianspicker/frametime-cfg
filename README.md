@@ -204,6 +204,14 @@ The launcher elevates and starts [`frametime-gui.ps1`](frametime-gui.ps1). The
 interface launches consequential phase work in separate terminal processes.
 It is unavailable in Safe Mode. See [`docs/gui.md`](docs/gui.md).
 
+### Explore the browser demonstration
+
+Open [`demo/index.html`](demo/index.html) directly in a browser. The static demo
+mirrors the desktop information architecture with sanitized fixture data. It
+does not run PowerShell, inspect the host, contact a service, or write suite
+state. See [`demo/README.md`](demo/README.md) for its local checks and trust
+boundary.
+
 ### Profiles
 
 | Profile | Tier and risk behavior |
@@ -233,6 +241,7 @@ cancelled merely by choosing a lower profile.
 | `PostReboot-Setup.ps1` | Phase 3 normal-mode entry point |
 | `Cleanup.ps1`, `FpsCap-Calculator.ps1`, `Verify-Settings.ps1` | Standalone operator tools |
 | `frametime-gui.ps1`, `ui/` | WPF controller and XAML layout |
+| `demo/` | Dependency-free browser demonstration and Node static checks |
 | `helpers/` | State, backup, safety, hardware, driver, network, and GUI functions |
 | `config.env.ps1` | Executable central configuration |
 | `cfgs/` | CS2 CFG sources and Valve latency target data |
@@ -313,6 +322,14 @@ pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
     -File .\frametime-gui.ps1 -SmokeTest
 
 cmd.exe /d /c START.bat dry-run all
+```
+
+The browser demonstration uses the Node.js runtime bundled on CI runners and
+has no package dependencies or lockfile:
+
+```console
+node --check demo/app.js
+node --test demo/demo.test.mjs
 ```
 
 The analyzer runner installs PSScriptAnalyzer 1.24.0 if needed. Dependency

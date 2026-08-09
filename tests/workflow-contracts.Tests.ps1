@@ -38,6 +38,14 @@ Describe "lint workflow contract" {
         $script:SecurityWorkflow | Should -Match 'branches:\s+\[main\]'
     }
 
+    It "runs dedicated dependency-free checks for demo changes" {
+        [regex]::Matches($script:LintWorkflow, "'demo/\*\*'").Count | Should -Be 2
+        $script:LintWorkflow | Should -Match 'demo-checks:'
+        $script:LintWorkflow | Should -Match 'name: Browser demonstration checks'
+        $script:LintWorkflow | Should -Match 'node --check demo/app\.js'
+        $script:LintWorkflow | Should -Match 'node --test demo/demo\.test\.mjs'
+    }
+
     It "smoke-tests the shipped entrypoints" {
         foreach ($scriptName in @(
             'Run-Optimize.ps1',
@@ -109,6 +117,7 @@ Describe "lint workflow contract" {
 
     It "documents exactly the required branch-protection checks" {
         $expectedChecks = @(
+            'Browser demonstration checks',
             'PSScriptAnalyzer',
             'Verify syntax (parse check)',
             'Windows PowerShell 5.1 compatibility',

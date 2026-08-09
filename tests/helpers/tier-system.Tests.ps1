@@ -164,6 +164,58 @@ Describe "Get-ProfileMaxRisk" {
     }
 }
 
+# ── Resolve-TieredStepRunMode ────────────────────────────────────────────────
+Describe "Resolve-TieredStepRunMode" {
+
+    It "resolves <SuiteProfile> T<Tier> with <Risk> risk as <Expected>" -TestCases @(
+        @{ SuiteProfile = "SAFE";        Tier = 1; Risk = "SAFE";     Expected = "Auto" }
+        @{ SuiteProfile = "SAFE";        Tier = 2; Risk = "SAFE";     Expected = "Auto" }
+        @{ SuiteProfile = "SAFE";        Tier = 2; Risk = "";         Expected = "Skip" }
+        @{ SuiteProfile = "SAFE";        Tier = 3; Risk = "SAFE";     Expected = "Skip" }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 1; Risk = "CRITICAL"; Expected = "Auto" }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 2; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 2; Risk = "MODERATE"; Expected = "Prompt" }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 3; Risk = "SAFE";     Expected = "Skip" }
+        @{ SuiteProfile = "COMPETITIVE"; Tier = 1; Risk = "CRITICAL"; Expected = "Auto" }
+        @{ SuiteProfile = "COMPETITIVE"; Tier = 2; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "COMPETITIVE"; Tier = 3; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "CUSTOM";      Tier = 1; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "CUSTOM";      Tier = 2; Risk = "MODERATE"; Expected = "Prompt" }
+        @{ SuiteProfile = "CUSTOM";      Tier = 3; Risk = "CRITICAL"; Expected = "Prompt" }
+        @{ SuiteProfile = "YOLO";        Tier = 1; Risk = "SAFE";     Expected = "Auto" }
+        @{ SuiteProfile = "YOLO";        Tier = 2; Risk = "MODERATE"; Expected = "Auto" }
+        @{ SuiteProfile = "YOLO";        Tier = 3; Risk = "AGGRESSIVE"; Expected = "Auto" }
+        @{ SuiteProfile = "safe";        Tier = 2; Risk = "safe";     Expected = "Auto" }
+        @{ SuiteProfile = "UNKNOWN";     Tier = 1; Risk = "SAFE";     Expected = "Auto" }
+        @{ SuiteProfile = "UNKNOWN";     Tier = 2; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "UNKNOWN";     Tier = 3; Risk = "SAFE";     Expected = "Prompt" }
+        @{ SuiteProfile = "UNKNOWN";     Tier = 0; Risk = "SAFE";     Expected = "Skip" }
+        @{ SuiteProfile = $null;          Tier = 2; Risk = "SAFE";     Expected = "Prompt" }
+    ) {
+        param($SuiteProfile, $Tier, $Risk, $Expected)
+
+        Resolve-TieredStepRunMode -SuiteProfile $SuiteProfile -Tier $Tier -Risk $Risk | Should -Be $Expected
+    }
+}
+
+# ── Test-TieredStepPreviewSkipped ────────────────────────────────────────────
+Describe "Test-TieredStepPreviewSkipped" {
+
+    It "resolves <SuiteProfile> T<Tier> with <Risk> risk as <Expected>" -TestCases @(
+        @{ SuiteProfile = "SAFE";        Tier = 2; Risk = "";           Expected = $false }
+        @{ SuiteProfile = "SAFE";        Tier = 2; Risk = "SAFE";       Expected = $false }
+        @{ SuiteProfile = "SAFE";        Tier = 2; Risk = "MODERATE";   Expected = $true }
+        @{ SuiteProfile = "SAFE";        Tier = 3; Risk = "SAFE";       Expected = $true }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 2; Risk = "MODERATE";   Expected = $false }
+        @{ SuiteProfile = "RECOMMENDED"; Tier = 3; Risk = "SAFE";       Expected = $true }
+        @{ SuiteProfile = "COMPETITIVE"; Tier = 3; Risk = "CRITICAL";   Expected = $false }
+    ) {
+        param($SuiteProfile, $Tier, $Risk, $Expected)
+
+        Test-TieredStepPreviewSkipped -SuiteProfile $SuiteProfile -Tier $Tier -Risk $Risk | Should -Be $Expected
+    }
+}
+
 # ── Invoke-TieredStep ────────────────────────────────────────────────────────
 Describe "Invoke-TieredStep" {
 
@@ -253,6 +305,18 @@ Describe "Invoke-TieredStep" {
             $result          | Should -Be $false
             $state.executed  | Should -Be $false
         }
+
+        It "T2 falls back to prompting when the profile is null" {
+            $SCRIPT:Profile = $null
+            $state = @{ executed = $false }
+            Mock Read-Host { "y" }
+
+            $result = Invoke-TieredStep -Tier 2 -Title "Test T2 Fallback" -Why "Testing" `
+                -Risk "MODERATE" -Action { $state.executed = $true }
+
+            $result          | Should -Be $true
+            $state.executed  | Should -Be $true
+        }
     }
 
     Context "T3 steps" {
@@ -303,6 +367,18 @@ Describe "Invoke-TieredStep" {
 
             $result          | Should -Be $false
             $state.executed  | Should -Be $false
+        }
+
+        It "DRY-RUN previews SAFE T2 steps with omitted risk" {
+            $SCRIPT:Profile = "SAFE"
+            $SCRIPT:DryRun = $true
+            $state = @{ executed = $false }
+
+            $result = Invoke-TieredStep -Tier 2 -Title "Test DryRun T2" -Why "Testing" `
+                -Action { $state.executed = $true }
+
+            $result          | Should -Be $false
+            $state.executed  | Should -Be $true
         }
 
         It "records action exceptions as preview issues" {

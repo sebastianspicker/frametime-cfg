@@ -15,7 +15,7 @@ administrator should review each item before publication.
 - [ ] Restrict bypass permissions to the intended maintainers.
 - [ ] Decide whether signed commits are required.
 
-Required checks: `PSScriptAnalyzer`, `Verify syntax (parse check)`, `Windows PowerShell 5.1 compatibility`, `Pester tests`, `Pester tests (macOS)`, `EstimateKey cross-reference`, `E2E process smoke`, `Entry point smoke tests`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`.
+Required checks: `Browser demonstration checks`, `PSScriptAnalyzer`, `Verify syntax (parse check)`, `Windows PowerShell 5.1 compatibility`, `Pester tests`, `Pester tests (macOS)`, `EstimateKey cross-reference`, `E2E process smoke`, `Entry point smoke tests`, `Secret & credential detection`, `PowerShell safety patterns`, `Workflow file integrity`.
 
 Do not copy check names from this document without comparing them with the
 current workflow job names in `.github/workflows/`.

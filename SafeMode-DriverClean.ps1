@@ -189,7 +189,7 @@ function Register-Phase3UserHandoff {
     [CmdletBinding()]
     param()
 
-    $phase3Script = if ($SCRIPT:DryRun) { Join-Path $CFG_WorkDir "PostReboot-Setup.ps1" } else { "$ScriptRoot\PostReboot-Setup.ps1" }
+    $phase3Script = if ($SCRIPT:DryRun) { "$CFG_WorkDir\PostReboot-Setup.ps1" } else { "$ScriptRoot\PostReboot-Setup.ps1" }
     $runOnceResult = Set-RunOnce "FRAMETIME_Phase3" $phase3Script -PassThru
     if ($SCRIPT:DryRun -and $runOnceResult.Status -eq "DryRun") {
         Write-Info "DRY-RUN: Phase 3 handoff command and target path were previewed; nothing was registered."

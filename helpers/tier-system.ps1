@@ -43,6 +43,69 @@
 #  Scoped DRY-RUN exposes SAFE through CUSTOM; Full DRY-RUN forces CUSTOM.
 
 if (-not (Get-Variable -Name RiskOrder -Scope Script -ErrorAction SilentlyContinue)) { $SCRIPT:RiskOrder = @{ "SAFE"=1; "MODERATE"=2; "AGGRESSIVE"=3; "CRITICAL"=4 } }
+$SCRIPT:TieredStepRunModePolicy = @{
+    "SAFE"        = @{ "1" = "Auto"; "2:SAFE" = "Auto"; default = "Skip" }
+    "RECOMMENDED" = @{ "1" = "Auto"; "2" = "Prompt"; default = "Skip" }
+    "COMPETITIVE" = @{ "1" = "Auto"; default = "Prompt" }
+    "CUSTOM"      = @{ default = "Prompt" }
+    "YOLO"        = @{ default = "Auto" }
+    default        = @{ "1" = "Auto"; default = "Prompt" }
+}
+$SCRIPT:TieredStepPromptPolicy = @{
+        "RECOMMENDED" = @{ default = @{
+            Heading = "  [T2{0}] Do you want to run this step?"; Color = "Yellow"
+            ShowImprovement = $true; Prompt = "  {0} - run? [y/N]"
+            AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+        } }
+        "COMPETITIVE" = @{
+            "2" = @{
+                Heading = "  [T2{0}] Do you want to run this step?"; Color = "Yellow"
+                ShowImprovement = $true; Prompt = "  {0} - run? [y/N]"
+                AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+            }
+            default = @{
+                Heading = "  $([char]0x25C6) [T3{0}] Experimental operation with weak or incomplete evidence."; Color = "DarkCyan"
+                ShowImprovement = $true; Prompt = "  {0} - run anyway? [y/N]"
+                AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+            }
+        }
+        "CUSTOM" = @{
+            "1" = @{
+                Heading = "  [T1{0}] Baseline operation - apply this step?"; Color = "Green"
+                ShowImprovement = $false; Prompt = "  {0} [Y/n]"
+                AcceptPattern = "^[nN]$"; AcceptOnMatch = $false
+            }
+            "2" = @{
+                Heading = "  [T2{0}] Setup-dependent - apply?"; Color = "Yellow"
+                ShowImprovement = $false; Prompt = "  {0} [y/N]"
+                AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+            }
+            "3" = @{
+                Heading = "  [T3{0}] Experimental operation - apply?"; Color = "DarkCyan"
+                ShowImprovement = $false; Prompt = "  {0} [y/N]"
+                AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+            }
+            default = @{
+                Heading = "  [T?{0}] Unknown tier - apply?"; Color = "White"
+                ShowImprovement = $false; Prompt = "  {0} [y/N]"
+                AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+            }
+        }
+        default = @{ default = @{
+            Heading = ""; Color = ""
+            ShowImprovement = $false; Prompt = "  {0} - run? [y/N]"
+            AcceptPattern = "^[jJyY]$"; AcceptOnMatch = $true
+        } }
+}
+$SCRIPT:TieredStepStatusHandlers = @{
+    "Auto:SAFE:1" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "SAFE/T1: Auto-Execute '$StepTitle'" }
+    "Auto:SAFE:2" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "SAFE/T2(SAFE): Auto-Execute '$StepTitle'" }
+    "Auto:RECOMMENDED:1" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "RECOMMENDED/T1: Auto-Execute '$StepTitle'" }
+    "Auto:COMPETITIVE:1" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "COMPETITIVE/T1: Auto-Execute '$StepTitle'" }
+    "Auto:YOLO:*" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "YOLO/T${StepTier}: Auto-Execute '$StepTitle'" }
+    "Skip:SAFE:*" = { param($StepTitle, $StepTier, $StepRisk) Write-DebugLog "SAFE profile: Skipping '$StepTitle' (Tier=$StepTier, Risk=$StepRisk)" }
+    "Skip:RECOMMENDED:*" = { param($StepTitle, $StepTier, $StepRisk) Write-ConsoleLine "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (weak or incomplete evidence)." -ForegroundColor DarkCyan }
+}
 function Test-YoloProfile { return $SCRIPT:Profile -eq "YOLO" }
 
 function Get-ProfileMaxRisk {
@@ -123,6 +186,94 @@ function Show-StepInfoCard {
     Write-ConsoleLine "  └──────────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
 }
 
+function Resolve-TieredStepRunMode {
+    <# Returns the non-DRY-RUN policy outcome for a profile, tier, and risk. #>
+    [OutputType([string])]
+    param(
+        [string] $SuiteProfile,
+        [int]    $Tier,
+        [string] $Risk = ""
+    )
+
+    $normalizedProfile = if ($SuiteProfile) { $SuiteProfile.ToUpperInvariant() } else { "" }
+    $policy = $SCRIPT:TieredStepRunModePolicy[$normalizedProfile]
+    if ($null -eq $policy) {
+        if ($Tier -lt 1) { return "Skip" }
+        $policy = $SCRIPT:TieredStepRunModePolicy.default
+    }
+
+    $riskKey = if ($Risk) { "${Tier}:$($Risk.ToUpperInvariant())" } else { $null }
+    if ($riskKey -and $policy.ContainsKey($riskKey)) { return $policy[$riskKey] }
+    if ($policy.ContainsKey("$Tier")) { return $policy["$Tier"] }
+    return $policy.default
+}
+
+function Test-TieredStepPreviewSkipped {
+    <# Dry-run filtering differs from live consent policy for SAFE T2 steps without a risk label. #>
+    [OutputType([bool])]
+    param(
+        [string] $SuiteProfile,
+        [int]    $Tier,
+        [string] $Risk = ""
+    )
+
+    switch ($SuiteProfile) {
+        "SAFE" {
+            return ($Tier -ge 3 -or ($Tier -eq 2 -and $Risk -notin @("SAFE", "", $null)))
+        }
+        "RECOMMENDED" {
+            return ($Tier -ge 3 -or ($Tier -eq 2 -and $Risk -and -not (Test-RiskAllowed $Risk)))
+        }
+        default { return $false }
+    }
+}
+
+function Request-TieredStepRun {
+    <# Displays the existing profile-specific consent prompt and returns its answer. #>
+    param(
+        [string] $SuiteProfile,
+        [int]    $Tier,
+        [string] $Title,
+        [string] $Risk = "",
+        [string] $Improvement = ""
+    )
+
+    $normalizedProfile = if ($SuiteProfile) { $SuiteProfile.ToUpperInvariant() } else { "" }
+    $profilePolicy = $SCRIPT:TieredStepPromptPolicy[$normalizedProfile]
+    if ($null -eq $profilePolicy) { $profilePolicy = $SCRIPT:TieredStepPromptPolicy.default }
+    $config = $profilePolicy["$Tier"]
+    if ($null -eq $config) { $config = $profilePolicy.default }
+
+    $riskTag = if ($Risk) { " [$Risk]" } else { "" }
+    if ($config.Heading) {
+        Write-Blank
+        Write-ConsoleLine ($config.Heading -f $riskTag) -ForegroundColor $config.Color
+        if ($config.ShowImprovement -and $Improvement) {
+            Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
+        }
+        Write-Blank
+    }
+
+    $response = Read-Host ($config.Prompt -f $Title)
+    return (($response -match $config.AcceptPattern) -eq $config.AcceptOnMatch)
+}
+
+function Write-TieredStepRunModeStatus {
+    <# Preserves profile-specific messages for automatic and skipped steps. #>
+    param(
+        [string] $SuiteProfile,
+        [int]    $Tier,
+        [string] $Risk,
+        [string] $Title,
+        [ValidateSet("Auto", "Prompt", "Skip")]
+        [string] $RunMode
+    )
+
+    $handler = $SCRIPT:TieredStepStatusHandlers["$($RunMode):$($SuiteProfile):$Tier"]
+    if ($null -eq $handler) { $handler = $SCRIPT:TieredStepStatusHandlers["$($RunMode):$($SuiteProfile):*"] }
+    if ($handler) { & $handler $Title $Tier $Risk }
+}
+
 function Invoke-TieredStep {
     <#
     .SYNOPSIS  Executes a step based on profile, tier, and risk.
@@ -188,15 +339,12 @@ function Invoke-TieredStep {
         }
     }
 
+    # Risk filtering above intentionally precedes this pure profile/tier policy.
+    $runMode = Resolve-TieredStepRunMode -SuiteProfile $SCRIPT:Profile -Tier $Tier -Risk $Risk
+
     # ── DRY-RUN modifier ────────────────────────────────────────────
     if ($SCRIPT:DryRun) {
-        # Still respect profile tier filtering - SAFE DRY-RUN should not preview T3 steps
-        $wouldSkip = $false
-        switch ($SCRIPT:Profile) {
-            "SAFE"        { if ($Tier -ge 3 -or ($Tier -eq 2 -and $Risk -notin @("SAFE","",$null))) { $wouldSkip = $true } }
-            "RECOMMENDED" { if ($Tier -ge 3 -or ($Tier -eq 2 -and $Risk -and -not (Test-RiskAllowed $Risk))) { $wouldSkip = $true } }
-            # COMPETITIVE/CUSTOM/YOLO: intentionally preview all steps in DRY-RUN
-        }
+        $wouldSkip = Test-TieredStepPreviewSkipped -SuiteProfile $SCRIPT:Profile -Tier $Tier -Risk $Risk
         if ($wouldSkip) {
             Write-ConsoleLine "  $([char]0x2588)$([char]0x2588) DRY-RUN $([char]0x2588)$([char]0x2588)  Would SKIP: $Title (filtered by $($SCRIPT:Profile) profile)" -ForegroundColor DarkGray
             $SCRIPT:CurrentStepTitle = $null
@@ -220,111 +368,11 @@ function Invoke-TieredStep {
     }
 
     # ── Decide whether to run based on profile + tier ───────────────
-    $run = $false
-
-    switch ($SCRIPT:Profile) {
-
-        "SAFE" {
-            # T1: auto-run. T2(SAFE): auto-run. T3: already filtered above.
-            if ($Tier -eq 1) {
-                Write-DebugLog "SAFE/T1: Auto-Execute '$Title'"
-                $run = $true
-            } elseif ($Tier -eq 2 -and $Risk -eq "SAFE") {
-                Write-DebugLog "SAFE/T2(SAFE): Auto-Execute '$Title'"
-                $run = $true
-            } else {
-                # T2 without Risk="SAFE" or unexpected tier - skip with debug message
-                Write-DebugLog "SAFE profile: Skipping '$Title' (Tier=$Tier, Risk=$Risk)"
-                $run = $false
-            }
-        }
-
-        "RECOMMENDED" {
-            if ($Tier -eq 1) {
-                Write-DebugLog "RECOMMENDED/T1: Auto-Execute '$Title'"
-                $run = $true
-            } elseif ($Tier -eq 2) {
-                # Prompt for T2 steps
-                Write-Blank
-                $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-ConsoleLine "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
-                if ($Improvement) {
-                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
-                }
-                Write-Blank
-                $r = Read-Host "  $Title - run? [y/N]"
-                $run = ($r -match "^[jJyY]$")
-            } else {
-                # T3: skip in RECOMMENDED
-                Write-ConsoleLine "  $([char]0x25C6) [T3] Skipped in RECOMMENDED profile (weak or incomplete evidence)." -ForegroundColor DarkCyan
-                $run = $false
-            }
-        }
-
-        "COMPETITIVE" {
-            if ($Tier -eq 1) {
-                Write-DebugLog "COMPETITIVE/T1: Auto-Execute '$Title'"
-                $run = $true
-            } elseif ($Tier -eq 2) {
-                Write-Blank
-                $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-ConsoleLine "  [T2$rTag] Do you want to run this step?" -ForegroundColor Yellow
-                if ($Improvement) {
-                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
-                }
-                Write-Blank
-                $r = Read-Host "  $Title - run? [y/N]"
-                $run = ($r -match "^[jJyY]$")
-            } else {
-                # T3: prompt in COMPETITIVE
-                Write-Blank
-                $rTag = if ($Risk) { " [$Risk]" } else { "" }
-                Write-ConsoleLine "  $([char]0x25C6) [T3$rTag] Experimental operation with weak or incomplete evidence." -ForegroundColor DarkCyan
-                if ($Improvement) {
-                    Write-ConsoleLine "       Expected: $Improvement" -ForegroundColor Cyan
-                }
-                Write-Blank
-                $r = Read-Host "  $Title - run anyway? [y/N]"
-                $run = ($r -match "^[jJyY]$")
-            }
-        }
-
-        "CUSTOM" {
-            # Everything prompted with full detail
-            Write-Blank
-            $rTag = if ($Risk) { " [$Risk]" } else { "" }
-            $tLabel = switch ($Tier) {
-                1 { "[T1$rTag] Baseline operation - apply this step?" }
-                2 { "[T2$rTag] Setup-dependent - apply?" }
-                3 { "[T3$rTag] Experimental operation - apply?" }
-                default { "[T?$rTag] Unknown tier - apply?" }
-            }
-            $tColor = switch ($Tier) { 1 {"Green"} 2 {"Yellow"} 3 {"DarkCyan"} default {"White"} }
-            Write-ConsoleLine "  $tLabel" -ForegroundColor $tColor
-            $defaultYes = ($Tier -eq 1)
-            if ($defaultYes) {
-                $r = Read-Host "  $Title [Y/n]"
-                $run = ($r -notmatch "^[nN]$")
-            } else {
-                $r = Read-Host "  $Title [y/N]"
-                $run = ($r -match "^[jJyY]$")
-            }
-        }
-
-        "YOLO" {
-            # Everything auto-executes. No prompts. Risk ceiling enforced above.
-            Write-DebugLog "YOLO/T${Tier}: Auto-Execute '$Title'"
-            $run = $true
-        }
-
-        default {
-            # Fallback: treat as RECOMMENDED
-            $run = ($Tier -eq 1)
-            if ($Tier -gt 1) {
-                $r = Read-Host "  $Title - run? [y/N]"
-                $run = ($r -match "^[jJyY]$")
-            }
-        }
+    Write-TieredStepRunModeStatus -SuiteProfile $SCRIPT:Profile -Tier $Tier -Risk $Risk -Title $Title -RunMode $runMode
+    $run = switch ($runMode) {
+        "Auto" { $true }
+        "Prompt" { Request-TieredStepRun -SuiteProfile $SCRIPT:Profile -Tier $Tier -Title $Title -Risk $Risk -Improvement $Improvement }
+        default { $false }
     }
 
     # ── Execute or skip ─────────────────────────────────────────────
