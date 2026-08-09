@@ -84,6 +84,7 @@ service-account*.json
 /.agents/
 /.codex/
 /.codegraph/
+/.continue/
 /.kilo/
 /.serena/
 /.internal/
@@ -116,6 +117,7 @@ scripts/topology_inventory.sh
 /notes.md
 /plan.md
 /status.md
+/WIP.md
 
 # Local analysis outputs; keep durable config such as .codacy/codacy.config.json
 /.codacy/cli-config.yaml
