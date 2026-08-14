@@ -1,0 +1,21 @@
+[package]
+name = "northclock-kmdf-driver"
+description = "Hardware-unverified validation core for the experimental Northclock KMDF driver"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+wdk = []
+
+[dependencies]
+northclock-driver-protocol = { path = "../northclock-driver-protocol", version = "=0.1.0-alpha.1" }
+
+[lints]
+workspace = true

@@ -285,7 +285,7 @@ function Write-PhaseSummary {
             & $writePreviewLine $continuation
         } else {
             & $writePreviewLine "  No changes applied. Console output is the only result."
-            & $writePreviewLine "  Live run: START.bat -> [1] -> choose a profile"
+            & $writePreviewLine "  Portable live execution is unavailable; use an authenticated release."
         }
         Write-ConsoleLine "  $([char]0x255A)$("$([char]0x2550)" * $boxWidth)$([char]0x255D)" -ForegroundColor Magenta
     } else {
@@ -299,7 +299,7 @@ function Write-PhaseSummary {
         }
         if ($failed -gt 0) {
             Write-ConsoleLine "  $([char]0x2551)  $([char]0x2718) Failed:   $failed$(' ' * [math]::Max(0, 46 - "$failed".Length))$([char]0x2551)" -ForegroundColor Red
-            Write-ConsoleLine "  $([char]0x2551)  Failed steps can be retried via START.bat$(' ' * 15)$([char]0x2551)" -ForegroundColor DarkGray
+            Write-ConsoleLine "  $([char]0x2551)  Retry failed steps from an authenticated release$(' ' * 7)$([char]0x2551)" -ForegroundColor DarkGray
         }
         if ($NextAction) {
             Write-ConsoleLine "  $([char]0x2551)$(' ' * 58)$([char]0x2551)" -ForegroundColor $borderColor

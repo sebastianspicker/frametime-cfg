@@ -1,0 +1,9 @@
+[files]
+extend-exclude = ["Cargo.lock", "driver/Cargo.lock", "target", "driver/target"]
+
+[default.extend-words]
+ratatui = "ratatui"
+ndjson = "ndjson"
+subsys = "subsys"
+PnP = "PnP"
+Pn = "Pn"

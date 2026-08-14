@@ -1,0 +1,13 @@
+/target/
+/driver/target/
+/fuzz/target/
+/.idea/
+/.vscode/
+*.pdb
+*.dmp
+*.log
+*.ndjson
+*.csv
+*.tmp
+.DS_Store
+Thumbs.db

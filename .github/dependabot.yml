@@ -10,3 +10,53 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      frametime-rust:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust/northclock"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      northclock-rust:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust/northclock/driver"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      northclock-driver-rust:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust/northclock/fuzz"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      northclock-fuzz-rust:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/rust/driver-foundry"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      driver-foundry-rust:
+        patterns:
+          - "*"

@@ -4,6 +4,9 @@
 
 function Load-Progress {
     if (Test-Path $CFG_ProgressFile) {
+        # Progress controls resume routing, so an existing file must already be
+        # trusted before its bytes can influence a live run.
+        [void](Assert-TrustedExistingControlFile -Path $CFG_ProgressFile)
         try { return (Get-Content $CFG_ProgressFile -Raw -ErrorAction Stop | ConvertFrom-Json) }
         catch {
             Write-Warn "Progress tracking file was corrupted - starting fresh. (Your optimizations are not affected.)"

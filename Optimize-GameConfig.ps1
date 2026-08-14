@@ -415,16 +415,7 @@ if ($startStep -le 35) {
                 Write-Info "Download: $url"
                 $url | Set-ClipboardSafe
                 Write-OK "URL copied to clipboard."
-                if (-not $SCRIPT:DryRun -and -not (Test-YoloProfile)) {
-                    $r = Read-Host "  Open in browser? [y/N]"
-                    if ($r -match "^[jJyY]$") {
-                        if ($url -match '^https://(www\.)?(amd|intel)\.com/') {
-                            Start-Process $url
-                        } else {
-                            Write-Warn "URL validation failed - open manually: $url"
-                        }
-                    }
-                }
+                Write-Info "Open the copied vendor URL from an unelevated browser session."
             } else {
                 Write-Warn "CPU manufacturer not recognized - check manually."
             }

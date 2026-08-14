@@ -247,7 +247,7 @@ if ($startStep -eq 1 -and -not $SCRIPT:DryRun) {
         Write-Warn "Create a System Restore Point NOW!"
         Write-Info "Windows Search -> 'restore point' -> C: -> Create"
         Write-Info "The suite backs up supported reversible settings before live changes."
-        Write-Info "See docs\backup-restore.md, then use START.bat -> Restore for captured settings."
+        Write-Info "See docs\backup-restore.md, then use Restore from an authenticated release."
         if (-not (Confirm-Risk "Restore point created. Continue?" "No rollback possible without a restore point!")) {
             exit 0
         }

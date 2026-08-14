@@ -44,11 +44,16 @@ frametime_*.log
 .env
 .env.*
 !.env.example
+!.env.*.example
 !.env.sample
+!.env.template
+.npmrc.local
 *.pem
 *.key
 *.p12
 *.pfx
+*.jks
+*.keystore
 *.cer
 *.crt
 *.kdbx
@@ -86,6 +91,13 @@ service-account*.json
 /.codegraph/
 /.kilo/
 /.serena/
+.agents/
+.codex/
+.codegraph/
+.kilo/
+.serena/
+.cursor/
+.repowise/
 /.internal/
 .github/codex/
 .github/workflows/codex.yml
@@ -99,6 +111,9 @@ scripts/topology_inventory.sh
 # Local instruction drafts and exported sessions
 /AGENTS.md
 /CLAUDE.md
+/GEMINI.md
+/AUDIT_LEDGER.md
+/remediation-ledger.md
 /.github/copilot-instructions.md
 /.github/instructions/
 /.github/prompts/
@@ -168,3 +183,36 @@ transcript*.log
 *.bak
 *.orig
 *.rej
+
+# Nested local tooling and generated artifacts
+.codacy/generated/
+.codacy/logs/
+.codacy/tools-configs/
+.codacy/cli-config.yaml
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+test-results/
+playwright-report/
+blob-report/
+junit*.xml
+node_modules/
+target/
+.build/
+DerivedData/
+xcuserdata/
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.local.db
+*.local.sqlite
+*.local.sqlite3
+
+# Local Rust documentation ledgers
+/rust/docs/*ledger*.md

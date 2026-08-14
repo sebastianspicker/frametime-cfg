@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: ${{ runner.temp }}/northclock-target
+
+jobs:
+  user-mode:
+    name: User-mode checks
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy, default features
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy, all user-mode features
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+      - name: Tests, all user-mode features
+        run: cargo test --workspace --all-features
+      - name: CLI contract tests
+        run: cargo test -p northclock-cli --test cli_contract
+      - name: Repository hygiene
+        run: cargo run -p xtask -- hygiene
+      - name: Documentation links
+        run: cargo run -p xtask -- docs
+      - name: Documentation
+        run: cargo doc --workspace --no-deps
+      - name: Audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+      - name: Dependency policy
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check
+      - name: Spelling
+        shell: pwsh
+        run: |
+          winget install --id crate-ci.typos --exact --accept-package-agreements --accept-source-agreements
+          typos .
+      - name: Windows x64 release build
+        run: cargo build --workspace --release --target x86_64-pc-windows-msvc
+
+  driver-protocol:
+    name: Isolated driver protocol
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --manifest-path driver/Cargo.toml --all -- --check
+      - name: Protocol tests
+        run: cargo test --manifest-path driver/Cargo.toml --workspace
+      - name: Driver validation-core lint
+        run: cargo clippy --manifest-path driver/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: Driver validation-core all-feature check
+        run: cargo check --manifest-path driver/Cargo.toml --workspace --all-features
+      - name: Driver protocol documentation
+        run: cargo doc --manifest-path driver/Cargo.toml --workspace --no-deps
+      - name: Qualification boundary
+        shell: pwsh
+        run: |
+          Write-Host 'This job validates protocol behavior and the driver validation core only.'
+          Write-Host 'It does not package, sign, install, load, or hardware-qualify a driver.'
+
+  fuzz-targets:
+    name: Parser fuzz targets compile
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Compile fuzz targets
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
