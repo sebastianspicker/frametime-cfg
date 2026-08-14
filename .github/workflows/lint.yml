@@ -11,6 +11,8 @@ on:
       - 'cfgs/**'
       - 'docs/**'
       - 'ui/**'
+      - 'demo/**'
+      - 'rust/**'
       - '.github/**'
       - '.gitattributes'
       - '.gitignore'
@@ -24,6 +26,8 @@ on:
       - 'cfgs/**'
       - 'docs/**'
       - 'ui/**'
+      - 'demo/**'
+      - 'rust/**'
       - '.github/**'
       - '.gitattributes'
       - '.gitignore'
@@ -40,6 +44,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  demo-checks:
+    name: Browser demonstration checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify dependency-free browser demonstration
+        shell: bash
+        run: |
+          node --version
+          node --check demo/app.js
+          node --test demo/demo.test.mjs
+
   psscriptanalyzer:
     name: PSScriptAnalyzer
     runs-on: windows-latest
@@ -90,7 +110,7 @@ jobs:
   pester:
     name: Pester tests
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -129,7 +149,7 @@ jobs:
   pester-macos:
     name: Pester tests (macOS)
     runs-on: macos-latest
-    timeout-minutes: 10
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

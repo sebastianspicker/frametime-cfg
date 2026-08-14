@@ -260,6 +260,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     BeforeEach {
         Reset-IntegrationState
         $SCRIPT:DryRun = $true
+        $SCRIPT:RunOncePreviewPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\PostReboot-Setup.ps1"
 
         Mock Write-ConsoleLine {}
         Mock Set-ItemProperty {
@@ -268,7 +269,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     }
 
     It "Set-RunOnce does NOT write to RunOnce registry in DRY-RUN" {
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $SCRIPT:RunOncePreviewPath
 
         $SCRIPT:MockTracker.SetItemProperty.Count | Should -Be 0
     }
@@ -276,7 +277,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     It "Set-RunOnce prints DRY-RUN or security rejection message (no writes either way)" {
         Mock Write-Warn {}
 
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $SCRIPT:RunOncePreviewPath
 
         # Path validation is now host-independent; DRY-RUN should always stop
         # before any registry write and emit the preview message.
@@ -289,7 +290,7 @@ Describe "Set-RunOnce DRY-RUN compliance" {
     It "Set-RunOnce reports DRY-RUN status without claiming registration was applied" {
         Mock Write-Warn {}
 
-        $result = Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $SCRIPT:RunOncePreviewPath -PassThru
 
         $result.Status | Should -Be "DryRun"
         $result.Applied | Should -Be $false

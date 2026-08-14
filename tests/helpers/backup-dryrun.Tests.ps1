@@ -51,7 +51,7 @@ Describe "Backup-* DRY-RUN guards" {
     }
 
     It "Backup-QosAndUro skips buffering in DRY-RUN" {
-        Backup-QosAndUro -PolicyNames @("CS2 UDP") -UroState "disabled" -StepTitle "Step"
+        Backup-QosAndUro -Policies @() -UroState "disabled" -StepTitle "Step"
         $SCRIPT:_backupPending.Count | Should -Be 0
     }
 

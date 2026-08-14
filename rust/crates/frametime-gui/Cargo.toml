@@ -1,0 +1,23 @@
+[package]
+name = "frametime-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "frametime-gui"
+path = "src/main.rs"
+
+[dependencies]
+frametime-core = { path = "../frametime-core" }
+frametime-hardware = { path = "../frametime-hardware" }
+
+[target.'cfg(windows)'.dependencies]
+frametime-hardware-windows = { path = "../frametime-hardware-windows" }
+frametime-windows = { path = "../frametime-windows" }
+windows = { workspace = true, features = ["Win32_System_Console", "Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[lints]
+workspace = true

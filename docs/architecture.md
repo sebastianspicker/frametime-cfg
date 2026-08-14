@@ -20,15 +20,18 @@ system and game configuration. The core design constraints are:
 
 ## Entrypoints
 
-`START.bat` is the terminal menu most users run. Live operations launch the
-PowerShell entrypoints with `-ExecutionPolicy Bypass` after elevation. The
-`START.bat dry-run [1|2|3|4]` entry bypasses elevation and launches one strict
-GPU preview. `START.bat dry-run all` runs four isolated previews and stops on
-the first nonzero result.
+`START.bat` is the portable strict-preview launcher. Live routes fail closed
+because the repository has no installed or independently signed launcher that
+authenticates source before elevation. `START.bat dry-run [1|2|3|4]` launches
+one strict GPU preview. `START.bat dry-run all` runs four isolated previews and
+stops on the first nonzero result.
 
-`START-GUI.bat` launches `frametime-gui.ps1`, the WPF desktop interface. It is
-for analysis, backup review, benchmarking, network diagnostics, storage checks,
-and settings. Full optimization still runs through the terminal phase scripts.
+Portable menu, restore, and manual Phase 3 actions are unavailable.
+`Launcher-Action.ps1` is a fail-closed legacy menu-action surface. It rejects
+every action before importing configuration, helpers, or portable content.
+
+`START-GUI.bat` is fail-closed. The WPF source remains for development and
+smoke validation but is not a live portable entrypoint.
 
 `Run-Optimize.ps1` is Phase 1. It loads configuration and helpers, then
 dot-sources the phase scripts in order:
@@ -261,7 +264,8 @@ The repository is PowerShell-first. The relevant local checks are:
 - PSScriptAnalyzer for linting when available;
 - entrypoint smoke checks using each shipped script's `-SmokeTest` switch. The
   smoke and strict Full DRY-RUN paths are intentionally allowed from
-  non-elevated shells; live execution performs an explicit Administrator guard.
+  non-elevated shells; portable live execution fails before loading mutable
+  configuration or helper code.
 
 For a Windows dry-run release gate, also run `START.bat dry-run all` and require
 exit code zero, empty stderr for each PowerShell child, all four lifecycle

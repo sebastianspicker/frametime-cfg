@@ -388,10 +388,10 @@ if ($startStep -le 16) {
                 $existingPolicies = @()
                 foreach ($pName in @("CS2_UDP_Ports", "CS2_App")) {
                     $existing = Get-NetQosPolicy -Name $pName -ErrorAction SilentlyContinue
-                    if ($existing) { $existingPolicies += $pName }
+                    if ($existing) { $existingPolicies += $existing }
                 }
                 # URO state was captured above BEFORE the disable call
-                Backup-QosAndUro -PolicyNames $existingPolicies `
+                Backup-QosAndUro -Policies $existingPolicies `
                     -UroState $currentUro -StepTitle $SCRIPT:CurrentStepTitle
 
                 # Port-based policy: CS2 default game ports 27015–27036 UDP

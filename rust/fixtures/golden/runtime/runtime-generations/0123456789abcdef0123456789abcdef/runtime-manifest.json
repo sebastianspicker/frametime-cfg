@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "generation": "0123456789abcdef0123456789abcdef",
+  "files": {
+    "payload.txt": "ff87c322094527509bd8ea03a702fb183750ed9aa3fc423e4652d255bd2d57c8"
+  },
+  "payloadContractHash": "06a83bd5fc9ec69783f20a53b0fcb2e472ce017d62f5ab3ec6e1f2a6a89775ef",
+  "executable": {
+    "path": "payload.txt",
+    "sha256": "ff87c322094527509bd8ea03a702fb183750ed9aa3fc423e4652d255bd2d57c8"
+  },
+  "futureManifest": {
+    "retained": true
+  }
+}

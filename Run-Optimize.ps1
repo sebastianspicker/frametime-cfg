@@ -114,6 +114,54 @@ if (-not $FullDryRun -and $PSBoundParameters.ContainsKey('DryRunGpu')) {
     throw "-DryRunGpu is only valid with -FullDryRun."
 }
 
+if (-not $FullDryRun) {
+    throw "Portable live execution is unavailable until a trusted installer or signed payload establishes the source identity. Use -FullDryRun for the no-mutation preview."
+}
+
+# Full previews are intentionally host-independent. Supply deterministic empty
+# inventory results when Windows-only discovery cmdlets are unavailable.
+if ($FullDryRun) {
+    if (-not (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
+        function Get-CimInstance {
+            [CmdletBinding()]
+            param(
+                [Parameter(Position = 0)][string]$ClassName,
+                [string]$Filter,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs
+            )
+            if ($ClassName -eq "Win32_OperatingSystem") {
+                return [PSCustomObject]@{ ProductType = 1; CurrentBuildNumber = "19045" }
+            }
+            return @()
+        }
+    }
+    if (-not (Get-Command Get-Service -ErrorAction SilentlyContinue)) {
+        function Get-Service {
+            [CmdletBinding()]
+            param([string]$Name, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            return @()
+        }
+    }
+    if (-not (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        function Get-ScheduledTask {
+            [CmdletBinding()]
+            param(
+                [string]$TaskName,
+                [string]$TaskPath,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs
+            )
+            return @()
+        }
+    }
+    if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) {
+        function Get-NetAdapter {
+            [CmdletBinding()]
+            param([string]$Name, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            return @()
+        }
+    }
+}
+
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity

@@ -1,0 +1,18 @@
+{
+  "mode": "CONTROL",
+  "logLevel": "VERBOSE",
+  "profile": "COMPETITIVE",
+  "fpsCap": 240,
+  "avgFps": 300.5,
+  "p1Fps": 150.25,
+  "capDate": "2026-08-10",
+  "gpuInput": "2",
+  "pagefileMB": 4096,
+  "workDir": "C:\\FRAMETIME_CFG",
+  "scriptRoot": "C:\\Program Files\\frametime",
+  "futureState": {
+    "schema": 9,
+    "enabled": true
+  },
+  "nullableState": null
+}

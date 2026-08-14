@@ -1,0 +1,21 @@
+[package]
+name = "northclock-core"
+description = "Portable domain contracts, workflows, safety policy, and persistence for Northclock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+experimental-hardware-writes = []
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+[lints]
+workspace = true
+

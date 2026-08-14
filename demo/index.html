@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'none'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="A browser-only demonstration of the Frametime CFG workflow using sanitized fixture data.">
+    <title>Frametime CFG · Browser demonstration</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Demonstration navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Frametime CFG</span>
+        </div>
+        <nav class="nav-list" role="tablist" aria-label="Workflow views">
+          <button class="nav-item is-active" type="button" role="tab" aria-selected="true" data-panel="overview">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+            <span>Overview</span><kbd>1</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="assess">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+            <span>Assess</span><kbd>2</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="setup">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m14.5 6.5 3-3 3 3-3 3M4 20l8.5-8.5M8 4l3 3-4 4-3-3z"/></svg>
+            <span>Setup</span><kbd>3</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="benchmark">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 18a8 8 0 1 1 14 0M12 12l4-3"/><circle cx="12" cy="12" r="1"/></svg>
+            <span>Benchmark</span><kbd>4</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="network">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="m7 11 10-4M7 13l10 4"/></svg>
+            <span>Network</span><kbd>5</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="video">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8M12 17v4"/></svg>
+            <span>Video</span><kbd>6</kbd>
+          </button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" tabindex="-1" data-panel="recovery">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/><path d="M12 8v5l3 2"/></svg>
+            <span>Recovery</span><kbd>7</kbd>
+          </button>
+        </nav>
+        <div class="sidebar-state">
+          <span id="profile-label">Profile: RECOMMENDED</span>
+          <span>Browser simulation only</span>
+        </div>
+      </aside>
+
+      <main id="main-content" class="workspace">
+        <section class="panel" data-panel-view="overview" role="tabpanel">
+          <header class="page-header">
+            <div>
+              <h1 tabindex="-1">Review the workflow before touching the system</h1>
+              <p>Explore sanitized example data and the three-phase operating model. Nothing here runs PowerShell or writes system state.</p>
+            </div>
+            <div class="page-actions">
+              <button class="button button-primary" type="button" data-sim-action="scan">Run simulated scan</button>
+              <button class="button button-secondary" type="button" data-go="setup">Preview setup</button>
+            </div>
+          </header>
+
+          <ol class="phase-rail" aria-label="Three-phase operating model">
+            <li><span>1</span><div><strong>Normal mode</strong><p>Assess configuration, capture supported state, and publish a verified runtime.</p></div></li>
+            <li><span>2</span><div><strong>Safe Mode</strong><p>Clear the boot flag first, then perform the selected driver-clean operation.</p></div></li>
+            <li><span>3</span><div><strong>Post-reboot</strong><p>Validate the runtime again, finish setup, verify, and retain recovery evidence.</p></div></li>
+          </ol>
+
+          <div class="section-heading">
+            <div><h2>System assessment <span>(sanitized)</span></h2><p id="scan-time">Fixture data · no host query</p></div>
+            <button class="text-button" type="button" data-go="assess">View assessment details</button>
+          </div>
+          <div class="table-frame">
+            <table>
+              <thead><tr><th scope="col">Component</th><th scope="col">Details</th><th scope="col">Status</th><th scope="col">Notes</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">CPU</th><td>8-core desktop processor</td><td><span class="status status-good">Available</span></td><td>Example hardware fixture</td></tr>
+                <tr><th scope="row">GPU</th><td>Discrete graphics adapter</td><td><span class="status status-good">Available</span></td><td>Vendor path simulated</td></tr>
+                <tr><th scope="row">Memory</th><td>32 GB system memory</td><td><span class="status status-review">Review</span></td><td>Profile state not queried</td></tr>
+                <tr><th scope="row">Storage</th><td>1 TB solid-state drive</td><td><span class="status status-good">Available</span></td><td>Health data is illustrative</td></tr>
+                <tr><th scope="row">Network</th><td>Wired Ethernet adapter</td><td><span class="status status-offline">Not connected</span></td><td>No network request made</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <aside class="recovery-boundary" aria-labelledby="recovery-boundary-title">
+            <div class="info-mark" aria-hidden="true">i</div>
+            <div><h2 id="recovery-boundary-title">Recovery boundary</h2><p>Restore covers supported state captured by the toolkit. It is selective and is not a full system snapshot or user-data backup.</p></div>
+            <button class="button button-secondary" type="button" data-go="recovery">View details</button>
+          </aside>
+        </section>
+
+        <section class="panel" data-panel-view="assess" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Assess the current state</h1><p>This fixture mirrors the categories the desktop tool can inspect without exposing machine-specific identifiers.</p></div><button class="button button-primary" type="button" data-sim-action="scan">Refresh fixture scan</button></header>
+          <div class="split-layout">
+            <section><h2>Review queue</h2><div class="list-frame"><div><strong>Memory profile</strong><span class="status status-review">Review</span><p>Confirm firmware configuration on the actual system.</p></div><div><strong>Driver package</strong><span class="status status-good">Available</span><p>The demo does not download or validate a package.</p></div><div><strong>Recovery state</strong><span class="status status-review">Review</span><p>Create and inspect a backup before live work.</p></div></div></section>
+            <aside class="plain-note"><h2>Evidence boundary</h2><p>Detection proves only that a condition can be observed. It does not prove a performance problem or predict a gain.</p><a href="../docs/evidence.md">Read the evidence guide</a></aside>
+          </div>
+        </section>
+
+        <section class="panel" data-panel-view="setup" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Preview setup choices</h1><p>Select a profile for this browser view, then inspect the simulated three-phase plan. The selection is not persisted.</p></div><button class="button button-primary" type="button" data-sim-action="setup">Prepare preview</button></header>
+          <fieldset class="profile-options"><legend>Profile</legend><label><input type="radio" name="profile" value="SAFE"><span><strong>SAFE</strong><small>Automatic baseline operations only</small></span></label><label><input type="radio" name="profile" value="RECOMMENDED" checked><span><strong>RECOMMENDED</strong><small>Baseline plus prompted setup-dependent work</small></span></label><label><input type="radio" name="profile" value="COMPETITIVE"><span><strong>COMPETITIVE</strong><small>Includes prompts for experimental work</small></span></label><label><input type="radio" name="profile" value="CUSTOM"><span><strong>CUSTOM</strong><small>Review each operation individually</small></span></label></fieldset>
+          <div class="command-preview"><span>Documented strict preview</span><code>START.bat dry-run all</code><p>Run this command on Windows to exercise all four GPU branches without persistent suite state.</p></div>
+        </section>
+
+        <section class="panel" data-panel-view="benchmark" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Review benchmark summaries</h1><p>The browser demo uses example aggregate values and never claims a hardware-independent gain.</p></div><button class="button button-primary" type="button" data-sim-action="benchmark">Recalculate example</button></header>
+          <div class="metric-strip"><div><span>Fixture average</span><strong>247 FPS</strong></div><div><span>Fixture 1% low</span><strong>173 FPS</strong></div><div><span>Suggested cap</span><strong id="cap-value">218 FPS</strong></div></div>
+          <label class="select-field" for="refresh-rate"><span>Example display refresh rate</span><select id="refresh-rate"><option>144 Hz</option><option selected>240 Hz</option><option>360 Hz</option></select></label>
+          <p class="disclaimer">These values demonstrate the calculation surface only. They are not measured results or recommendations for another system.</p>
+        </section>
+
+        <section class="panel" data-panel-view="network" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Inspect network diagnostics</h1><p>Example rows demonstrate the report structure. This page does not resolve DNS or contact any endpoint.</p></div><button class="button button-primary" type="button" data-sim-action="network">Refresh examples</button></header>
+          <div class="table-frame"><table><thead><tr><th scope="col">Check</th><th scope="col">Example result</th><th scope="col">Interpretation</th></tr></thead><tbody><tr><th scope="row">Adapter</th><td>Wired · 1 Gbps</td><td><span class="status status-good">Available</span></td></tr><tr><th scope="row">Gateway</th><td>Sanitized local address</td><td><span class="status status-good">Reachable fixture</span></td></tr><tr><th scope="row">External route</th><td>No request sent</td><td><span class="status status-review">Unmeasured</span></td></tr></tbody></table></div>
+        </section>
+
+        <section class="panel" data-panel-view="video" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Preview video settings</h1><p>Review representative file-backed settings before deciding whether to write a game configuration.</p></div><button class="button button-primary" type="button" data-sim-action="video">Preview file changes</button></header>
+          <div class="settings-list"><div><span>Display mode</span><strong>Fullscreen</strong></div><div><span>Refresh rate</span><strong>240 Hz fixture</strong></div><div><span>Frame cap</span><strong>Unset until measured</strong></div><div><span>Configuration target</span><strong>video.txt preview</strong></div></div>
+          <p class="disclaimer">The demo does not read Steam data, discover a CS2 install, or modify files.</p>
+        </section>
+
+        <section class="panel" data-panel-view="recovery" role="tabpanel" hidden>
+          <header class="page-header"><div><h1 tabindex="-1">Understand the recovery boundary</h1><p>Supported state is restored selectively. Driver packages, removed AppX packages, and some external application state require manual recovery.</p></div><button class="button button-primary" type="button" data-sim-action="recovery">Open recovery preview</button></header>
+          <div class="table-frame"><table><thead><tr><th scope="col">Area</th><th scope="col">Example backup state</th><th scope="col">Recovery</th></tr></thead><tbody><tr><th scope="row">Registry and services</th><td>Captured before supported changes</td><td><span class="status status-good">Selective restore</span></td></tr><tr><th scope="row">Boot configuration</th><td>Captured with extra care</td><td><span class="status status-review">May require reboot</span></td></tr><tr><th scope="row">Driver package</th><td>Not copied into backup.json</td><td><span class="status status-offline">Manual reinstall</span></td></tr></tbody></table></div>
+          <aside class="plain-note wide"><h2>Not a system snapshot</h2><p>Review the live backup before making changes, keep independent recovery media, and test the recovery path on a disposable system before treating the alpha as release-ready.</p><a href="../docs/backup-restore.md">Read backup and restore documentation</a></aside>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+      <span class="toast-mark" aria-hidden="true">✓</span>
+      <div><strong>Simulation complete</strong><span id="toast-message"></span></div>
+      <button id="toast-close" type="button" aria-label="Dismiss notification">×</button>
+    </div>
+  </body>
+</html>

@@ -112,6 +112,13 @@ if ((Get-Variable IsWindows -Scope Global -ErrorAction SilentlyContinue) -and $I
     if (-not (Get-Command Start-Service -ErrorAction SilentlyContinue)) {
         function global:Start-Service { param($Name) $null }
     }
+    if (-not (Get-Command Stop-Service -ErrorAction SilentlyContinue)) {
+        function global:Stop-Service {
+            param($Name, [switch]$Force, $ErrorAction,
+                [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null
+        }
+    }
     if (-not (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue)) {
         function global:Get-NetAdapter {
             param($Name, $ErrorAction, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
@@ -380,7 +387,11 @@ function Reset-TestState {
     $SCRIPT:CurrentStepTitle = $null
     $SCRIPT:_backupPending = [System.Collections.Generic.List[object]]::new()
     if ($SCRIPT:_backupLockStream) {
-        try { $SCRIPT:_backupLockStream.Dispose() } catch {}
+        try {
+            $SCRIPT:_backupLockStream.Dispose()
+        } catch {
+            Write-Debug "Ignoring test backup lock disposal failure: $($_.Exception.Message)"
+        }
         $SCRIPT:_backupLockStream = $null
     }
     $SCRIPT:_backupLockToken = $null

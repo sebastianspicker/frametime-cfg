@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/northclock-driver-protocol",
+    "crates/northclock-kmdf-driver",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"

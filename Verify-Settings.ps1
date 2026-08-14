@@ -16,6 +16,10 @@ if ($SmokeTest) {
     exit 0
 }
 
+if ($MyInvocation.InvocationName -ne ".") {
+    throw "Portable live execution is unavailable until a trusted installer or signed payload establishes the source identity."
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
@@ -398,7 +402,7 @@ function Invoke-VerifySettings {
     if (-not $compat.Supported) {
         Write-LogoBanner "Settings Verifier  ·  Read-Only Scan"
         Write-Host "  $([char]0x2139) $($compat.Message)" -ForegroundColor Cyan
-        Write-Host "  START.bat -> [6] remains the supported launcher for this verifier." -ForegroundColor DarkGray
+        Write-Host "  The portable verifier is unavailable; use an authenticated release." -ForegroundColor DarkGray
         Write-Blank
         return
     }
@@ -696,7 +700,7 @@ if ($counts.changedCount -gt 0 -or $counts.missingCount -gt 0) {
     }
     Write-Host ""
     Write-Host "  $([char]0x2139) What to do: Review the listed checks before deciding whether to re-run a step." -ForegroundColor Cyan
-    Write-Host "    Clear saved progress from START.bat only when you intend to re-run Phase 1." -ForegroundColor DarkGray
+    Write-Host "    Clear saved progress only from an authenticated release when you intend to re-run Phase 1." -ForegroundColor DarkGray
 } else {
     Write-Blank
     Write-Host "  $([char]0x2714) All checked settings match their expected values." -ForegroundColor Green

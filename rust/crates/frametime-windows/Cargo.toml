@@ -1,0 +1,28 @@
+[package]
+name = "frametime-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+qualified-shader-cache-delete = []
+
+[dependencies]
+frametime-core = { path = "../frametime-core" }
+frametime-driver = { path = "../frametime-driver" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+raw-cpuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["ApplicationModel", "Management_Deployment", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_Graphics_Dxgi", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Environment", "Win32_System_EventLog", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Ole", "Win32_System_Registry", "Win32_System_Variant", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_System_Wmi", "Win32_System_Rpc", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinHttp", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Security_Cryptography_Catalog", "Win32_Security_Cryptography_Sip", "Win32_Security_WinTrust", "Win32_UI_Shell", "Wdk_Graphics_Direct3D", "Wdk_System_SystemServices"] }
+
+[lints]
+workspace = true

@@ -17,6 +17,8 @@ if ($SmokeTest) {
     exit 0
 }
 
+throw "Portable live execution is unavailable until a trusted installer or signed payload establishes the source identity."
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity

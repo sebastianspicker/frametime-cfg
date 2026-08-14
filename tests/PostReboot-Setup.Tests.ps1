@@ -131,7 +131,7 @@ Describe "PostReboot-Setup.ps1 source-tree trust boundary" {
         $result = Test-PublishedRuntimePayloadBootstrap -RuntimeRoot $script:ProjectRoot
 
         $result.Valid | Should -Be $false
-        $result.Message | Should -Match "runtime-manifest.json is missing"
+        $result.Message | Should -Match "runtime root is outside the protected generation path"
     }
 }
 
@@ -1011,7 +1011,10 @@ Describe "PostReboot-Setup.ps1 final benchmark completion contract" {
         Mock Invoke-BenchmarkCapture { $null }
         Mock Get-BenchmarkHistory { @() }
         Mock Complete-Step {}
-        Mock Test-StepCompleted { $false }
+        Mock Test-StepCompleted {
+            param($phase, $stepNum)
+            return ($phase -eq 3 -and $stepNum -eq 1)
+        }
         Mock Remove-PhaseHandoff { [PSCustomObject]@{ Applied = $true; Message = "removed" } }
         Mock Restart-Computer {}
         Mock Remove-BackupLock {}

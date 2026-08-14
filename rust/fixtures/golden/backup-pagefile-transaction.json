@@ -1,0 +1,36 @@
+{
+  "created": "2026-08-10 10:00:00",
+  "entries": [
+    {
+      "type": "pagefile_transaction",
+      "step": "P1:8",
+      "timestamp": "2026-08-10T10:00:08.123+00:00",
+      "automaticManaged": false,
+      "targetPath": "C:\\Page Files\\pagefile.sys",
+      "targetExisted": true,
+      "settings": [
+        {
+          "path": "C:\\Page Files\\pagefile.sys",
+          "initialSize": 4096,
+          "maximumSize": 8192,
+          "futureSetting": "keep"
+        },
+        {
+          "path": "D:\\swapfile.sys",
+          "initialSize": 0,
+          "maximumSize": 0,
+          "providerExtension": {"origin": "CIM"}
+        }
+      ],
+      "futureTransaction": {"generation": 2}
+    },
+    {
+      "type": "future_pagefile_transaction",
+      "step": "P1:8",
+      "timestamp": "untrusted",
+      "nullablePayload": null,
+      "hostilePayload": {"paths": ["\\\\?\\C:\\pagefile.sys", "C:\\x\u202e.sys"]}
+    }
+  ],
+  "futureBackupRoot": {"retained": true}
+}

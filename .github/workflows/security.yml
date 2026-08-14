@@ -48,14 +48,14 @@ jobs:
           )
 
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
+            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
               echo "::error::Potential secret found matching pattern: $pattern"
               FOUND=$((FOUND + 1))
             fi
           done
 
           # Check for generic password/secret assignments
-          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
+          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
             echo "::error::Potential hardcoded credential assignment found"
             FOUND=$((FOUND + 1))
           fi
@@ -172,10 +172,24 @@ jobs:
               echo "::error::Network download primitive found in $launcher"
               FOUND=$((FOUND + 1))
             fi
+
+            if grep -Ein 'EnableDelayedExpansion' "$launcher"; then
+              echo "::error::Delayed expansion can corrupt or execute launcher path data in $launcher"
+              FOUND=$((FOUND + 1))
+            fi
+
+            if grep -Ein '\-Command.*%~(f|d|p|dp)0' "$launcher"; then
+              echo "::error::Filesystem path interpolated into executable PowerShell text in $launcher"
+              FOUND=$((FOUND + 1))
+            fi
           done
 
-          if ! grep -Fq 'frametime-gui.ps1' START-GUI.bat; then
-            echo "::error::START-GUI.bat no longer launches frametime-gui.ps1"
+          if ! grep -Fq 'portable WPF launcher is unavailable' START-GUI.bat; then
+            echo "::error::START-GUI.bat is missing the fail-closed portable boundary"
+            FOUND=$((FOUND + 1))
+          fi
+          if grep -Ein 'powershell|Verb[[:space:]]+RunAs|frametime-gui\.ps1' START-GUI.bat; then
+            echo "::error::START-GUI.bat must not start PowerShell from the portable tree"
             FOUND=$((FOUND + 1))
           fi
 

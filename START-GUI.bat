@@ -1,12 +1,8 @@
 @echo off
-:: frametime.cfg - GUI Launcher
-:: Elevates to administrator and launches the WPF dashboard
-
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    powershell -NoProfile -WindowStyle Hidden -Command ^
-        "Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','\"%~dp0frametime-gui.ps1\"') -Verb RunAs"
-    exit /b
-)
-
-powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0frametime-gui.ps1"
+setlocal EnableExtensions DisableDelayedExpansion
+title frametime.cfg
+echo.
+echo  The portable WPF launcher is unavailable.
+echo  No trusted installer or signed payload currently establishes source identity.
+echo  Use START.bat dry-run all or open demo\index.html for non-privileged review.
+exit /b 1

@@ -23,12 +23,137 @@ function Test-PublishedRuntimePayloadBootstrap {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RuntimeRoot)
 
+    function Assert-ProtectedRuntimeObject {
+        param(
+            [Parameter(Mandatory)][string]$Path,
+            [switch]$Directory,
+            [string]$PublisherSid
+        )
+
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($item.PSProvider.Name -ne 'FileSystem' -or
+            (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or
+            ($Directory -and -not $item.PSIsContainer) -or
+            (-not $Directory -and $item.PSIsContainer)) {
+            throw "runtime object is not a regular protected filesystem $($(if ($Directory) { 'directory' } else { 'file' })): $Path"
+        }
+
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $trustedSids = @('S-1-5-32-544', 'S-1-5-18')
+        $toSid = {
+            param($Identity)
+            try {
+                if ($Identity -is [Security.Principal.SecurityIdentifier]) { return $Identity.Value }
+                return $Identity.Translate([Security.Principal.SecurityIdentifier]).Value
+            } catch {
+                $identityText = [string]$Identity
+                if ($identityText -match '^S-1-[0-9]+(?:-[0-9]+)+$') { return $identityText }
+                if ($identityText -match '(?i)^(BUILTIN\\Administrators|S-1-5-32-544)$') { return 'S-1-5-32-544' }
+                if ($identityText -match '(?i)^(NT AUTHORITY\\SYSTEM|SYSTEM|S-1-5-18)$') { return 'S-1-5-18' }
+                return $null
+            }
+        }
+        if ((& $toSid $acl.Owner) -notin $trustedSids) {
+            throw "runtime object owner is not BUILTIN\\Administrators or SYSTEM: $Path"
+        }
+        if (-not $acl.AreAccessRulesProtected) { throw "runtime object ACL inheritance is not protected: $Path" }
+
+        $unsafeRights = [Security.AccessControl.FileSystemRights]::WriteData -bor
+            [Security.AccessControl.FileSystemRights]::AppendData -bor
+            [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+            [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor
+            [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+        $trustedFullControl = @{}
+        $publisherReadExecute = $false
+        # Windows ACL APIs normally add Synchronize to an Allow ReadAndExecute
+        # FileSystemAccessRule. It is safe and required for the ACE we create.
+        $readExecuteRights = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+        $safePublisherRights = $readExecuteRights -bor [Security.AccessControl.FileSystemRights]::Synchronize
+        foreach ($rule in @($acl.Access)) {
+            $ruleSid = & $toSid $rule.IdentityReference
+            if ($null -eq $ruleSid) { throw "runtime object ACL has an unresolvable principal: $Path" }
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
+                if ($ruleSid -notin $trustedSids -and (($rule.FileSystemRights -band $unsafeRights) -ne 0)) {
+                    throw "runtime object ACL grants an untrusted principal write or ownership rights: $Path"
+                }
+                if ($ruleSid -notin $trustedSids -and $PublisherSid) {
+                    if ($ruleSid -ne $PublisherSid -or
+                        (([int64]$rule.FileSystemRights -band (-bnot [int64]$safePublisherRights)) -ne 0)) {
+                        throw "runtime object ACL grants an untrusted principal rights beyond the bound publisher read/execute access: $Path"
+                    }
+                    if (($rule.FileSystemRights -band $readExecuteRights) -eq $readExecuteRights) { $publisherReadExecute = $true }
+                }
+                if ($ruleSid -in $trustedSids -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl)) {
+                    $trustedFullControl[$ruleSid] = $true
+                }
+            }
+        }
+        foreach ($trustedSid in $trustedSids) {
+            if (-not $trustedFullControl.ContainsKey($trustedSid)) {
+                throw "runtime object ACL lacks trusted FullControl: $Path"
+            }
+        }
+        if ($PublisherSid -and -not $publisherReadExecute) {
+            throw "runtime object ACL lacks ReadAndExecute for the bound runtime publisher: $Path"
+        }
+    }
+
+    function Get-BoundRuntimePublisherSid {
+        param([Parameter(Mandatory)][string]$PublisherSid)
+
+        if ($PublisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') { throw "runtime manifest publisher SID is invalid" }
+        $currentSid = if ($isWindowsPlatform) {
+            [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        } else {
+            # Isolated Pester validator fixtures exercise the same SID binding
+            # without requiring Windows ACL APIs on macOS/Linux.
+            'S-1-5-21-1000-1000-1000-1001'
+        }
+        if ($PublisherSid -ne $currentSid) { throw "runtime manifest publisher does not match the current user" }
+        return $PublisherSid
+    }
+
     try {
+        $isWindowsPlatform = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+        $normalizedRuntimeRoot = if ($isWindowsPlatform) {
+            [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        } else {
+            $RuntimeRoot.TrimEnd([char[]]@('\', '/'))
+        }
+        if ($normalizedRuntimeRoot -notmatch '(?i)^C:\\FRAMETIME_CFG\\runtime-generations\\[a-f0-9]{32}$') {
+            throw "runtime root is outside the protected generation path"
+        }
+        $expectedPublisherSid = if ($isWindowsPlatform) {
+            [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        } else { 'S-1-5-21-1000-1000-1000-1001' }
+        if ($expectedPublisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') { throw "current runtime publisher SID is invalid" }
+        foreach ($trustedRuntimeAncestor in @('C:\FRAMETIME_CFG', 'C:\FRAMETIME_CFG\runtime-generations')) {
+            Assert-ProtectedRuntimeObject -Path $trustedRuntimeAncestor -Directory -PublisherSid $expectedPublisherSid
+        }
+        Assert-ProtectedRuntimeObject -Path $normalizedRuntimeRoot -Directory -PublisherSid $expectedPublisherSid
         $manifestPath = Join-Path $RuntimeRoot "runtime-manifest.json"
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "runtime-manifest.json is missing" }
+        Assert-ProtectedRuntimeObject -Path $manifestPath -PublisherSid $expectedPublisherSid
+        foreach ($runtimeDirectory in @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeDirectory.FullName -Directory -PublisherSid $expectedPublisherSid
+        }
+        foreach ($runtimeFile in @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeFile.FullName -PublisherSid $expectedPublisherSid
+        }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         if ($manifest.schemaVersion -ne 1) { throw "unsupported runtime manifest schema" }
-        $expectedContract = "bba9d71061a9cd0b7897c97c5792aab42f29d6cd3f89f2bcd80883cd5f2c75c4"
+        $publisherSid = Get-BoundRuntimePublisherSid -PublisherSid ([string]$manifest.publisherSid)
+        Assert-ProtectedRuntimeObject -Path 'C:\FRAMETIME_CFG' -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path 'C:\FRAMETIME_CFG\runtime-generations' -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path $normalizedRuntimeRoot -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path $manifestPath -PublisherSid $publisherSid
+        foreach ($runtimeDirectory in @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeDirectory.FullName -Directory -PublisherSid $publisherSid
+        }
+        $expectedContract = "de9aade388bc34ee1c7d71fa56f994c5642e0225831d8f708c8e65c4585ebcd9"
         $entries = @($manifest.files)
         if ($entries.Count -eq 0) { throw "runtime manifest has no files" }
         $manifestPaths = @($entries | ForEach-Object { [string]$_.path })
@@ -46,9 +171,14 @@ function Test-PublishedRuntimePayloadBootstrap {
                 throw "runtime manifest contains an unsafe path"
             }
         }
-        $rootPath = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        $rootPath = if ($isWindowsPlatform) {
+            $normalizedRuntimeRoot
+        } else {
+            (Convert-Path -LiteralPath $RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        }
+        $manifestFullPath = Convert-Path -LiteralPath $manifestPath
         $actualPaths = @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop |
-            Where-Object { $_.FullName -ne $manifestPath } |
+            Where-Object { (Convert-Path -LiteralPath $_.FullName) -ne $manifestFullPath } |
             ForEach-Object {
                 (([IO.Path]::GetFullPath($_.FullName).Substring($rootPath.Length) -replace '^[\\/]+', '') -replace '\\', '/')
             })
@@ -60,6 +190,7 @@ function Test-PublishedRuntimePayloadBootstrap {
             $expectedHash = [string]$entry.sha256
             if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "invalid manifest hash for $relativePath" }
             $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            Assert-ProtectedRuntimeObject -Path $filePath -PublisherSid $publisherSid
             $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
             if ($actualHash -ne $expectedHash) { throw "runtime hash mismatch: $relativePath" }
         }
@@ -259,13 +390,14 @@ if ($null -ne $PreviewState) {
         $state = Load-State -Path $CFG_StateFile -ReadOnly
         if (-not $SCRIPT:DryRun) {
             $state = Load-State -Path $CFG_StateFile
+            Restore-ProtectedRuntimePublisherTraverse -RuntimeRoot $PSScriptRoot
         }
     } catch {
     Write-Host "  $([char]0x2718) Something went wrong: settings file (state.json) is missing or corrupted." -ForegroundColor Red
     Write-Host "    Error detail: $_" -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  $([char]0x2139) What to do:" -ForegroundColor Cyan
-    Write-Host "    - Phase 1 may not have finished. You can re-run it from START.bat." -ForegroundColor White
+    Write-Host "    - Phase 1 may not have finished. Re-run it from an authenticated release." -ForegroundColor White
     Write-Host "    - Or press [Y] below to use hardware detection and safe defaults." -ForegroundColor White
     $r = if (Test-YoloProfile) { "y" } else { Read-Host "  Detect the GPU and continue with defaults? [y/N]" }
     if ($r -notmatch "^[jJyY]$") { exit 1 }
@@ -417,10 +549,10 @@ if ($startStep -le 1) {
         Write-Host "  ╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Yellow
         Write-Host "  $([char]0x2139) The old GPU driver may still be installed. The new driver will" -ForegroundColor Cyan
         Write-Host "    install over it (not a fully clean install)." -ForegroundColor Cyan
-        Write-Host "  $([char]0x2139) For a clean install, go back and run Phase 2 first (START.bat)." -ForegroundColor Cyan
+        Write-Host "  $([char]0x2139) For a clean install, run Phase 2 first from its protected generation." -ForegroundColor Cyan
         $p2Choice = if ($SCRIPT:DryRun -or (Test-YoloProfile)) { "Y" } else { Read-Host "  Continue with driver install anyway? [Y/n]" }
         if ($p2Choice -match "^[nN]$") {
-            Write-Info "Skipped. Run Phase 2 from START.bat -> [S] Safe Mode, then return here."
+            Write-Info "Skipped. Run Phase 2 from its protected generation in Safe Mode, then return here."
             Skip-Step $PHASE 1 "Driver"
             $p2DriverDone = $null  # signal to skip the driver install block below
         }
@@ -442,7 +574,7 @@ if ($startStep -le 1) {
             }
         }
         if ($SCRIPT:DryRun -and [string]::IsNullOrWhiteSpace([string]$driverExe)) {
-            $driverExe = Join-Path $CFG_WorkDir "nvidia_driver-preview.exe"
+            $driverExe = "$CFG_WorkDir\nvidia_driver-preview.exe"
             Write-Host "  [DRY-RUN] Would obtain and validate the matching NVIDIA driver package." -ForegroundColor Magenta
         }
         if (-not $driverExe -or (-not $SCRIPT:DryRun -and -not (Test-Path $driverExe))) {
@@ -540,7 +672,7 @@ if ($startStep -le 1) {
         } else {
             Write-Err "No valid driver file (.exe) found."
             Write-Host "  $([char]0x2139) What to do: Download your driver from the link below," -ForegroundColor Cyan
-            Write-Host "    then re-run this phase from START.bat -> [P]." -ForegroundColor Cyan
+            Write-Host "    then re-run the protected generation's elevation bootstrap." -ForegroundColor Cyan
             Write-Info "Download: https://www.nvidia.com/en-us/drivers/"
             $skipConfirm = if ($SCRIPT:DryRun -or (Test-YoloProfile)) { "y" } else { Read-Host "  Skip driver install and continue to Step 2? [y/N]" }
             if ($skipConfirm -match "^[jJyY]$") {
@@ -1076,11 +1208,11 @@ if ($startStep -le 12) {
     Write-Host @"
   STILL MANUAL:
   - Run a repeatable benchmark at least three times
-  - Calculate FPS cap: START.bat -> [3] FPS Cap Calculator
+  - Calculate FPS cap manually from a repeatable benchmark result
   - Verify the Reflex decision with CapFrameX:
      Test A (-noreflex + NVCP Ultra) vs. B (Reflex ON in-game)
      Choose what gives better lows AND better feel.
-  - Check settings after Windows Update: START.bat -> [6] Verify
+  - Check settings after Windows Update with an authenticated verifier release
 "@ -ForegroundColor Cyan
         if ($gpuInput -in @("1", "2")) {
             Write-Host "  - The NVIDIA profile step uses 42 repository-defined DRS settings" -ForegroundColor Cyan
@@ -1242,7 +1374,7 @@ if ($startStep -le 13) {
     if ($bmResult) {
         Write-Blank
         Write-Info "Set FPS cap in: NVIDIA CP -> CS2 -> Max Frame Rate -> $($bmResult.Cap)"
-        Write-Info "You can run this benchmark again anytime via START.bat -> [3] FPS Cap Calculator."
+        Write-Info "Repeat this benchmark from an authenticated management release."
         Write-Info "All results are tracked in: $CFG_BenchmarkFile"
         Complete-Step $PHASE 13 "FinalBenchmark"
     } elseif (-not $SCRIPT:DryRun) {

@@ -1,0 +1,33 @@
+{
+  "Version": 1,
+  "Runs": [
+    {
+      "RunId": "00000000-0000-0000-0000-000000000001",
+      "Kind": "baseline",
+      "Timestamp": "2026-08-10 11:15:00",
+      "AdapterName": "Ethernet",
+      "AdapterType": "Physical / wired",
+      "DnsProvider": "Cloudflare",
+      "DnsServers": ["1.1.1.1", "1.0.0.1"],
+      "Disclaimer": "Valve Region Latency Diagnostic is a route-quality proxy, not a guaranteed in-match CS2 ping.",
+      "Results": [
+        {
+          "TargetLabel": "Frankfurt",
+          "ResolvedEndpoint": "192.0.2.10",
+          "ProtocolUsed": "ICMP",
+          "SampleCount": 3,
+          "SuccessfulSamples": 3,
+          "MinRttMs": 12.1,
+          "MedianRttMs": 12.5,
+          "AvgRttMs": 12.8,
+          "TimeoutCount": 0,
+          "FallbackUsed": false,
+          "Notes": "fixture",
+          "Provenance": "fixture"
+        }
+      ],
+      "FutureRunField": null
+    }
+  ],
+  "FutureHistoryField": {"retained": true}
+}

@@ -1,0 +1,15 @@
+{
+  "phase": 2,
+  "lastCompletedStep": 3,
+  "lastSkippedStep": 2,
+  "completedSteps": ["P1:1", "P2:3"],
+  "skippedSteps": ["P1:2"],
+  "timestamps": {
+    "1-1": "2026-08-10 10:00:00",
+    "2-3": "2026-08-10 10:05:00"
+  },
+  "futureProgress": {
+    "attempt": 4
+  },
+  "nullableProgress": null
+}

@@ -91,9 +91,10 @@ Windows configuration interface instead of assuming a generic default.
 
 ## Starting a restore
 
-`START.bat` option `[7] Restore / Rollback` groups records by step and offers a
-single-step or all-recorded restore. The GUI Recovery task presents the same
-step groups and enables restore after a row is selected.
+Portable restore entrypoints are unavailable until source authentication is
+established. An already-published protected runtime generation remains usable
+for its phase-specific recovery path; do not invoke mutable portable restore
+code from an elevated shell.
 
 Both paths operate on `C:\FRAMETIME_CFG\backup.json`. Restore commands can fail
 when hardware, drivers, services, plans, or adapter identities have changed

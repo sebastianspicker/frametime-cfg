@@ -261,7 +261,7 @@ if ($startStep -le 6) {
         -Risk "MODERATE" -Depth "REGISTRY" `
         -Improvement "Applies the tiered repository power policy and preserves the previous active-plan identity" `
         -SideEffects "Can increase idle power and temperature. DC and battery settings are not changed." `
-        -Undo "powercfg /setactive <original GUID> (auto-backed up) or START.bat [7] Restore/Rollback" `
+        -Undo "powercfg /setactive <original GUID> (auto-backed up) or authenticated Restore/Rollback" `
         -Action {
             # Backup-PowerPlan flushes and verifies the original scheme before
             # this action is allowed to create or activate any replacement.
@@ -311,7 +311,7 @@ if ($startStep -le 6) {
                 Write-Host "  └──────────────────────────────────────────────────────────────┘" -ForegroundColor Green
                 Write-Blank
                 Write-Info "Undo: Control Panel -> Power Options -> select original plan"
-                Write-Info "      or START.bat [7] Restore/Rollback -> Power Plan"
+                Write-Info "      or use Restore/Rollback from an authenticated release"
                 if ($powerPlanResult.CanCompleteStep) {
                     Complete-Step $PHASE 6 "PowerPlan"
                 }

@@ -163,19 +163,22 @@ Describe "public entrypoints E2E smoke" {
 
 Describe "public full DRY-RUN E2E" {
 
-    It "routes START.bat dry-run before its administrator gate" {
+    It "routes START.bat dry-run before its fail-closed live boundary" {
         $launcher = Get-Content -LiteralPath (Join-Path $script:ProjectRoot "START.bat") -Raw
         $dryRoute = $launcher.IndexOf('if /i "%~1"=="dry-run"', [StringComparison]::OrdinalIgnoreCase)
-        $adminGate = $launcher.IndexOf('net session', [StringComparison]::OrdinalIgnoreCase)
+        $liveBoundary = $launcher.IndexOf('Live execution from a portable source tree is unavailable', [StringComparison]::OrdinalIgnoreCase)
 
         $dryRoute | Should -BeGreaterOrEqual 0
-        $adminGate | Should -BeGreaterThan $dryRoute
+        $liveBoundary | Should -BeGreaterThan $dryRoute
         $launcher.Substring($dryRoute, [Math]::Min(180, $launcher.Length - $dryRoute)) | Should -Match '(?i)goto\s+:fulldryrun'
         $launcher | Should -Match '(?im)^:fulldryrun\s*$'
         $launcher | Should -Match '(?im)Run-Optimize\.ps1" -FullDryRun -DryRunGpu'
         $launcher | Should -Match '(?i)-NonInteractive'
         $launcher | Should -Match '(?im)^:fulldryrunall\s*$'
         $launcher | Should -Match '(?i)for\s+%%G\s+in\s+\(1\s+2\s+3\s+4\)'
+        $launcher | Should -Match '(?i)DisableDelayedExpansion'
+        $launcher | Should -Not -Match '(?i)EnableDelayedExpansion'
+        $launcher | Should -Not -Match '(?i)\-Command\b|Verb\s+RunAs'
         $launcher | Should -Not -Match '(?<!\r)\n' -Because "cmd.exe launchers require CRLF line endings"
     }
 

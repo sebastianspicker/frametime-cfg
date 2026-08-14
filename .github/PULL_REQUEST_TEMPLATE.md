@@ -18,6 +18,8 @@
 
 - [ ] Tested on a real system (not just theory)
 - [ ] CI `PSScriptAnalyzer` passes clean
+- [ ] Native Rust source gates pass when `rust/` changes
+- [ ] Driver Foundry Windows tests pass when its workspace changes
 - [ ] New state-changing paths have a useful Full DRY-RUN plan and focused no-mutation test
 - [ ] `START.bat dry-run all` exits cleanly with no preview issues and unchanged suite state (if runtime behavior changed)
 - [ ] Backup/restore handles the new changes

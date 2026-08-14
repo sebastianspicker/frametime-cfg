@@ -16,6 +16,8 @@ $CFG_BackupLockFile = "$CFG_WorkDir\backup.lock"
 # restore functions. Pester and GUI runspaces can introduce child scopes, so
 # looking up CFG_Autostart_Remove later is not reliable.
 $SCRIPT:CFG_AutostartRestoreAllowlist = @($CFG_Autostart_Remove)
+$SCRIPT:CFG_SuiteQosPolicyNames = @('CS2_UDP_Ports', 'CS2_App')
+$SCRIPT:CFG_SuiteUroStates = @('enabled', 'disabled')
 # Sentinel used when DRS profile was found via app registration rather than by name.
 # Must match between Backup-DrsSettings (write) and Restore-DrsSettings (read).
 $SCRIPT:DRS_FOUND_VIA_APP = "(found via cs2.exe)"
@@ -83,7 +85,9 @@ function Initialize-Backup {
         if (-not (Test-Path $CFG_BackupFile)) {
             New-BackupFile
         } else {
-            Set-SecureAcl -Path $CFG_BackupFile -Required
+            # Existing backup bytes are authority for rollback. Never repair an
+            # untrusted legacy file and then treat its contents as trustworthy.
+            [void](Assert-TrustedExistingControlFile -Path $CFG_BackupFile)
         }
     } catch {
         # Initialization owns the lock at this point.  Do not strand it when
@@ -329,6 +333,9 @@ function Get-BackupDataRaw {
     <#  Reads backup.json from disk without flushing the pending buffer.
         Internal use only - callers outside this module should use Get-BackupData.  #>
     if (-not (Test-Path $CFG_BackupFile)) { Initialize-Backup }
+    # Keep the validation immediately adjacent to the authority read. Do not
+    # let the corruption recovery path copy or replace an untrusted object.
+    [void](Assert-TrustedExistingControlFile -Path $CFG_BackupFile)
     try {
         $raw = Get-Content $CFG_BackupFile -Raw -ErrorAction Stop | ConvertFrom-Json
         if ($null -eq $raw.entries) { $raw | Add-Member -NotePropertyName "entries" -NotePropertyValue @() -Force }
@@ -809,6 +816,7 @@ function Get-RecordedSuiteOwnedPowerPlanGuids {
     $guids = [System.Collections.Generic.List[string]]::new()
     if (Test-Path -LiteralPath $CFG_StateFile) {
         try {
+            [void](Assert-TrustedExistingControlFile -Path $CFG_StateFile)
             $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             $candidates = @()
             if ($state.PSObject.Properties['suiteOwnedPowerPlanGuids']) {
@@ -892,6 +900,7 @@ function Set-RecordedSuiteOwnedPowerPlanGuids {
 
     if (-not (Test-Path -LiteralPath $CFG_StateFile)) { return }
     if (-not $PSCmdlet.ShouldProcess($CFG_StateFile, "Persist remaining suite-owned power-plan identities")) { return }
+    [void](Assert-TrustedExistingControlFile -Path $CFG_StateFile)
     $state = Get-Content -LiteralPath $CFG_StateFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
     $validGuids = @($OwnedGuids | Where-Object {
         $_ -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
@@ -1066,23 +1075,136 @@ function Backup-NicAdapterProperty {
 }
 
 function Backup-QosAndUro {
-    <#  Records existing QoS policy names and URO state before modification.
-        Entries are buffered in memory and flushed at step boundaries.  #>
+    <#  Records the two suite QoS policies and URO state before modification.
+        The persisted definition is deliberately closed over the exact policy
+        shapes this suite creates.  A same-named foreign policy is not safe to
+        replace because it cannot be restored losslessly, so capture fails
+        before the caller mutates it. #>
     param(
-        [string[]]$PolicyNames,
+        [object[]]$Policies,
         [string]$UroState,
         [string]$StepTitle
     )
     if ($SCRIPT:DryRun) { return }
+
+    $normalizedUroState = ([string]$UroState).ToLowerInvariant()
+    if ($normalizedUroState -ne 'n/a' -and $normalizedUroState -notin $SCRIPT:CFG_SuiteUroStates) {
+        throw "QoS/URO backup blocked: unsupported URO state '$UroState'."
+    }
+
+    $policyStates = [System.Collections.Generic.List[object]]::new()
+    foreach ($policyName in $SCRIPT:CFG_SuiteQosPolicyNames) {
+        $existing = @($Policies | Where-Object { $_ -and ([string]$_.Name) -eq $policyName } | Select-Object -First 1)
+        $existed = $existing.Count -gt 0
+        if ($existed -and -not (Test-SuiteQosPolicyDefinition -Name $policyName -Policy $existing[0])) {
+            throw "QoS backup blocked: existing policy '$policyName' is outside the supported lossless restore definition."
+        }
+        $policyStates.Add([PSCustomObject]@{
+            name = $policyName
+            originalExisted = $existed
+            originalDefinition = if ($existed) { Get-SuiteQosPolicyDefinition -Name $policyName } else { $null }
+        }) | Out-Null
+    }
+
     $entry = [ordered]@{
-        type        = "qos_uro"
-        policies    = $PolicyNames
-        uroState    = $UroState
-        step        = $StepTitle
-        timestamp   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        type                = 'qos_uro'
+        contractVersion     = 2
+        suiteManagedPolicies = @($SCRIPT:CFG_SuiteQosPolicyNames)
+        policyStates        = @($policyStates)
+        uroState            = $normalizedUroState
+        step                = $StepTitle
+        timestamp           = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     }
     $SCRIPT:_backupPending.Add($entry)
-    Write-DebugLog "Backup-QosAndUro: policies=[$($PolicyNames -join ', ')] uro=$UroState"
+    Write-DebugLog "Backup-QosAndUro: captured fixed suite policies and uro=$normalizedUroState"
+}
+
+function Get-SuiteQosPolicyDefinition {
+    param([Parameter(Mandatory)][string]$Name)
+
+    switch ($Name) {
+        'CS2_UDP_Ports' {
+            return [PSCustomObject]@{
+                ipProtocolMatchCondition = 'UDP'
+                ipDstPortStartMatchCondition = 27015
+                ipDstPortEndMatchCondition = 27036
+                dscpAction = 46
+                networkProfile = 'All'
+            }
+        }
+        'CS2_App' {
+            return [PSCustomObject]@{
+                appPathNameMatchCondition = '*\cs2.exe'
+                dscpAction = 46
+                networkProfile = 'All'
+            }
+        }
+        default { throw "Unsupported suite QoS policy '$Name'." }
+    }
+}
+
+function Get-QosPolicyPropertyValue {
+    param($Policy, [string[]]$Names)
+
+    foreach ($propertyName in $Names) {
+        $property = $Policy.PSObject.Properties[$propertyName]
+        if ($null -ne $property) { return $property.Value }
+    }
+    return $null
+}
+
+function Test-SuiteQosPolicyDefinition {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Policy)
+
+    if ($Name -notin $SCRIPT:CFG_SuiteQosPolicyNames) { return $false }
+    $recordedName = $Policy.PSObject.Properties['Name']
+    if ($recordedName -and ([string]$recordedName.Value) -ne $Name) { return $false }
+    $expected = Get-SuiteQosPolicyDefinition -Name $Name
+    $actualProfile = [string](Get-QosPolicyPropertyValue -Policy $Policy -Names @('NetworkProfile'))
+    $actualDscp = Get-QosPolicyPropertyValue -Policy $Policy -Names @('DSCPAction', 'DSCPValue')
+    if ($actualProfile -ne $expected.networkProfile -or [string]$actualDscp -ne [string]$expected.dscpAction) { return $false }
+
+    if ($Name -eq 'CS2_UDP_Ports') {
+        return ([string](Get-QosPolicyPropertyValue -Policy $Policy -Names @('IPProtocolMatchCondition', 'IPProtocol')) -eq $expected.ipProtocolMatchCondition -and
+            [string](Get-QosPolicyPropertyValue -Policy $Policy -Names @('IPDstPortStartMatchCondition', 'IPDstPortStart')) -eq [string]$expected.ipDstPortStartMatchCondition -and
+            [string](Get-QosPolicyPropertyValue -Policy $Policy -Names @('IPDstPortEndMatchCondition', 'IPDstPortEnd')) -eq [string]$expected.ipDstPortEndMatchCondition)
+    }
+    return ([string](Get-QosPolicyPropertyValue -Policy $Policy -Names @('AppPathNameMatchCondition', 'AppPathName')) -eq $expected.appPathNameMatchCondition)
+}
+
+function Test-QosUroRestoreEntry {
+    param([Parameter(Mandatory)]$Entry)
+
+    $recordedNames = @($Entry.suiteManagedPolicies | ForEach-Object { [string]$_ } | Sort-Object)
+    $expectedNames = @($SCRIPT:CFG_SuiteQosPolicyNames | Sort-Object)
+    if ($Entry.contractVersion -ne 2 -or $recordedNames.Count -ne $expectedNames.Count -or
+        (($recordedNames -join '|') -ne ($expectedNames -join '|')) -or
+        ([string]$Entry.uroState).ToLowerInvariant() -notin @('n/a', 'enabled', 'disabled')) { return $false }
+    $states = @($Entry.policyStates)
+    if ($states.Count -ne $SCRIPT:CFG_SuiteQosPolicyNames.Count) { return $false }
+    foreach ($policyName in $SCRIPT:CFG_SuiteQosPolicyNames) {
+        $state = @($states | Where-Object { $_ -and $_.name -eq $policyName })
+        if ($state.Count -ne 1 -or $state[0].originalExisted -isnot [bool]) { return $false }
+        if ($state[0].originalExisted) {
+            if (-not $state[0].originalDefinition -or -not (Test-SuiteQosPolicyDefinition -Name $policyName -Policy $state[0].originalDefinition)) { return $false }
+        } elseif ($null -ne $state[0].originalDefinition) { return $false }
+    }
+    return $true
+}
+
+function New-SuiteQosPolicyFromDefinition {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Definition)
+
+    if (-not (Test-SuiteQosPolicyDefinition -Name $Name -Policy $Definition)) {
+        throw "QoS restore rejected an unsupported definition for '$Name'."
+    }
+    if ($Name -eq 'CS2_UDP_Ports') {
+        New-NetQosPolicy -Name $Name -IPProtocolMatchCondition UDP -IPDstPortStartMatchCondition 27015 `
+            -IPDstPortEndMatchCondition 27036 -DSCPAction 46 -NetworkProfile All -ErrorAction Stop | Out-Null
+        return
+    }
+    New-NetQosPolicy -Name $Name -AppPathNameMatchCondition '*\cs2.exe' -DSCPAction 46 `
+        -NetworkProfile All -ErrorAction Stop | Out-Null
 }
 
 function Backup-DefenderExclusions {
@@ -1370,7 +1492,7 @@ function Show-BackupSummary {
                 "drs"           { "DRS  profile '$($e.profile)' - $($e.settings.Count) setting(s)" }
                 "scheduledtask" { "TASK $($e.taskName) $(if($e.existed){'(existed before)'}else{'(created by us)'})" }
                 "nic_adapter"   { "NIC  $($e.adapterName): $($e.propertyName) = $($e.originalValue)" }
-                "qos_uro"       { "QOS  policies: [$($e.policies -join ', ')] | URO: $($e.uroState)" }
+                "qos_uro"       { "QOS  suite policies: [$($e.suiteManagedPolicies -join ', ')] | URO: $($e.uroState)" }
                 "defender"      { "DEF  $(if($e.exclusionPaths){@($e.exclusionPaths).Count}else{0}) path(s), $(if($e.exclusionProcesses){@($e.exclusionProcesses).Count}else{0}) process(es)" }
                 "pagefile"      { "PGF  auto=$($e.automaticManaged) init=$($e.initialSize)MB max=$($e.maximumSize)MB" }
                 "dns"           { "DNS  $($e.adapterName): [$($e.originalDnsServers -join ', ')]" }
@@ -1574,11 +1696,39 @@ function Restore-StepChanges {
                     }
                     Write-OK "Restored power plan: $($e.originalName) ($($e.originalGuid))"
 
-                    $recordedOwnedGuids = @()
+                    # A backup entry alone is not authority to delete a plan:
+                    # it is user-editable JSON.  Only the exact intersection
+                    # with separately persisted state ownership is authenticated.
+                    $backupOwnedGuids = @()
                     if ($e.PSObject.Properties['suiteOwnedGuids']) {
-                        $recordedOwnedGuids += @($e.suiteOwnedGuids)
+                        $backupOwnedGuids += @($e.suiteOwnedGuids)
                     }
-                    $recordedOwnedGuids += @(Get-RecordedSuiteOwnedPowerPlanGuids)
+                    $backupOwnedGuids = @($backupOwnedGuids | Where-Object {
+                        [string]$_ -match '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$'
+                    } | ForEach-Object { ([string]$_).ToLowerInvariant() } | Select-Object -Unique)
+                    $stateOwnedGuids = @(Get-RecordedSuiteOwnedPowerPlanGuids)
+                    $unauthenticatedGuids = @($backupOwnedGuids | Where-Object { $_ -notin $stateOwnedGuids })
+                    if ($unauthenticatedGuids.Count -gt 0) {
+                        Write-Warn "Power-plan restore rejected backup-only ownership GUID(s): $($unauthenticatedGuids -join ', ')."
+                        $restoreFail++
+                        break
+                    }
+                    $recordedOwnedGuids = @($backupOwnedGuids | Where-Object { $_ -in $stateOwnedGuids })
+                    # State-only identities are never deleted by this restore
+                    # point.  An absent identity can, however, be removed from
+                    # stale bookkeeping after an authoritative inventory. This
+                    # makes a retry converge if deletion succeeded but the
+                    # following state write failed.
+                    $stateOnlyGuids = @($stateOwnedGuids | Where-Object { $_ -notin $recordedOwnedGuids })
+                    $retainedStateOnlyGuids = [System.Collections.Generic.List[string]]::new()
+                    foreach ($stateOnlyGuid in $stateOnlyGuids) {
+                        $presence = Get-PowerPlanGuidPresence -Guid $stateOnlyGuid
+                        if ($presence.Verified -and -not $presence.Present) {
+                            Write-DebugLog "Removed stale suite-owned power-plan bookkeeping for absent plan: $stateOnlyGuid"
+                        } else {
+                            $retainedStateOnlyGuids.Add($stateOnlyGuid)
+                        }
+                    }
                     $remainingOwnedGuids = [System.Collections.Generic.List[string]]::new()
                     foreach ($planGuid in @($recordedOwnedGuids | Select-Object -Unique)) {
                         if ($planGuid -notmatch '^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$' -or
@@ -1600,7 +1750,7 @@ function Restore-StepChanges {
                     # persistence write. If state persistence fails, the retained
                     # backup entry still contains only plans verified to remain.
                     $e | Add-Member -NotePropertyName suiteOwnedGuids -NotePropertyValue @($remainingOwnedGuids) -Force
-                    try { Set-RecordedSuiteOwnedPowerPlanGuids -OwnedGuids @($remainingOwnedGuids) } catch {
+                    try { Set-RecordedSuiteOwnedPowerPlanGuids -OwnedGuids @($retainedStateOnlyGuids + $remainingOwnedGuids) } catch {
                         Write-Warn "Could not update suite-owned power-plan state after restore: $_"
                         $restoreFail++
                         break
@@ -1738,14 +1888,38 @@ function Restore-StepChanges {
                     }
                 }
                 "qos_uro" {
-                    # Remove QoS policies that were created (only if they still exist)
+                    # backup.json is untrusted.  Validate the complete versioned
+                    # record before changing either policy or URO, and retain it
+                    # untouched if it is legacy, incomplete, or tampered.
                     $qosFailed = $false
-                    foreach ($policyName in $e.policies) {
+                    if (-not (Test-QosUroRestoreEntry -Entry $e)) {
+                        Write-Warn 'QoS/URO restore rejected an unsupported or tampered backup definition.'
+                        $restoreFail++
+                        break
+                    }
+                    # Preflight every managed identity before deleting any one
+                    # of them, so a changed policy cannot cause a half-restore.
+                    foreach ($policyName in $SCRIPT:CFG_SuiteQosPolicyNames) {
+                        try {
+                            $existingPolicy = Get-NetQosPolicy -Name $policyName -ErrorAction SilentlyContinue
+                            if ($existingPolicy -and -not (Test-SuiteQosPolicyDefinition -Name $policyName -Policy $existingPolicy)) {
+                                Write-Warn "QoS restore refused to remove '$policyName' because its current definition is not suite-managed."
+                                $qosFailed = $true
+                                break
+                            }
+                        } catch {
+                            Write-Warn "Could not inspect QoS policy '$policyName' before restore: $_"
+                            $qosFailed = $true
+                            break
+                        }
+                    }
+                    foreach ($policyName in $SCRIPT:CFG_SuiteQosPolicyNames) {
+                        if ($qosFailed) { break }
                         try {
                             $existingPolicy = Get-NetQosPolicy -Name $policyName -ErrorAction SilentlyContinue
                             if ($existingPolicy) {
                                 Remove-NetQosPolicy -Name $policyName -Confirm:$false -ErrorAction Stop
-                                Write-OK "Removed QoS policy: $policyName"
+                                Write-OK "Removed suite-managed QoS policy: $policyName"
                             } else {
                                 Write-DebugLog "QoS policy '$policyName' does not exist - nothing to remove"
                             }
@@ -1754,8 +1928,21 @@ function Restore-StepChanges {
                             $qosFailed = $true
                         }
                     }
+                    if (-not $qosFailed) {
+                        foreach ($policyState in @($e.policyStates)) {
+                            if (-not $policyState.originalExisted) { continue }
+                            try {
+                                New-SuiteQosPolicyFromDefinition -Name $policyState.name -Definition $policyState.originalDefinition
+                                Write-OK "Restored original QoS policy: $($policyState.name)"
+                            } catch {
+                                Write-Warn "Could not restore original QoS policy '$($policyState.name)': $_"
+                                $qosFailed = $true
+                                break
+                            }
+                        }
+                    }
                     # Restore URO state
-                    if ($e.uroState -and $e.uroState -ne "n/a") {
+                    if (-not $qosFailed -and $e.uroState -ne 'n/a') {
                         try {
                             $uroOut = netsh int udp set global uro=$($e.uroState) 2>&1
                             if ($LASTEXITCODE -eq 0) {

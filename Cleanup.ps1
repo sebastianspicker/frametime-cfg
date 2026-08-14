@@ -23,6 +23,8 @@ if ($SmokeTest) {
     exit 0
 }
 
+throw "Portable live execution is unavailable until a trusted installer or signed payload establishes the source identity."
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
@@ -218,20 +220,10 @@ if ($doFull) {
         -Undo "N/A (verification only)" `
         -Action {
             if (-not $SCRIPT:DryRun) {
-                $steamExe = @(
-                    "${env:ProgramFiles(x86)}\Steam\steam.exe",
-                    "$env:ProgramFiles\Steam\steam.exe"
-                )
-                if ($steamBase) { $steamExe += "$steamBase\steam.exe" }
-                $steamExe = $steamExe | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-                if ($steamExe) {
-                    Write-Step "Starting CS2 verification..."
-                    Start-Process "steam://validate/730" -ErrorAction SilentlyContinue
-                    Write-OK "Steam verification started - wait for Steam to finish."
-                } else {
-                    Write-Warn "Steam.exe not found."
-                    Write-Info "Manual: Steam -> CS2 -> Properties -> Local Files -> Verify"
-                }
+                Write-Warn "Steam verification is not launched from this elevated window."
+                Write-Info "Manual: Steam -> CS2 -> Properties -> Local Files -> Verify"
+                'steam://validate/730' | Set-ClipboardSafe
+                Write-Info "Steam verification link copied for use from your unelevated desktop session."
             } else {
                 Write-Host "  [DRY-RUN] Would trigger: Steam CS2 game integrity verification" -ForegroundColor Magenta
             }

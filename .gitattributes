@@ -12,6 +12,9 @@
 *.cfg.example text eol=lf
 *.txt text eol=lf
 *.xaml text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+Cargo.lock text eol=lf
 LICENSE text eol=lf
 CODEOWNERS text eol=lf
 .gitignore text eol=lf

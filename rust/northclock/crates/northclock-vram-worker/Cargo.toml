@@ -1,0 +1,20 @@
+[package]
+name = "northclock-vram-worker"
+description = "Isolated D3D12 VRAM validation worker for Northclock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "northclock-vram-worker"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+northclock-core = { path = "../northclock-core", version = "=0.1.0-alpha.1" }
+northclock-platform-windows = { path = "../northclock-platform-windows", version = "=0.1.0-alpha.1" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

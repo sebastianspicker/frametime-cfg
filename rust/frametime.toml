@@ -1,0 +1,62 @@
+version = "v3.0.0-alpha.1"
+work_dir = "C:\\FRAMETIME_CFG"
+log_max_files = 5
+run_once_execution_policy = "Bypass"
+autostart_remove = [
+  "OneDrive", "Spotify", "Discord", "Teams", "Skype", "AdobeUpdater",
+  "AdobeGCInvoker", "CCleaner", "Dropbox", "GoogleDriveFS",
+  "EpicGamesLauncher", "RTSS",
+]
+xbox_services = ["XblAuthManager", "XblGameSave", "XboxNetApiSvc", "XboxGipSvc"]
+
+[fps_cap]
+percent = 0.09
+minimum = 60
+
+[benchmark_maps]
+dust2 = "https://steamcommunity.com/sharedfiles/filedetails/?id=3240880604"
+inferno = "https://steamcommunity.com/sharedfiles/filedetails/?id=2932674700"
+ancient = "https://steamcommunity.com/sharedfiles/filedetails/?id=3472126051"
+
+[device_guids]
+display = "{4d36e968-e325-11ce-bfc1-08002be10318}"
+network = "{4d36e972-e325-11ce-bfc1-08002be10318}"
+
+[paths]
+shader_cache = [
+  "%ProgramFiles(x86)%\\Steam\\steamapps\\shadercache\\730",
+  "%ProgramFiles%\\Steam\\steamapps\\shadercache\\730",
+  "D:\\Steam\\steamapps\\shadercache\\730",
+  "E:\\Steam\\steamapps\\shadercache\\730",
+  "F:\\Steam\\steamapps\\shadercache\\730",
+]
+nvidia_dx_cache = "%LOCALAPPDATA%\\NVIDIA\\DXCache"
+nvidia_gl_cache = "%LOCALAPPDATA%\\NVIDIA\\GLCache"
+directx_shader_cache = "%LOCALAPPDATA%\\D3DSCache"
+latency_targets = "assets/cfgs/valve-latency-targets.json"
+
+[chipset_urls]
+amd = "https://www.amd.com/en/support/download/drivers.html"
+intel = "https://www.intel.com/content/www/us/en/download/19347/chipset-inf-utility.html"
+
+[dns]
+provider = "skip"
+cloudflare = ["1.1.1.1", "1.0.0.1"]
+google = ["8.8.8.8", "8.8.4.4"]
+
+[nic]
+virtual_adapter_filter = "Loopback|Virtual|Hyper-V|Bluetooth|TAP-Windows|WireGuard|Tailscale|OpenVPN|Cisco AnyConnect|Juniper|Fortinet|vEthernet|Docker|Mullvad|NordLynx|ProtonVPN|SoftEther|GlobalProtect|Pulse Secure"
+eee = "Disabled"
+flow_control = "Disabled"
+interrupt_moderation = "Medium"
+receive_buffers = 512
+transmit_buffers = 512
+high_speed_buffers = 2048
+high_speed_threshold_bps = 5000000000
+
+[nic.alternate_names]
+EEE = "Energy Efficient Ethernet"
+FlowControl = "Flow Control"
+InterruptModeration = "Interrupt Moderation"
+ReceiveBuffers = "Receive Buffers"
+TransmitBuffers = "Transmit Buffers"

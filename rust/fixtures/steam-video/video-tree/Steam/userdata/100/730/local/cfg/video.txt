@@ -1,0 +1,4 @@
+"VideoConfig"
+{
+    "setting.defaultres" "1920"
+}

@@ -32,8 +32,10 @@ through 5.99.99. Without `-SkipInstall`, it installs a compatible release in
 the current-user scope. The analyzer runner installs its pinned version when it
 is missing. Both installations require PowerShell Gallery access.
 
-The repository has no build, formatter, type checker, package manager,
-documentation generator, or release automation.
+The PowerShell product has no compile or package step. Its parser, analyzer,
+Pester, launcher, smoke, and dry-run gates are documented below. The
+self-contained native alpha rewrite has separate Cargo validation and packaging
+commands in [`rust/README.md`](rust/README.md).
 
 ## Implementation rules
 

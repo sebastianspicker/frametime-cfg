@@ -813,6 +813,7 @@ Describe "published Phase runtime routing" {
         Mock Test-PhaseRuntimePayload {
             [PSCustomObject]@{ Valid = $true; Message = "verified" }
         }
+        Mock Get-TrustedWindowsToolPath { "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" }
         Mock Start-Process {}
 
         Start-PublishedPhaseRuntime "SafeMode-DriverClean.ps1" | Should -BeTrue

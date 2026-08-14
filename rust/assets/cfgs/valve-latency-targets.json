@@ -1,0 +1,50 @@
+{
+  "version": 2,
+  "notes": "Heuristic Valve/Steam region candidates for the Valve Region Latency Diagnostic. These are Steam connection-manager endpoints from Valve's directory service, used as a route-quality proxy rather than Valve-official in-match CS2 ping.",
+  "targets": [
+    {
+      "Label": "Stockholm",
+      "ProtocolPreference": "TCP",
+      "Provenance": "Steam directory CM endpoint set, updated from ISteamDirectory/GetCMList.",
+      "Notes": "Route-quality proxy only. TCP handshake timing is not equivalent to CS2 UDP/SDR in-match ping.",
+      "Candidates": [
+        { "Host": "146.66.152.38", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "146.66.152.44", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "146.66.152.43", "Port": 27017, "Notes": "Steam CM candidate" }
+      ]
+    },
+    {
+      "Label": "Frankfurt",
+      "ProtocolPreference": "TCP",
+      "Provenance": "Steam directory CM endpoint set, updated from ISteamDirectory/GetCMList.",
+      "Notes": "Route-quality proxy only. TCP handshake timing is not equivalent to CS2 UDP/SDR in-match ping.",
+      "Candidates": [
+        { "Host": "162.254.197.38", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "162.254.197.40", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "162.254.197.54", "Port": 27017, "Notes": "Steam CM candidate" }
+      ]
+    },
+    {
+      "Label": "Warsaw",
+      "ProtocolPreference": "TCP",
+      "Provenance": "Steam directory CM endpoint set, updated from ISteamDirectory/GetCMList.",
+      "Notes": "Route-quality proxy only. TCP handshake timing is not equivalent to CS2 UDP/SDR in-match ping.",
+      "Candidates": [
+        { "Host": "146.66.155.38", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "146.66.155.54", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "155.133.230.34", "Port": 27017, "Notes": "Steam CM candidate" }
+      ]
+    },
+    {
+      "Label": "Madrid",
+      "ProtocolPreference": "TCP",
+      "Provenance": "Steam directory CM endpoint set, updated from ISteamDirectory/GetCMList.",
+      "Notes": "Route-quality proxy only. TCP handshake timing is not equivalent to CS2 UDP/SDR in-match ping.",
+      "Candidates": [
+        { "Host": "155.133.238.179", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "155.133.238.195", "Port": 27017, "Notes": "Steam CM candidate" },
+        { "Host": "155.133.244.34", "Port": 27017, "Notes": "Steam CM candidate" }
+      ]
+    }
+  ]
+}

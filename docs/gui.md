@@ -1,16 +1,16 @@
 # Desktop interface guide
 
-The experimental desktop interface is a Windows Presentation Foundation (WPF)
-application launched through `START-GUI.bat`. It complements the resumable
-terminal phases; it does not replace Phase 1, Safe Mode Phase 2, or Phase 3.
+The experimental Windows Presentation Foundation (WPF) source remains a
+development and smoke-test surface. Its portable launcher is fail-closed until
+an installed or independently signed payload authenticates source before UAC.
 
 ## Launch and runtime
 
-1. Extract the repository or release archive to a local Windows folder.
-2. Right-click `START-GUI.bat` and choose `Run as administrator`.
-3. Use the task navigation or Ctrl+1 through Ctrl+7.
+Use [`demo/index.html`](../demo/index.html) for non-privileged interface review.
+`START-GUI.bat` exits nonzero and does not request elevation.
 
-Normal execution requires an x64 Windows desktop and administrator rights.
+Future live execution requires an x64 Windows desktop, administrator rights,
+and a trusted installation/signing boundary that is not yet implemented.
 `frametime-gui.ps1 -SmokeTest` is the non-elevated entrypoint check used
 by CI. The smoke check does not validate WPF rendering or interaction.
 
@@ -56,14 +56,10 @@ This task combines the settings that affect execution with the step catalog:
 - terminal launch actions for Phase 1, Safe Mode Phase 2, and Phase 3;
 - non-mutating inline verification of supported settings.
 
-Profile and preview preference persist in `C:\FRAMETIME_CFG\state.json`. This is
-distinct from the strict, zero-persistence Full DRY-RUN contract: the terminal
-currently asks for preview scope again. Use `START.bat dry-run` when no suite
-state may be written. Phase internals still run in terminal processes so reboot
-handoffs and prompts remain resumable. The Phase 2/3 payload is a fixed file set
-published as an immutable runtime generation with exact-set SHA-256 manifest
-validation. The GUI does not substitute a source-tree script when that payload
-is unavailable.
+This describes the retained UI design, not an enabled portable runtime. Use
+`START.bat dry-run` for the strict zero-persistence product preview. Phase 2/3
+recovery remains bound to a protected immutable runtime generation with
+exact-set SHA-256 manifest validation.
 
 ### 4. Benchmark
 

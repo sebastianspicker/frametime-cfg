@@ -2,10 +2,11 @@
 
 ## Scope
 
-frametime.cfg runs PowerShell with administrator privileges and can modify the
-registry, boot configuration, services, scheduled tasks, power plans, network
-adapters, AppX packages, and display-driver packages. Recovery can also remove
-legacy Defender exclusions that were recorded by an older checkout.
+Protected Phase 2/3 handoffs and any future trusted frametime.cfg live release
+run PowerShell with administrator privileges and can modify the registry, boot
+configuration, services, scheduled tasks, power plans, network adapters, AppX
+packages, and display-driver packages. The portable checkout is preview-only.
+Recovery can also remove legacy Defender exclusions recorded by an older checkout.
 Security reports are especially relevant when they concern:
 
 - command, path, registry, JSON, or configuration injection
@@ -58,6 +59,9 @@ state.
 
 ## Download and execution boundaries
 
+- The portable checkout is preview-only. Its live entrypoints fail closed
+  because the current alpha has no trusted installer or signed payload manifest
+  that authenticates the source tree before elevation.
 - The only implemented automatic executable download is an NVIDIA driver package
   from an allowlisted NVIDIA host.
 - A downloaded driver must pass path, file, and NVIDIA Authenticode validation

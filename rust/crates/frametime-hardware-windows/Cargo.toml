@@ -1,0 +1,26 @@
+[package]
+name = "frametime-hardware-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native Windows adapters for frametime-hardware diagnostics"
+publish.workspace = true
+
+[dependencies]
+frametime-hardware = { path = "../frametime-hardware" }
+raw-cpuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_EventLog",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+] }
+
+[lints]
+workspace = true

@@ -29,7 +29,7 @@ PC tuning framework.
 
 ## Current capabilities and limitations
 
-The current implementation can:
+The retained PowerShell implementation is designed to:
 
 - inventory the CPU, GPU, memory, storage, network adapters, Windows state, and
   CS2 installation;
@@ -54,6 +54,10 @@ The current implementation can:
 
 Current limitations:
 
+- The portable tree exposes only smoke checks and the strict no-mutation
+  preview. All live Phase 1, cleanup, restore, verification, FPS, and WPF routes
+  fail closed until an installer or independently signed payload establishes
+  source identity before elevation.
 - The privileged three-phase workflow and recovery paths have not completed a
   release-candidate run on a disposable Windows system.
 - NVIDIA automation is more complete than AMD and Intel automation.
@@ -97,21 +101,32 @@ directory structure intact because scripts load configuration, helpers, CFG
 files, and XAML relative to the repository root.
 
 ```powershell
-git clone https://github.com/sebastianspicker/cs2-opt.git
-Set-Location .\cs2-opt
+git clone https://github.com/sebastianspicker/frametime-cfg.git
+Set-Location .\frametime-cfg
 cmd.exe /d /c START.bat dry-run all
 ```
 
-There is no build or installation step. The project does not install a
-PowerShell module or register a Windows application. Live launchers request
-administrator elevation when required. The strict preview runs before the
-elevation check.
+The portable tree is preview-only. Live Phase 1, cleanup, restore, verification,
+FPS, and WPF entrypoints fail closed because no trusted installer or signed
+payload currently establishes their source identity before elevation. Existing
+Phase 2 and Phase 3 handoffs remain recoverable only from their protected,
+manifest-verified generation under `C:\FRAMETIME_CFG\runtime-generations`.
+
+The PowerShell toolkit has no build or installation step. It does not install
+a PowerShell module or register a Windows application. The portable launchers
+do not request elevation; only the strict no-mutation preview is enabled.
+
+The repository also contains a self-contained, source-only
+[`rust/`](rust/README.md) rewrite. It has its own Cargo build, validation, and
+portable packaging commands, but remains an alpha parity effort rather than a
+release-equivalent replacement for the PowerShell product.
 
 ## Configuration
 
-[`config.env.ps1`](config.env.ps1) is the central configuration file. Every
-entry point dot-sources it, so editing it changes executable PowerShell code,
-including code later run as administrator.
+[`config.env.ps1`](config.env.ps1) is the central configuration file for the
+retained implementation. Entry points that pass their fail-closed boundary load
+it as executable PowerShell code, so any future trusted live release must bind
+its exact bytes before elevation.
 
 The main configuration groups are:
 
@@ -175,34 +190,28 @@ will succeed. See [`docs/dry-run.md`](docs/dry-run.md).
 
 ### Run the terminal workflow
 
-```powershell
-.\START.bat
-```
+Live terminal execution from the portable tree is unavailable. `START.bat`
+returns a nonzero exit for any route except `dry-run`. Enabling the three-phase
+workflow requires an installed or independently signed payload that is
+authenticated before any portable script is loaded.
 
-Choose `Start / resume optimization`. Phase 1 runs in normal Windows and can
-prepare a Safe Mode reboot. Phase 2 clears the Safe Mode flag before attempting
-driver removal, then registers Phase 3 in the current user's Run key. Phase 3
-runs after the next normal sign-in.
-
-Use the same administrator account throughout. The machine-level Phase 2
-handoff starts after an administrator signs in to Safe Mode. The Phase 3
-handoff is per-user, so signing in with another account will not start it. If
-automatic Phase 3 launch fails, sign in with the original account and choose
-`[P]` in `START.bat`.
-
-The terminal launcher also exposes cleanup, FPS-cap calculation, log viewing,
-progress reset, verification, restore, backup summary, and manual phase entry
-points.
+If an already-published protected Phase 2/3 generation is pending, use that
+generation's validated entrypoint or elevation bootstrap directly; do not route
+recovery through the portable checkout.
 
 ### Run the desktop interface
 
-```powershell
-.\START-GUI.bat
-```
+`START-GUI.bat` is intentionally fail-closed for portable copies. The browser
+demonstration remains available for non-privileged interface review. See
+[`docs/gui.md`](docs/gui.md).
 
-The launcher elevates and starts [`frametime-gui.ps1`](frametime-gui.ps1). The
-interface launches consequential phase work in separate terminal processes.
-It is unavailable in Safe Mode. See [`docs/gui.md`](docs/gui.md).
+### Explore the browser demonstration
+
+Open [`demo/index.html`](demo/index.html) directly in a browser. The static demo
+mirrors the desktop information architecture with sanitized fixture data. It
+does not run PowerShell, inspect the host, contact a service, or write suite
+state. See [`demo/README.md`](demo/README.md) for its local checks and trust
+boundary.
 
 ### Profiles
 
@@ -222,8 +231,9 @@ cancelled merely by choosing a lower profile.
 
 | Path | Contents |
 | --- | --- |
-| `START.bat` | Terminal menu and strict preview launcher |
-| `START-GUI.bat` | Elevated WPF launcher |
+| `START.bat` | Strict preview launcher; portable live routes fail closed |
+| `START-GUI.bat` | Fail-closed portable WPF launcher |
+| `Launcher-Action.ps1` | Fail-closed legacy menu-action surface |
 | `Run-Optimize.ps1` | Phase 1 orchestration and Full DRY-RUN lifecycle |
 | `Optimize-SystemBase.ps1` | Phase 1 system steps |
 | `Optimize-Hardware.ps1` | Phase 1 hardware, driver, and network steps |
@@ -233,6 +243,7 @@ cancelled merely by choosing a lower profile.
 | `PostReboot-Setup.ps1` | Phase 3 normal-mode entry point |
 | `Cleanup.ps1`, `FpsCap-Calculator.ps1`, `Verify-Settings.ps1` | Standalone operator tools |
 | `frametime-gui.ps1`, `ui/` | WPF controller and XAML layout |
+| `demo/` | Dependency-free browser demonstration and Node static checks |
 | `helpers/` | State, backup, safety, hardware, driver, network, and GUI functions |
 | `config.env.ps1` | Executable central configuration |
 | `cfgs/` | CS2 CFG sources and Valve latency target data |
@@ -240,6 +251,7 @@ cancelled merely by choosing a lower profile.
 | `scripts/` | Local test runner |
 | `.github/` | CI, validation scripts, templates, and repository policy |
 | `docs/` | Operational and implementation-specific documentation |
+| `rust/` | Self-contained native alpha rewrite, compatibility ledger, and Cargo workspaces |
 
 Read [`docs/architecture.md`](docs/architecture.md) for control flow, runtime
 payload validation, state persistence, and phase handoff details.
@@ -248,8 +260,9 @@ maintainer references by task.
 
 ## Development workflow
 
-Work from the repository root. There is no build, formatter, type checker,
-package manager, documentation generator, or release automation.
+Work from the repository root. The PowerShell toolkit has no compile or package
+step; its validation commands are listed below. Native Rust development uses
+the separate commands documented in [`rust/README.md`](rust/README.md).
 
 For a behavior change:
 
@@ -315,6 +328,14 @@ pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
 cmd.exe /d /c START.bat dry-run all
 ```
 
+The browser demonstration uses the Node.js runtime bundled on CI runners and
+has no package dependencies or lockfile:
+
+```console
+node --check demo/app.js
+node --test demo/demo.test.mjs
+```
+
 The analyzer runner installs PSScriptAnalyzer 1.24.0 if needed. Dependency
 installation requires access to PowerShell Gallery. CI runs Windows and macOS
 Pester jobs, Windows PowerShell compatibility and entry-point smoke jobs, an
@@ -323,10 +344,11 @@ and separate secret and script-safety checks.
 
 ## Deployment and operation
 
-The repository has no deployment pipeline, installer, package manifest, or
-service. Operate it from a source checkout or extracted archive.
+The PowerShell product has no deployment pipeline, installer, package manifest,
+or service. A source checkout or extracted archive supports preview and smoke
+validation only. The separate Rust alpha has its own build and packaging lane.
 
-During live Phase 1, Step 38 copies a fixed runtime file set to a new directory
+The retained live Phase 1 design has Step 38 copy a fixed runtime file set to a new directory
 under `C:\FRAMETIME_CFG\runtime-generations`, writes and verifies a SHA-256
 manifest, and updates `runtime-current.json`. Phase 2 and Phase 3 validate that
 payload before loading helpers or making system changes.
@@ -346,15 +368,16 @@ run.
 
 ## Troubleshooting
 
-- `Administrator privileges are required`: launch through `START.bat` or an
-  elevated Windows PowerShell 5.1 session.
+- `Portable live execution is unavailable`: use the strict preview. A future
+  live release requires a trusted installer or independently signed payload.
 - `Pester 5.x is not installed`: rerun `scripts\Invoke-LocalTests.ps1` without
   `-SkipInstall`, or install a Pester version from 5.0.0 through 5.99.99.
 - Phase 3 does not start: sign in with the same administrator account used in
-  Phase 2, then select `[P]` in `START.bat`.
-- Runtime payload validation fails: rerun Phase 1 to publish a new verified
-  runtime generation. Do not bypass manifest validation by launching a copied
-  phase script.
+  Phase 2 and invoke the protected generation's elevation bootstrap directly.
+- Runtime payload validation fails: do not bypass manifest validation by
+  launching a copied phase script. Preserve the work directory and use standard
+  Windows recovery; the preview-only portable tree cannot publish a replacement
+  generation.
 - Windows remains in Safe Mode: from an elevated Command Prompt, run
   `bcdedit /deletevalue {current} safeboot`, verify with
   `bcdedit /enum {current} /v`, then restart.
@@ -367,10 +390,14 @@ run.
 
 ## Security considerations
 
-- Live execution runs PowerShell as administrator and can change boot state,
+- Protected Phase 2/3 handoffs and any future trusted live release run
+  PowerShell as administrator and can change boot state,
   drivers, services, tasks, registry values, power configuration, network
   configuration, AppX packages, and application files.
 - `config.env.ps1` is executable code. Review every change before running it.
+- The portable Phase 1 checkout is not accepted as a live trust root. The
+  repository does not currently ship an installer or independently signed
+  payload that authenticates it across the elevation boundary.
 - Automatic NVIDIA downloads are restricted to validated NVIDIA URLs and must
   pass path, file, and Authenticode checks before execution.
 - User-initiated network diagnostics can fetch Valve SDR configuration, send
