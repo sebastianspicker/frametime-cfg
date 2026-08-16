@@ -66,6 +66,37 @@ Describe "Public repository contract" {
             Should -BeNullOrEmpty
     }
 
+    It "keeps bundled Rust projects as tracked ordinary directories" {
+        if (-not (Test-Path -LiteralPath $script:GitDir)) {
+            Set-ItResult -Skipped -Because "Repository-topology verification requires a Git checkout."
+            return
+        }
+
+        $submodulePaths = @()
+        $gitmodulesPath = Join-Path $script:RepoRoot '.gitmodules'
+        if (Test-Path -LiteralPath $gitmodulesPath -PathType Leaf) {
+            $submodulePaths = @(
+                & git -C $script:RepoRoot config --file .gitmodules --get-regexp '^submodule\..*\.path$' 2>$null |
+                    ForEach-Object { ($_ -split '\s+', 2)[1] }
+            )
+        }
+
+        foreach ($directory in @('rust/driver-foundry', 'rust/northclock')) {
+            $fullPath = Join-Path $script:RepoRoot $directory
+            (Test-Path -LiteralPath $fullPath -PathType Container) | Should -BeTrue
+            (Get-Item -LiteralPath $fullPath -Force).LinkType | Should -BeNullOrEmpty
+            (Test-Path -LiteralPath (Join-Path $fullPath '.git')) | Should -BeFalse
+
+            $stagedEntries = @(& git -C $script:RepoRoot ls-files --stage -- $directory)
+            $LASTEXITCODE | Should -Be 0
+            @($stagedEntries | Where-Object { $_ -match '^160000\s' }) | Should -BeNullOrEmpty
+
+            & git -C $script:RepoRoot ls-files --error-unmatch -- "$directory/Cargo.toml" | Out-Null
+            $LASTEXITCODE | Should -Be 0
+            $submodulePaths | Should -Not -Contain $directory
+        }
+    }
+
     It "keeps relative links in public Markdown resolvable" {
         $missing = [System.Collections.Generic.List[string]]::new()
         $publicMarkdown = Get-PublicMarkdownFiles
