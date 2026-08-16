@@ -234,7 +234,7 @@ fn confirm_close(window: HWND, diagnostic: bool) -> bool {
 }
 
 fn handle_destroy(window: HWND) -> LRESULT {
-    let _ = take_state(window); // Dropping Child only closes the handle; the native CLI remains detached.
+    destroy_callback_state(window); // Dropping Child only closes the handle; the native CLI remains detached.
     unsafe {
         let _ = KillTimer(Some(window), POLL_TIMER);
         PostQuitMessage(0);
@@ -296,8 +296,4 @@ pub(super) fn restore_focus(window: HWND) {
             let _ = SetFocus(Some(last_focus));
         }
     }
-}
-pub(super) fn take_state(window: HWND) -> Option<Box<AppState>> {
-    let value = unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
-    (!value.eq(&0)).then(|| unsafe { Box::from_raw(value as *mut AppState) })
 }

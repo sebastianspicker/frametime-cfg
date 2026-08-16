@@ -30,7 +30,7 @@ impl LiveBackend {
     }
 
     fn capture_autostart_backup(&mut self, key: String) -> Result<Vec<BackupEntry>, String> {
-        let (binding, entries) = capture_autostart(key.clone(), self.config.as_ref())
+        let (binding, entries) = capture_autostart(key.clone(), Some(self.config.value()))
             .inspect_err(|_| self.transaction_lock = None)?;
         self.captured_autostart_bindings
             .insert(key.clone(), binding);
@@ -65,8 +65,7 @@ impl LiveBackend {
     fn capture_dns_backup(&mut self, key: String) -> Result<Vec<BackupEntry>, String> {
         let config = self
             .config
-            .as_ref()
-            .ok_or("P3:9 requires a validated frametime.toml DNS provider selection")?;
+            .value();
         let (bindings, entries) = capture_native_dns(key.clone(), config)
             .inspect_err(|_| self.transaction_lock = None)?;
         self.captured_dns_bindings.insert(key.clone(), bindings);

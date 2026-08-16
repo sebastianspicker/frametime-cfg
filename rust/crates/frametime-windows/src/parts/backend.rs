@@ -30,7 +30,7 @@ pub struct LiveBackend {
     memory_topology: Option<Option<MemoryTopology>>,
     transaction_lock: Option<WorkLock>,
     state: State,
-    config: Option<Config>,
+    config: VerifiedConfig,
     hardware: HardwareInfo,
 }
 
@@ -66,7 +66,7 @@ impl Backend for LiveBackend {
         }
         match action {
             Action::ObserveConfigState => {
-                return inspect_config_state(self.config.as_ref(), &self.state);
+                return inspect_config_state(Some(self.config.value()), &self.state);
             }
             Action::ObserveGpuInventory => return inspect_gpu_inventory(&self.hardware),
             Action::BaselineBenchmark => {
@@ -100,7 +100,7 @@ impl Backend for LiveBackend {
                 return Ok(inspection);
             }
             Action::FpsCapInfo => {
-                let inspection = inspect_fps_cap_info(self.config.as_ref(), &self.state)?;
+                let inspection = inspect_fps_cap_info(Some(self.config.value()), &self.state)?;
                 if inspection == Inspection::Satisfied {
                     report_fps_cap_info(&self.state);
                 }
@@ -109,12 +109,12 @@ impl Backend for LiveBackend {
             Action::ShaderCache => return self.inspect_shader_cache_with_audit(),
             Action::Debloat => return self.inspect_debloat(),
             Action::ServiceBatch(batch) => {
-                let names = service_power_contract_map(batch, self.config.as_ref())?;
+                let names = service_power_contract_map(batch, Some(self.config.value()))?;
                 return native_services::inspect_batch(&names, batch);
             }
             Action::Nagle => return inspect_nagle(),
-            Action::Dns => return inspect_dns(self.config.as_ref()),
-            Action::Autostart => return inspect_autostart(self.config.as_ref()),
+            Action::Dns => return inspect_dns(Some(self.config.value())),
+            Action::Autostart => return inspect_autostart(Some(self.config.value())),
             Action::PowerPlan => return inspect_power_plan(self.state.profile),
             Action::Pagefile => return inspect_pagefile(&self.state),
             Action::Cs2Registry(action) => return inspect_cs2_registry(action),
@@ -319,7 +319,7 @@ impl Backend for LiveBackend {
         if is_shader_cache_operation(operation) {
             let result = match self.shader_cache_inventory.as_ref() {
                 Some(inventory) => verify_shader_cache(inventory),
-                None => match inspect_shader_cache(self.config.as_ref())? {
+                None => match inspect_shader_cache(Some(self.config.value()))? {
                     Inspection::Satisfied => Ok(()),
                     Inspection::Unsupported => {
                         Err("P1:3 cache contents appeared before verification".into())
@@ -364,10 +364,7 @@ impl Backend for LiveBackend {
                     .ok_or("P1:34 verification requires a captured CS2 config binding")?,
             )
         } else if matches!(&action, Action::Dns) {
-            let config = self
-                .config
-                .as_ref()
-                .ok_or("P3:9 requires a validated frametime.toml DNS provider selection")?;
+            let config = self.config.value();
             verify_native_dns(
                 self.captured_dns_bindings
                     .get(&key)
@@ -393,7 +390,7 @@ impl Backend for LiveBackend {
             }
             verify_action(
                 &action,
-                self.config.as_ref(),
+                Some(self.config.value()),
                 self.captured_service_batches.get(&key).map(Vec::as_slice),
                 self.captured_nagle_bindings.get(&key),
                 self.captured_cs2_bindings.get(&key),
@@ -460,7 +457,7 @@ impl LiveBackend {
         let capture = if matches!(action, Action::Nagle) {
             capture_nagle_batch(key.clone()).map(|(binding, entries)| (entries, Some(binding)))
         } else {
-            capture_actions(action, key.clone(), self.config.as_ref())
+            capture_actions(action, key.clone(), Some(self.config.value()))
                 .map(|entries| (entries, None))
         };
         let (entries, nagle_binding) = capture.inspect_err(|_| self.transaction_lock = None)?;
@@ -520,7 +517,7 @@ impl LiveBackend {
             ),
             _ => apply_action(
                 action,
-                self.config.as_ref(),
+                Some(self.config.value()),
                 self.captured_service_batches.get(key).map(Vec::as_slice),
                 self.captured_nagle_bindings.get(key),
                 self.captured_cs2_bindings.get(key),
@@ -529,10 +526,7 @@ impl LiveBackend {
     }
 
     fn apply_dns_action(&self, key: &str) -> Result<(), String> {
-        let config = self
-            .config
-            .as_ref()
-            .ok_or("P3:9 requires a validated frametime.toml DNS provider selection")?;
+        let config = self.config.value();
         apply_native_dns(
             self.captured_dns_bindings
                 .get(key)

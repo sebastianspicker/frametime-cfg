@@ -308,7 +308,12 @@ fn p3_13_status_treats_completed_stage_or_timestamp_without_a_receipt_as_incoher
 fn final_benchmark_refuses_before_creating_a_host_directory() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let work_dir = directory.path().join("must-not-exist");
-    assert!(persist_final_benchmark(&work_dir, final_benchmark_capture()).is_err());
+    assert!(persist_final_benchmark(
+        &work_dir,
+        final_benchmark_capture(),
+        &checked_in_verified_config(),
+    )
+    .is_err());
     assert!(!work_dir.exists());
 }
 fn batch_for(step: u8) -> Vec<RegistryChange> {
@@ -1320,6 +1325,6 @@ fn every_registry_batch_identity_is_restore_allowlisted() {
 fn live_operations_refuse_before_touching_files() {
     let root = Path::new(WINDOWS_WORK_DIR);
     assert!(reset_progress(root).is_err());
-    assert!(restore_all(root).is_err());
+    assert!(restore_all(root, &checked_in_verified_config()).is_err());
     assert!(load_progress(root).is_err());
 }

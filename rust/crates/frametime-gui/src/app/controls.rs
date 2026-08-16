@@ -1,4 +1,6 @@
 use super::*;
+use crate::callback_state::CallbackState;
+use std::ptr::NonNull;
 
 pub(super) fn create_controls(
     parent: HWND,
@@ -293,7 +295,7 @@ fn install_state(
             cancellable: false,
         }
     };
-    let mut state = Box::new(AppState {
+    let state = Box::new(CallbackState::new(AppState {
         area: Area::Overview,
         nav: controls.nav,
         heading: controls.standard.heading,
@@ -330,15 +332,11 @@ fn install_state(
         operation,
         last_focus: controls.standard.action,
         high_contrast: high_contrast_enabled(),
-    });
+    }));
+    let state = Box::into_raw(state);
     unsafe {
-        let _ = SetWindowLongPtrW(
-            parent,
-            GWLP_USERDATA,
-            (&mut *state as *mut AppState).cast::<c_void>() as isize,
-        );
+        let _ = SetWindowLongPtrW(parent, GWLP_USERDATA, state as isize);
     }
-    std::mem::forget(state);
 }
 
 fn create_button(
@@ -397,9 +395,55 @@ pub(super) fn create_text_control(
 pub(super) fn utf16(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
+/// Keeps the callback allocation alive until the current window callback unwinds.
+///
+/// `GWLP_USERDATA` may be cleared by a nested `WM_DESTROY`, but an outer
+/// callback can still be using the application state. The guard owns the
+/// final-release decision rather than letting `WM_DESTROY` free it directly.
+struct CallbackGuard {
+    state: NonNull<CallbackState<AppState>>,
+}
+
+impl CallbackGuard {
+    unsafe fn enter(state: NonNull<CallbackState<AppState>>) -> Option<Self> {
+        unsafe { state.as_ref() }.enter().then_some(Self { state })
+    }
+}
+
+impl Drop for CallbackGuard {
+    fn drop(&mut self) {
+        let release = unsafe { self.state.as_ref() }.leave();
+        if release {
+            unsafe { drop(Box::from_raw(self.state.as_ptr())) };
+        }
+    }
+}
+
+fn with_callback_state<R>(
+    window: HWND,
+    callback: impl FnOnce(&CallbackState<AppState>) -> R,
+) -> Option<R> {
+    let state = unsafe {
+        NonNull::new(GetWindowLongPtrW(window, GWLP_USERDATA) as *mut CallbackState<AppState>)
+    }?;
+    let guard = unsafe { CallbackGuard::enter(state) }?;
+    let result = callback(unsafe { state.as_ref() });
+    drop(guard);
+    Some(result)
+}
+
 pub(super) fn with_state<R>(window: HWND, operation: impl FnOnce(&mut AppState) -> R) -> Option<R> {
-    let value = unsafe { GetWindowLongPtrW(window, GWLP_USERDATA) };
-    (!value.eq(&0)).then(|| unsafe { operation(&mut *(value as *mut AppState)) })
+    with_callback_state(window, |state| state.with_app(operation)).flatten()
+}
+
+pub(super) fn destroy_callback_state(window: HWND) {
+    let _ = with_callback_state(window, |state| {
+        if state.begin_destroy() {
+            unsafe {
+                let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            }
+        }
+    });
 }
 pub(super) fn set_text(handle: HWND, text: &str) {
     let text = utf16(text);

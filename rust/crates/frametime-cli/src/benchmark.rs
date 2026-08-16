@@ -123,9 +123,12 @@ pub(crate) fn read_final_benchmark_capture(
     Ok(capture)
 }
 
-pub(crate) fn persist_final_benchmark_capture(capture: BenchmarkCapture) -> Result<(), AppError> {
-    let receipt =
-        persist_final_benchmark(Path::new(WINDOWS_WORK_DIR), capture).map_err(AppError::failed)?;
+pub(crate) fn persist_final_benchmark_capture(
+    capture: BenchmarkCapture,
+    config: &frametime_windows::VerifiedConfig,
+) -> Result<(), AppError> {
+    let receipt = persist_final_benchmark(Path::new(WINDOWS_WORK_DIR), capture, config)
+        .map_err(AppError::failed)?;
     println!(
         "Persisted After all optimizations: Avg {:.1}; P1 {:.1}; Runs: {}; fps_max {}.",
         receipt.avg_fps, receipt.p1_fps, receipt.runs, receipt.fps_cap

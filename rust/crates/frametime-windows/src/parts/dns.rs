@@ -260,7 +260,7 @@ impl DnsAdapter for NativeDnsAdapter {
 #[cfg(windows)]
 mod native_dns_api {
     use super::DnsBinding;
-    use std::ffi::CStr;
+    use std::{collections::HashSet, ffi::CStr, mem};
     use windows::{
         Win32::{
             Foundation::ERROR_BUFFER_OVERFLOW,
@@ -277,6 +277,47 @@ mod native_dns_api {
         },
         core::GUID,
     };
+
+    const MAX_ADAPTERS: usize = 4_096;
+
+    fn checked_buffer_offset<T>(buffer: &[u8], pointer: *const T) -> Result<usize, String> {
+        let base = buffer.as_ptr() as usize;
+        let end = base
+            .checked_add(buffer.len())
+            .ok_or("adapter buffer extent overflow")?;
+        let address = pointer as usize;
+        let record_end = address
+            .checked_add(mem::size_of::<T>())
+            .ok_or("adapter record extent overflow")?;
+        if address < base || record_end > end || !address.is_multiple_of(mem::align_of::<T>()) {
+            return Err("adapter pointer is outside or misaligned in its returned buffer".into());
+        }
+        Ok(address - base)
+    }
+
+    fn bounded_c_string(buffer: &[u8], pointer: *const u8) -> Result<String, String> {
+        let offset = checked_buffer_offset(buffer, pointer)?;
+        CStr::from_bytes_until_nul(&buffer[offset..])
+            .map_err(|_| "adapter GUID is not terminated inside its returned buffer")?
+            .to_str()
+            .map(str::to_owned)
+            .map_err(|_| "adapter GUID is not ASCII".into())
+    }
+
+    fn bounded_wide(buffer: &[u8], pointer: *const u16) -> Result<String, String> {
+        if pointer.is_null() {
+            return Ok(String::new());
+        }
+        let offset = checked_buffer_offset(buffer, pointer)?;
+        let remaining = &buffer[offset..];
+        let units = remaining.len() / mem::size_of::<u16>();
+        let values = unsafe { std::slice::from_raw_parts(pointer, units) };
+        let length = values
+            .iter()
+            .position(|unit| *unit == 0)
+            .ok_or("adapter UTF-16 string is not terminated inside its returned buffer")?;
+        String::from_utf16(&values[..length]).map_err(|_| "adapter UTF-16 string is invalid".into())
+    }
 
     pub(super) fn discover() -> Result<Vec<DnsBinding>, String> {
         let mut bytes = 15_000u32;
@@ -299,14 +340,29 @@ mod native_dns_api {
             }
             let mut rows = Vec::new();
             let mut row = buffer.as_mut_ptr().cast::<IP_ADAPTER_ADDRESSES_LH>();
+            let mut visited = HashSet::new();
             while !row.is_null() {
+                if visited.len() >= MAX_ADAPTERS || !visited.insert(row as usize) {
+                    return Err("adapter list is cyclic or exceeds its bounded count".into());
+                }
+                let offset = checked_buffer_offset(&buffer, row)?;
                 let value = unsafe { &*row };
-                let description = wide(value.Description);
-                let friendly = wide(value.FriendlyName);
+                let record_length = unsafe { value.Anonymous1.Anonymous.Length as usize };
+                if record_length < mem::size_of::<IP_ADAPTER_ADDRESSES_LH>()
+                    || offset
+                        .checked_add(record_length)
+                        .is_none_or(|end| end > buffer.len())
+                {
+                    return Err("adapter record length exceeds its returned buffer".into());
+                }
+                let description = bounded_wide(&buffer, value.Description.0.cast_const())?;
+                let friendly = bounded_wide(&buffer, value.FriendlyName.0.cast_const())?;
                 let physical_len = usize::try_from(value.PhysicalAddressLength)
                     .map_err(|_| "adapter MAC length overflow")?;
-                let physical =
-                    value.PhysicalAddress[..physical_len.min(value.PhysicalAddress.len())].to_vec();
+                if physical_len > value.PhysicalAddress.len() {
+                    return Err("adapter MAC length exceeds its fixed record field".into());
+                }
+                let physical = value.PhysicalAddress[..physical_len].to_vec();
                 let software = [
                     "virtual",
                     "tunnel",
@@ -329,10 +385,7 @@ mod native_dns_api {
                     && physical.len() >= 6
                     && physical.iter().any(|byte| *byte != 0)
                 {
-                    let guid = unsafe { CStr::from_ptr(value.AdapterName.0.cast()) }
-                        .to_str()
-                        .map_err(|_| "adapter GUID is not ASCII")?
-                        .to_owned();
+                    let guid = bounded_c_string(&buffer, value.AdapterName.0.cast())?;
                     let guid = format!("{{{guid}}}");
                     rows.push(DnsBinding {
                         adapter_guid: guid.clone(),

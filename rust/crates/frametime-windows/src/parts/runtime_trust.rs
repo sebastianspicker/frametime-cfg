@@ -17,6 +17,7 @@ pub(crate) struct InspectedRuntimeIntegrity {
     generation: String,
     manifest_sha256: String,
     manifest: RuntimeManifest,
+    config: VerifiedConfig,
     #[cfg(windows)]
     _nodes: Vec<RetainedRuntimeNode>,
 }
@@ -46,6 +47,11 @@ impl VerifiedSelectedRuntime {
     #[must_use]
     pub fn executable_path(&self) -> &Path {
         &self.executable_path
+    }
+
+    #[must_use]
+    pub fn config(&self) -> &VerifiedConfig {
+        &self._inspected.config
     }
 }
 
@@ -133,7 +139,7 @@ mod windows_inspector {
     use super::{
         validate_runtime_contract, BTreeMap, InspectedRuntimeIntegrity, RuntimeCurrent,
         RuntimeManifest, TrustedWorkDir, MAX_RUNTIME_METADATA_BYTES, MAX_RUNTIME_PAYLOAD_BYTES,
-        RUNTIME_GENERATIONS_DIR, RUNTIME_PAYLOAD_PATHS,
+        RUNTIME_GENERATIONS_DIR, RUNTIME_PAYLOAD_PATHS, VerifiedConfig,
     };
 
     #[derive(Debug)]
@@ -190,6 +196,7 @@ mod windows_inspector {
 
         let mut payload_hashes = BTreeMap::new();
         let mut executable_node = None;
+        let mut config_node = None;
         for payload in RUNTIME_PAYLOAD_PATHS {
             let relative = format!("{selected}/{payload}");
             let node = open_walked_node(trusted, &relative, false, &mut nodes)?;
@@ -198,6 +205,9 @@ mod windows_inspector {
             if payload == "frametime.exe" {
                 executable_node = Some(node);
             }
+            if payload == "frametime.toml" {
+                config_node = Some(node);
+            }
         }
         let _ = (generations, selected_generation, manifest_node);
         let generation =
@@ -205,11 +215,23 @@ mod windows_inspector {
         let executable_node =
             executable_node.ok_or("compiled runtime payload lacks frametime.exe")?;
         ensure_current_process_is_selected(nodes[executable_node].handle)?;
+        let config_node = config_node.ok_or("compiled runtime payload lacks frametime.toml")?;
+        let config_bytes = read_bounded(nodes[config_node].handle, MAX_RUNTIME_METADATA_BYTES)?;
+        let config_size = u64::try_from(config_bytes.len())
+            .map_err(|_| "selected runtime configuration size overflows u64")?;
+        let config_sha256 = manifest
+            .files
+            .get("frametime.toml")
+            .ok_or("selected runtime manifest omits frametime.toml")?;
+        // The byte binder follows exact-tree, manifest, payload-hash, and
+        // current-process identity validation while the node remains retained.
+        let config = VerifiedConfig::from_verified_bytes(config_bytes, config_size, config_sha256)?;
 
         Ok(InspectedRuntimeIntegrity {
             generation,
             manifest_sha256: manifest_hash,
             manifest,
+            config,
             _nodes: nodes,
         })
     }

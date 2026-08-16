@@ -1,4 +1,6 @@
 #[cfg(any(test, windows))]
+mod callback_state;
+#[cfg(any(test, windows))]
 mod diagnostics;
 #[cfg(any(test, windows))]
 mod model;

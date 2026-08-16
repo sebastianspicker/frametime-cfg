@@ -50,6 +50,7 @@ const TRUSTED_WORK_DIR_SDDL: &str = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 include!("parts/video.rs");
 include!("parts/reboot_hardware.rs");
 include!("parts/persistence.rs");
+include!("parts/config_authority.rs");
 #[path = "parts/cleanup_native.rs"]
 mod cleanup_native;
 include!("parts/persistence_final_support.rs");

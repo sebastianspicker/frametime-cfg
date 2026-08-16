@@ -134,7 +134,6 @@ scripts/topology_inventory.sh
 
 # Local analysis outputs; keep durable config such as .codacy/codacy.config.json
 /.codacy/cli-config.yaml
-/.codacy/codacy.yaml
 /.codacy/generated/
 /.codacy/logs/
 /.codacy/results/

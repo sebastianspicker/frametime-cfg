@@ -1,5 +1,6 @@
 use super::*;
 use frametime_core::catalog::STEPS;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 struct TestVideoFilePlatform;
@@ -38,6 +39,28 @@ fn video_fixture() -> (TempDir, PathBuf, PathBuf, String) {
 fn checked_in_config() -> Config {
     Config::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../frametime.toml"))
         .expect("checked-in config")
+}
+
+fn checked_in_verified_config() -> VerifiedConfig {
+    let bytes = include_bytes!("../../../../frametime.toml").to_vec();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64, &digest)
+        .expect("verified checked-in config")
+}
+
+#[test]
+fn live_configuration_cannot_reopen_an_adjacent_path() {
+    let live_sources = [
+        include_str!("../parts/backend_construction.rs"),
+        include_str!("../parts/backend_public.rs"),
+        include_str!("../parts/cleanup_native.rs"),
+        include_str!("../parts/persistence.rs"),
+        include_str!("../parts/platform.rs"),
+    ]
+    .join("\n");
+    assert!(!live_sources.contains("config_beside_executable"));
+    assert!(!live_sources.contains("Config::load"));
+    assert!(!live_sources.contains("new_with_config"));
 }
 
 #[test]
@@ -501,7 +524,7 @@ fn unavailable_runtime_and_initiator_binding_cannot_be_misreported_as_verified()
 #[test]
 fn fixed_live_paths_cannot_be_redirected() {
     assert_eq!(WINDOWS_WORK_DIR, r"C:\FRAMETIME_CFG");
-    assert!(LiveBackend::new(PathBuf::from(r"D:\other")).is_err());
+    assert!(LiveBackend::new(PathBuf::from(r"D:\other"), checked_in_verified_config()).is_err());
 }
 #[test]
 fn trusted_root_lexical_gate_requires_an_exact_component_boundary() {

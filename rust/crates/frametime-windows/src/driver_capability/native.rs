@@ -13,7 +13,7 @@ use windows::{
         },
         Security::{
             Cryptography::{
-                CALG_SHA_256, CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
+                CALG_SHA_256, CERT_CONTEXT, CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
                 CryptHashCertificate,
             },
             WinTrust::{
@@ -509,11 +509,16 @@ fn signer_from_verified_state(state: HANDLE) -> Result<(String, String), Adapter
     let thumbprint = certificate_sha256(context)?;
     Ok((format!("CN={subject}"), thumbprint))
 }
-fn certificate_subject(
-    context: *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
+fn certificate_subject(context: *const CERT_CONTEXT) -> Result<String, AdapterFailure> {
+    certificate_subject_from_getter(|buffer| unsafe {
+        CertGetNameStringW(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, None, buffer)
+    })
+}
+
+fn certificate_subject_from_getter(
+    mut get_name: impl FnMut(Option<&mut [u16]>) -> u32,
 ) -> Result<String, AdapterFailure> {
-    let needed =
-        unsafe { CertGetNameStringW(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, None, None) };
+    let needed = get_name(None);
     if needed <= 1 {
         return Err(adapter(
             "verify NVIDIA artifact",
@@ -521,28 +526,25 @@ fn certificate_subject(
         ));
     }
     let mut units = vec![0_u16; needed as usize];
-    unsafe {
-        CertGetNameStringW(
-            context,
-            CERT_NAME_SIMPLE_DISPLAY_TYPE,
-            0,
-            None,
-            Some(&mut units),
-        );
+    let written = get_name(Some(&mut units));
+    if written != needed || written <= 1 {
+        return Err(adapter(
+            "verify NVIDIA artifact",
+            "leaf signer subject length changed while being read",
+        ));
+    }
+    if units.last() != Some(&0) {
+        return Err(adapter(
+            "verify NVIDIA artifact",
+            "leaf signer subject is not NUL-terminated",
+        ));
     }
     String::from_utf16(&units[..units.len() - 1])
         .map_err(|e| adapter("verify NVIDIA artifact", e.to_string()))
 }
-fn certificate_sha256(
-    context: *const windows::Win32::Security::Cryptography::CERT_CONTEXT,
-) -> Result<String, AdapterFailure> {
+fn certificate_sha256(context: *const CERT_CONTEXT) -> Result<String, AdapterFailure> {
     let certificate = unsafe { &*context };
-    let encoded = unsafe {
-        std::slice::from_raw_parts(
-            certificate.pbCertEncoded,
-            certificate.cbCertEncoded as usize,
-        )
-    };
+    let encoded = certificate_encoded_bytes(certificate)?;
     let mut length = 32;
     let mut bytes = [0_u8; 32];
     unsafe {
@@ -563,4 +565,104 @@ fn certificate_sha256(
         ));
     }
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn certificate_encoded_bytes(certificate: &CERT_CONTEXT) -> Result<&[u8], AdapterFailure> {
+    if certificate.cbCertEncoded == 0 {
+        return Err(adapter(
+            "verify NVIDIA artifact",
+            "leaf certificate has no encoded bytes",
+        ));
+    }
+    if certificate.pbCertEncoded.is_null() {
+        return Err(adapter(
+            "verify NVIDIA artifact",
+            "leaf certificate encoded bytes are null",
+        ));
+    }
+    let length = usize::try_from(certificate.cbCertEncoded)
+        .map_err(|_| adapter("verify NVIDIA artifact", "leaf certificate length overflow"))?;
+    Ok(unsafe { std::slice::from_raw_parts(certificate.pbCertEncoded, length) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn certificate_bytes_reject_zero_length_contexts_before_reading_the_pointer() {
+        let mut byte = 0_u8;
+        let certificate = CERT_CONTEXT {
+            pbCertEncoded: &raw mut byte,
+            ..Default::default()
+        };
+
+        let error = certificate_encoded_bytes(&certificate)
+            .expect_err("zero-length certificate contexts are invalid");
+
+        assert_eq!(error.reason, "leaf certificate has no encoded bytes");
+    }
+
+    #[test]
+    fn certificate_bytes_reject_null_pointers_before_constructing_a_slice() {
+        let certificate = CERT_CONTEXT {
+            cbCertEncoded: 1,
+            ..Default::default()
+        };
+
+        let error = certificate_encoded_bytes(&certificate)
+            .expect_err("certificate bytes must have a non-null pointer");
+
+        assert_eq!(error.reason, "leaf certificate encoded bytes are null");
+    }
+
+    #[test]
+    fn certificate_bytes_preserve_the_encoded_input() {
+        let mut bytes = [1_u8, 2, 3, 4];
+        let certificate = CERT_CONTEXT {
+            pbCertEncoded: bytes.as_mut_ptr(),
+            cbCertEncoded: u32::try_from(bytes.len()).expect("test bytes fit in u32"),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            certificate_encoded_bytes(&certificate).expect("valid bytes"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn certificate_subject_rejects_a_second_length_that_does_not_match_the_first() {
+        let mut call_count = 0;
+
+        let error = certificate_subject_from_getter(|buffer| {
+            call_count += 1;
+            if let Some(units) = buffer {
+                units.copy_from_slice(&[u16::from(b'A'), 0, 0]);
+                2
+            } else {
+                3
+            }
+        })
+        .expect_err("the two CertGetNameStringW lengths must agree");
+
+        assert_eq!(call_count, 2);
+        assert_eq!(
+            error.reason,
+            "leaf signer subject length changed while being read"
+        );
+    }
+
+    #[test]
+    fn certificate_subject_rejects_a_non_terminated_second_result() {
+        let error = certificate_subject_from_getter(|buffer| {
+            if let Some(units) = buffer {
+                units.copy_from_slice(&[u16::from(b'A'), u16::from(b'B'), u16::from(b'C')]);
+            }
+            3
+        })
+        .expect_err("CertGetNameStringW output must end in a UTF-16 NUL");
+
+        assert_eq!(error.reason, "leaf signer subject is not NUL-terminated");
+    }
 }
