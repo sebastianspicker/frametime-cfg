@@ -104,15 +104,16 @@ Describe "top-level Safe Mode handoff failure contracts" {
     }
 }
 
-Describe "manual Phase 3 recovery launcher" {
+Describe "portable recovery boundary" {
 
-    It "resolves START [P] through the validated current-generation pointer" {
+    It "does not route Phase 3 recovery through the mutable portable checkout" {
         $startLauncher = Get-Content (Join-Path $script:ProjectRoot "START.bat") -Raw
+        $launcherAction = Get-Content (Join-Path $script:ProjectRoot "Launcher-Action.ps1") -Raw
 
-        $startLauncher | Should -Match 'Get-PhaseRuntimeRoot -DestinationRoot \$CFG_WorkDir'
-        $startLauncher | Should -Match 'Test-PhaseRuntimePayload -RuntimeRoot \$runtimeRoot'
-        $startLauncher | Should -Match 'Join-Path \$runtimeRoot ''PostReboot-Setup\.ps1'''
-        $startLauncher | Should -Match '& \$phase3Runtime'
+        $startLauncher | Should -Not -Match 'Launcher-Action\.ps1|PostReboot-Setup\.ps1|PhaseRuntime-ElevationBootstrap\.ps1'
+        $startLauncher | Should -Match 'Live execution from a portable source tree is unavailable'
+        $launcherAction | Should -Match '(?m)^throw "Portable live execution is unavailable'
+        $launcherAction | Should -Not -Match '(?m)^\s*\.\s+|config\.env\.ps1|helpers\.ps1|Get-Content|Test-PhaseRuntimePayload'
         $startLauncher | Should -Not -Match 'C:\\FRAMETIME_CFG\\runtime\\PostReboot-Setup\.ps1'
         $startLauncher | Should -Not -Match '-File "%~dp0PostReboot-Setup\.ps1"'
     }

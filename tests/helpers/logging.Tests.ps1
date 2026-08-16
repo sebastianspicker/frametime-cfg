@@ -283,13 +283,13 @@ Describe "DRY-RUN lifecycle output" {
         $SCRIPT:RequestedDryRunGpu = "3"
     }
 
-    It "keeps intermediate summaries distinct from the final live-run call to action" {
+    It "keeps intermediate summaries distinct from the final trust-boundary notice" {
         $intermediate = (Write-PhaseSummary -PhaseLabel "PHASE 1" -DryRun -ContinuePreview 6>&1) -join "`n"
         $final = (Write-PhaseSummary -PhaseLabel "ALL 3 PHASES" -DryRun 6>&1) -join "`n"
 
         $intermediate | Should -Match "lifecycle simulation continues"
-        $intermediate | Should -Not -Match "Live run:"
-        $final | Should -Match "Live run:"
+        $intermediate | Should -Not -Match "Portable live execution"
+        $final | Should -Match "Portable live execution is unavailable"
     }
 
     It "reports accumulated preview issues" {

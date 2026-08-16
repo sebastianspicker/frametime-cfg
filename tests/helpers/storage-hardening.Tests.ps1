@@ -26,6 +26,34 @@ Describe "Initialize-Backup hardening" {
 
         Should -Invoke Set-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $CFG_BackupFile -and $Required }
     }
+
+    It "fails closed for an existing user-owned exact-DACL backup before ACL repair or byte use" {
+        Set-Content -LiteralPath $CFG_BackupFile -Value '{"entries":[]}' -Encoding UTF8
+        Mock Assert-TrustedExistingControlFile { throw 'Trusted control file ACL validation failed: owner is not BUILTIN\\Administrators or SYSTEM.' }
+
+        { Initialize-Backup } | Should -Throw '*owner is not BUILTIN\\Administrators or SYSTEM*'
+
+        Should -Invoke Assert-TrustedExistingControlFile -Exactly 1 -ParameterFilter { $Path -eq $CFG_BackupFile }
+        Should -Invoke Set-SecureAcl -Exactly 0 -ParameterFilter { $Path -eq $CFG_BackupFile }
+    }
+
+    It "fails closed for a reparse backup before ACL repair or byte use" {
+        Set-Content -LiteralPath $CFG_BackupFile -Value '{"entries":[]}' -Encoding UTF8
+        Mock Assert-TrustedExistingControlFile { throw 'Trusted control file is not a regular non-reparse filesystem file.' }
+
+        { Initialize-Backup } | Should -Throw '*regular non-reparse*'
+
+        Should -Invoke Set-SecureAcl -Exactly 0 -ParameterFilter { $Path -eq $CFG_BackupFile }
+    }
+
+    It "fails closed for a backup DACL with an unsafe ACE before ACL repair or byte use" {
+        Set-Content -LiteralPath $CFG_BackupFile -Value '{"entries":[]}' -Encoding UTF8
+        Mock Assert-TrustedExistingControlFile { throw 'Trusted control file ACL validation failed: untrusted identity has write access.' }
+
+        { Initialize-Backup } | Should -Throw '*untrusted identity has write access*'
+
+        Should -Invoke Set-SecureAcl -Exactly 0 -ParameterFilter { $Path -eq $CFG_BackupFile }
+    }
 }
 
 Describe "Get-BackupDataRaw corruption handling" {
@@ -60,6 +88,39 @@ Describe "Get-BackupDataRaw corruption handling" {
         Test-Path -LiteralPath $CFG_BackupFile | Should -Be $true
         (Get-Content -LiteralPath $CFG_BackupFile -Raw).Trim() | Should -BeExactly $corruptContent
         @(Get-ChildItem $SCRIPT:TestTempRoot -Filter "backup.corrupt.*.json").Count | Should -Be 0
+    }
+
+    It "does not consume or reset an existing backup when integrity validation rejects it" {
+        Set-Content -LiteralPath $CFG_BackupFile -Value 'untrusted bytes' -Encoding UTF8
+        Mock Assert-TrustedExistingControlFile { throw 'unsafe ACE' }
+        Mock Get-Content { throw 'backup bytes must not be read' }
+        Mock Remove-Item {}
+
+        { Get-BackupDataRaw } | Should -Throw '*unsafe ACE*'
+
+        Should -Invoke Get-Content -Exactly 0 -ParameterFilter { $Path -eq $CFG_BackupFile }
+        Should -Invoke Remove-Item -Exactly 0 -ParameterFilter { $Path -eq $CFG_BackupFile }
+    }
+}
+
+Describe "Load-Progress control-data validation" {
+
+    BeforeEach {
+        Reset-TestState
+        Mock Write-Warn {}
+        Mock Write-DebugLog {}
+    }
+
+    It "does not consume or preserve a progress file when integrity validation rejects it" {
+        Set-Content -LiteralPath $CFG_ProgressFile -Value '{"phase":1}' -Encoding UTF8
+        Mock Assert-TrustedExistingControlFile { throw 'unsafe ACE' }
+        Mock Get-Content { throw 'progress bytes must not be read' }
+        Mock Copy-Item {}
+
+        { Load-Progress } | Should -Throw '*unsafe ACE*'
+
+        Should -Invoke Get-Content -Exactly 0 -ParameterFilter { $Path -eq $CFG_ProgressFile }
+        Should -Invoke Copy-Item -Exactly 0 -ParameterFilter { $Path -eq $CFG_ProgressFile }
     }
 }
 
@@ -141,63 +202,85 @@ Describe "Set-RunOnce configurable ExecutionPolicy" {
     BeforeEach {
         Reset-TestState
         $SCRIPT:DryRun = $false
+        $script:RuntimeGeneration = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef"
+        $script:Phase2Script = "$script:RuntimeGeneration\SafeMode-DriverClean.ps1"
+        $script:Phase3Script = "$script:RuntimeGeneration\PostReboot-Setup.ps1"
         Mock Write-OK {}
         Mock Write-Warn {}
         Mock Write-Err {}
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+        Mock Test-Path { $true }
+        Mock Test-HostIsWindows { $true }
+        Mock Get-PhaseRuntimePublisherSid { "S-1-5-21-1000-1000-1000-1001" }
+        Mock Ensure-SecureWorkDir {}
+        Mock Set-PhaseRuntimePayloadAcl {}
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
         Mock Set-SecureAcl {}
         Mock Set-ItemProperty {}
         Mock New-Item {}
+        Mock Get-TrustedWindowsToolPath { "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" }
     }
 
     It "uses CFG_RunOnceExecutionPolicy in the RunOnce command line" {
         $CFG_RunOnceExecutionPolicy = "AllSigned"
 
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase2" -scriptPath $script:Phase2Script -SafeMode
 
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
-            $Name -eq "FRAMETIME_CFG_FRAMETIME_Phase3" -and
-            $Value -match "-Verb RunAs" -and
-            $Value -match "-ExecutionPolicy AllSigned"
+            $Path -eq "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -and
+            $Name -eq "*!FRAMETIME_Phase2" -and
+            $Value -match "-ExecutionPolicy AllSigned" -and
+            $Value -match "-File" -and
+            $Value -notmatch "-Command"
+        }
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 1
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 1 -ParameterFilter {
+            $Path -eq $CFG_WorkDir -and $PublisherSid -eq "S-1-5-21-1000-1000-1000-1001" -and $NoInheritance
         }
     }
 
     It "keeps Safe Mode execution semantics for the Phase 2 handoff" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\SafeMode-DriverClean.ps1" }
-
-        Set-RunOnce -name "FRAMETIME_Phase2" -scriptPath "C:\FRAMETIME_CFG\SafeMode-DriverClean.ps1" -SafeMode
+        Set-RunOnce -name "FRAMETIME_Phase2" -scriptPath $script:Phase2Script -SafeMode
 
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
             $Name -eq "*!FRAMETIME_Phase2" -and
             $Value -match "-ExecutionPolicy Bypass"
         }
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 1
     }
 
     It "rejects invalid CFG_RunOnceExecutionPolicy values" {
         $CFG_RunOnceExecutionPolicy = "Nope"
 
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $script:Phase3Script
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'invalid CFG_RunOnceExecutionPolicy' }
         Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 0
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 0
     }
 
     It "rejects Undefined because client policy precedence can block RunOnce" {
         $CFG_RunOnceExecutionPolicy = "Undefined"
 
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $script:Phase3Script
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'unsupported on client systems' }
         Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 0
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 0
     }
 
     It "rejects Unrestricted to keep the RunOnce trust surface narrow" {
         $CFG_RunOnceExecutionPolicy = "Unrestricted"
 
-        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        Set-RunOnce -name "FRAMETIME_Phase3" -scriptPath $script:Phase3Script
 
         Should -Invoke Write-Warn -Exactly 1 -ParameterFilter { $t -match 'invalid CFG_RunOnceExecutionPolicy' }
         Should -Invoke Set-ItemProperty -Exactly 0
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 0
+        Should -Invoke Ensure-SecureWorkDir -Exactly 0
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 0
     }
 }

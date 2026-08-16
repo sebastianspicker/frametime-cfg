@@ -2,6 +2,97 @@
 #  helpers/system-utils.ps1  -  Download, Registry, Boot Config, Filesystem
 # ==============================================================================
 
+function Get-TrustedWindowsToolPath {
+    <#
+    .SYNOPSIS
+        Resolves a Windows inbox executable without consulting PATH.
+
+    .DESCRIPTION
+        Elevated PowerShell sessions must not resolve security-sensitive inbox
+        tools through the caller-controlled PATH.  The optional SystemDirectory
+        parameter is a deterministic test seam; production callers use the
+        current Windows system directory.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('bcdedit', 'powercfg', 'netsh', 'shutdown', 'ipconfig', 'wevtutil', 'fsutil', 'powershell')]
+        [string]$Name,
+        [string]$SystemDirectory
+    )
+
+    $relativePath = switch ($Name) {
+        'powershell' { 'WindowsPowerShell\v1.0\powershell.exe'; break }
+        default      { "$Name.exe"; break }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SystemDirectory)) {
+        if (-not (Test-HostIsWindows)) {
+            throw "Trusted Windows tool resolution is unavailable on this host: $Name"
+        }
+        # A 32-bit PowerShell process on 64-bit Windows is redirected from
+        # System32 to SysWOW64. Sysnative reaches the native system directory
+        # for the security-sensitive tools this helper allows.
+        if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+            $windowsDirectory = [IO.Directory]::GetParent([Environment]::SystemDirectory).FullName
+            $SystemDirectory = Join-Path $windowsDirectory 'Sysnative'
+        } else {
+            $SystemDirectory = [Environment]::SystemDirectory
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($SystemDirectory) -or -not [IO.Path]::IsPathRooted($SystemDirectory)) {
+        throw "Trusted Windows system directory is invalid for '$Name'."
+    }
+
+    $systemRoot = [IO.Path]::GetFullPath($SystemDirectory)
+    $candidatePath = [IO.Path]::GetFullPath((Join-Path $systemRoot $relativePath))
+    $rootWithSeparator = $systemRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $candidatePath.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Trusted Windows tool path escaped the system directory: '$Name'."
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $candidatePath -Force -ErrorAction Stop
+    } catch {
+        throw "Trusted Windows tool is unavailable: '$candidatePath'. $_"
+    }
+    if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer -or
+        ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Trusted Windows tool is not a regular, non-reparse file: '$candidatePath'."
+    }
+
+    $resolvedPath = [IO.Path]::GetFullPath($item.FullName)
+    if (-not [String]::Equals($candidatePath, $resolvedPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Trusted Windows tool did not resolve to its expected system path: '$candidatePath'."
+    }
+    return $candidatePath
+}
+
+function Invoke-TrustedWindowsTool {
+    <# Invokes a fixed allowlisted inbox executable while preserving native output and $LASTEXITCODE. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('bcdedit', 'powercfg', 'netsh', 'shutdown', 'ipconfig', 'wevtutil', 'fsutil', 'powershell')]
+        [string]$Name,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $toolPath = Get-TrustedWindowsToolPath -Name $Name
+    & $toolPath @Arguments
+}
+
+# Keep the existing command-shaped call sites and Pester mocks compatible while
+# routing every bare inbox-tool invocation through the trusted resolver above.
+function global:bcdedit { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name bcdedit @Arguments }
+function global:powercfg { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name powercfg @Arguments }
+function global:netsh { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name netsh @Arguments }
+function global:shutdown { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name shutdown @Arguments }
+function global:ipconfig { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name ipconfig @Arguments }
+function global:wevtutil { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name wevtutil @Arguments }
+function global:fsutil { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name fsutil @Arguments }
+
 function Invoke-Download {
     [CmdletBinding()]
     param([string]$url, [string]$dest, [string]$name)
@@ -152,6 +243,202 @@ function Save-JsonAtomic {
     }
 }
 
+function Test-SecureAcl {
+    <#
+    .SYNOPSIS
+        Proves that a sensitive filesystem object is owned and writable only
+        by the local Administrators group or SYSTEM.
+
+    .DESCRIPTION
+        An owner can always change a DACL.  Therefore a restrictive DACL is
+        not a trust boundary while an untrusted account retains ownership.
+        This intentionally accepts only the two principals used by
+        Set-SecureAcl and requires both to retain FullControl.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$PublisherSid
+    )
+
+    try {
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $trustedSids = @("S-1-5-32-544", "S-1-5-18")
+        $toSid = {
+            param($Identity)
+            try {
+                if ($Identity -is [Security.Principal.SecurityIdentifier]) {
+                    return $Identity.Value
+                }
+                return $Identity.Translate([Security.Principal.SecurityIdentifier]).Value
+            } catch {
+                # This also keeps deterministic Pester ACL doubles usable on
+                # non-Windows hosts without loosening Windows behaviour.
+                $identityText = [string]$Identity
+                if ($identityText -match '^S-1-[0-9]+(?:-[0-9]+)+$') { return $identityText }
+                if ($identityText -match '(?i)^(BUILTIN\\Administrators|S-1-5-32-544)$') { return "S-1-5-32-544" }
+                if ($identityText -match '(?i)^(NT AUTHORITY\\SYSTEM|SYSTEM|S-1-5-18)$') { return "S-1-5-18" }
+                return $null
+            }
+        }
+
+        $ownerSid = & $toSid $acl.Owner
+        if ($ownerSid -notin $trustedSids) {
+            return [PSCustomObject]@{ Valid = $false; Message = "ACL owner is not BUILTIN\\Administrators or SYSTEM: $Path" }
+        }
+        if (-not $acl.AreAccessRulesProtected) {
+            return [PSCustomObject]@{ Valid = $false; Message = "ACL inheritance is not protected: $Path" }
+        }
+
+        $unsafeRights = [Security.AccessControl.FileSystemRights]::WriteData -bor
+            [Security.AccessControl.FileSystemRights]::AppendData -bor
+            [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+            [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor
+            [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+        if ($PublisherSid -and $PublisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') {
+            return [PSCustomObject]@{ Valid = $false; Message = "Runtime publisher SID is invalid: $Path" }
+        }
+        $trustedFullControl = @{}
+        $publisherReadExecute = $false
+        # Windows ACL APIs normally add Synchronize to an Allow ReadAndExecute
+        # FileSystemAccessRule. It is safe and required for the ACE we create.
+        $readExecuteRights = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+        $safePublisherRights = $readExecuteRights -bor [Security.AccessControl.FileSystemRights]::Synchronize
+        foreach ($rule in @($acl.Access)) {
+            $ruleSid = & $toSid $rule.IdentityReference
+            if ($null -eq $ruleSid) {
+                return [PSCustomObject]@{ Valid = $false; Message = "ACL contains an unresolvable principal: $Path" }
+            }
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
+                if ($ruleSid -notin $trustedSids -and (($rule.FileSystemRights -band $unsafeRights) -ne 0)) {
+                    return [PSCustomObject]@{ Valid = $false; Message = "ACL grants an untrusted principal write or ownership rights: $Path" }
+                }
+                if ($ruleSid -notin $trustedSids) {
+                    if (-not $PublisherSid -or $ruleSid -ne $PublisherSid -or
+                        (([int64]$rule.FileSystemRights -band (-bnot [int64]$safePublisherRights)) -ne 0)) {
+                        return [PSCustomObject]@{ Valid = $false; Message = "ACL grants an untrusted principal rights beyond the bound publisher read/execute access: $Path" }
+                    }
+                    if (($rule.FileSystemRights -band $readExecuteRights) -eq $readExecuteRights) { $publisherReadExecute = $true }
+                }
+                if ($ruleSid -in $trustedSids -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl)) {
+                    $trustedFullControl[$ruleSid] = $true
+                }
+            }
+        }
+        foreach ($trustedSid in $trustedSids) {
+            if (-not $trustedFullControl.ContainsKey($trustedSid)) {
+                return [PSCustomObject]@{ Valid = $false; Message = "ACL does not grant FullControl to required trusted principal: $Path" }
+            }
+        }
+        if ($PublisherSid -and -not $publisherReadExecute) {
+            return [PSCustomObject]@{ Valid = $false; Message = "ACL does not grant ReadAndExecute to the bound runtime publisher: $Path" }
+        }
+        return [PSCustomObject]@{ Valid = $true; Message = "ACL ownership and DACL are protected." }
+    } catch {
+        return [PSCustomObject]@{ Valid = $false; Message = "Could not verify ACL protection: $Path. $_" }
+    }
+}
+
+function Assert-TrustedExistingControlFile {
+    <#
+    .SYNOPSIS
+        Fails closed unless an existing mutable control file is regular and
+        already protected by the BA/SYSTEM-only control-data ACL.
+
+    .DESCRIPTION
+        This never repairs an existing file: callers must invoke it before
+        parsing state, progress, or backup bytes.  On non-Windows hosts it
+        verifies only regular/non-reparse filesystem shape, because Windows
+        ACL authority is unavailable; this makes the platform boundary
+        explicit and keeps portable test fixtures deterministic.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Trusted control file is missing or not a regular file: $Path"
+    }
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ($item.PSProvider.Name -ne 'FileSystem' -or $item.PSIsContainer -or
+        (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "Trusted control file is not a regular non-reparse filesystem file: $Path"
+    }
+    if (-not (Test-HostIsWindows)) { return $true }
+    $proof = Test-SecureAcl -Path $Path
+    if (-not $proof.Valid) { throw "Trusted control file ACL validation failed: $($proof.Message)" }
+    return $true
+}
+
+function Get-PhaseRuntimePublisherSid {
+    [CmdletBinding()]
+    param()
+
+    if (-not (Test-HostIsWindows)) { return $null }
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ([string]::IsNullOrWhiteSpace($sid) -or $sid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') {
+        throw "Could not determine the runtime publisher SID."
+    }
+    return $sid
+}
+
+function Set-PhaseRuntimePayloadAcl {
+    <# Grants only the publishing account ReadAndExecute after required owner/DACL hardening. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$PublisherSid,
+        [switch]$NoInheritance
+    )
+
+    if (-not (Test-HostIsWindows)) { return }
+    Set-SecureAcl -Path $Path -Required
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $publisher = [Security.Principal.SecurityIdentifier]::new($PublisherSid)
+        $inheritance = if ($NoInheritance) {
+            [Security.AccessControl.InheritanceFlags]::None
+        } elseif ($item.PSIsContainer) {
+            [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+        } else {
+            [Security.AccessControl.InheritanceFlags]::None
+        }
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            $publisher,
+            [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+            $inheritance,
+            [Security.AccessControl.PropagationFlags]::None,
+            [Security.AccessControl.AccessControlType]::Allow
+        )
+        $acl.SetAccessRule($rule)
+        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+        $proof = Test-SecureAcl -Path $Path -PublisherSid $PublisherSid
+        if (-not $proof.Valid) { throw $proof.Message }
+    } catch {
+        throw "Failed to grant the bound runtime publisher read/execute access on '$Path': $_"
+    }
+}
+
+function Restore-ProtectedRuntimePublisherTraverse {
+    <# Restores only the current publisher's non-inheriting root RX ACE after a
+       protected phase reload hardens mutable control data. #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$RuntimeRoot)
+
+    if (-not (Test-HostIsWindows)) { return }
+    $normalizedRuntimeRoot = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+    if ($normalizedRuntimeRoot -notmatch '(?i)^C:\\FRAMETIME_CFG\\runtime-generations\\[a-f0-9]{32}$') {
+        throw "Protected runtime publisher traverse can be restored only for a published generation."
+    }
+    $publisherSid = Get-PhaseRuntimePublisherSid
+    Set-PhaseRuntimePayloadAcl -Path 'C:\FRAMETIME_CFG' -PublisherSid $publisherSid -NoInheritance
+    $proof = Test-PhaseRuntimePayload -RuntimeRoot $normalizedRuntimeRoot
+    if (-not $proof.Valid) { throw "Protected runtime publisher traverse restoration failed validation: $($proof.Message)" }
+}
+
 function Set-SecureAcl {
     <#  Applies an Administrators/SYSTEM-only ACL to a sensitive file or directory.
         NOTE: C:\FRAMETIME_CFG should also inherit restrictive ACLs so newly created
@@ -169,6 +456,7 @@ function Set-SecureAcl {
     $principal = [Security.Principal.WindowsPrincipal]$identity
     $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) {
+        if ($Required) { throw "Failed to secure ACL on '$Path': an elevated Administrator session is required." }
         Write-DebugLog "Set-SecureAcl: skipped ACL hardening for '$Path' in non-elevated session."
         return
     }
@@ -205,24 +493,19 @@ function Set-SecureAcl {
         }
         $acl.SetAccessRule($adminRule)
         $acl.SetAccessRule($systemRule)
-        if (-not $PSCmdlet.ShouldProcess($Path, "Apply restricted Administrators/SYSTEM ACL")) { return }
-        Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+        if (-not $PSCmdlet.ShouldProcess($TargetPath, "Apply restricted Administrators/SYSTEM ACL")) { return $false }
+        Set-Acl -LiteralPath $TargetPath -AclObject $acl -ErrorAction Stop
+        return $true
     }
 
     try {
-        Set-SuiteDacl -TargetPath $Path -AdministratorsAccount $admins -SystemAccount $system -SetOwner
+        $applied = Set-SuiteDacl -TargetPath $Path -AdministratorsAccount $admins -SystemAccount $system -SetOwner
+        if ($applied -eq $false) { return }
+        $proof = Test-SecureAcl -Path $Path
+        if (-not $proof.Valid) { throw $proof.Message }
     } catch {
-        $ownerError = $_
-        try {
-            # Some elevated contexts may still be unable to change ownership.
-            # Keep the restrictive DACL when possible; non-elevated sandboxes
-            # return above so they do not lock themselves out of temp files.
-            Set-SuiteDacl -TargetPath $Path -AdministratorsAccount $admins -SystemAccount $system
-            Write-DebugLog "Set-SecureAcl: owner assignment skipped for '$Path': $ownerError"
-        } catch {
-            if ($Required) { throw "Failed to secure ACL on '$Path': $_" }
-            Write-Warn "Failed to secure ACL on '$Path': $_"
-        }
+        if ($Required) { throw "Failed to secure ACL on '$Path': $_" }
+        Write-Warn "Failed to secure ACL on '$Path': $_"
     }
 }
 
@@ -279,6 +562,63 @@ function Test-TrustedSuiteScriptPath {
     )
 }
 
+function Get-TrustedDescendantRegularFilePath {
+    <#
+    .SYNOPSIS
+        Resolves a regular, non-reparse file directly below a trusted root.
+
+    .DESCRIPTION
+        GUI launchers use this after an allowlist has selected the relative
+        filename.  It keeps a filename from being reinterpreted as a path and
+        rejects junctions/symlinks anywhere between the root and target.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Root) -or [string]::IsNullOrWhiteSpace($RelativePath)) {
+        throw "Trusted descendant path requires a root and relative filename."
+    }
+    if ([IO.Path]::IsPathRooted($RelativePath)) {
+        throw "Trusted descendant path must be relative: $RelativePath"
+    }
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd([char[]]@([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar))
+    $candidatePath = [IO.Path]::GetFullPath((Join-Path $rootPath $RelativePath))
+    $rootWithSeparator = $rootPath + [IO.Path]::DirectorySeparatorChar
+    if (-not $candidatePath.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Trusted descendant path escaped the root: $RelativePath"
+    }
+
+    $pathToInspect = $candidatePath
+    while ($true) {
+        try {
+            $item = Get-Item -LiteralPath $pathToInspect -Force -ErrorAction Stop
+        } catch {
+            throw "Trusted descendant path is unavailable: '$pathToInspect'. $_"
+        }
+        if ($item.PSProvider.Name -ne 'FileSystem' -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Trusted descendant path is not a non-reparse filesystem path: '$pathToInspect'."
+        }
+        if ($pathToInspect -eq $candidatePath -and $item.PSIsContainer) {
+            throw "Trusted descendant target is not a regular file: '$candidatePath'."
+        }
+        if ([String]::Equals([IO.Path]::GetFullPath($item.FullName), $rootPath, [StringComparison]::OrdinalIgnoreCase)) {
+            if (-not $item.PSIsContainer) { throw "Trusted descendant root is not a directory: '$rootPath'." }
+            break
+        }
+        $parentPath = Split-Path -Path $pathToInspect -Parent
+        if ([string]::IsNullOrWhiteSpace($parentPath) -or $parentPath -eq $pathToInspect) {
+            throw "Trusted descendant path did not reach its root: '$candidatePath'."
+        }
+        $pathToInspect = $parentPath
+    }
+    return $candidatePath
+}
+
 function Get-LegacyPhaseHandoffs {
     [CmdletBinding()]
     param()
@@ -330,6 +670,7 @@ function Get-PhaseRuntimePayloadRelativePaths {
     return @(
         "SafeMode-DriverClean.ps1",
         "PostReboot-Setup.ps1",
+        "PhaseRuntime-ElevationBootstrap.ps1",
         "Guide-VideoSettings.ps1",
         "helpers.ps1",
         "config.env.ps1",
@@ -443,9 +784,38 @@ function Test-PhaseRuntimePayload {
     try {
         if (-not (Test-Path -LiteralPath $RuntimeRoot -PathType Container)) { throw "Runtime directory is missing." }
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Runtime manifest is missing." }
+        $expectedPublisherSid = $null
+        if (Test-HostIsWindows) {
+            $expectedPublisherSid = Get-PhaseRuntimePublisherSid
+            $runtimeFullPath = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+            $isPublishedGeneration = $runtimeFullPath -match '(?i)^C:\\FRAMETIME_CFG\\runtime-generations\\[a-f0-9]{32}$'
+            $isStagingGeneration = $runtimeFullPath -match '(?i)^C:\\FRAMETIME_CFG\\.runtime-staging-[a-f0-9]{32}$'
+            if (-not $isPublishedGeneration -and -not $isStagingGeneration) {
+                throw "Runtime root is outside the protected generation path."
+            }
+            $protectedPaths = @('C:\FRAMETIME_CFG', $RuntimeRoot, $manifestPath) +
+                @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Recurse -Force -ErrorAction Stop | ForEach-Object FullName) +
+                @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop | ForEach-Object FullName)
+            if ($isPublishedGeneration) { $protectedPaths += 'C:\FRAMETIME_CFG\runtime-generations' }
+            foreach ($protectedPath in $protectedPaths) {
+                $protectedItem = Get-Item -LiteralPath $protectedPath -Force -ErrorAction Stop
+                if ($protectedItem.PSProvider.Name -ne 'FileSystem' -or
+                    (($protectedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+                    throw "Runtime object is not a regular non-reparse filesystem path: $protectedPath"
+                }
+                $aclProof = Test-SecureAcl -Path $protectedPath -PublisherSid $expectedPublisherSid
+                if (-not $aclProof.Valid) { throw "Runtime ACL validation failed: $($aclProof.Message)" }
+            }
+        }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         if ($manifest.schemaVersion -ne 1) { throw "Unsupported runtime manifest schema." }
         if ($manifest.payloadContract -ne (Get-PhaseRuntimePayloadContractId)) { throw "Runtime manifest payload contract is invalid." }
+        $publisherSid = [string]$manifest.publisherSid
+        if (Test-HostIsWindows) {
+            if ($publisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$' -or $publisherSid -ne $expectedPublisherSid) {
+                throw "Runtime manifest publisher SID is invalid or does not match the current user."
+            }
+        }
 
         $expectedPaths = @(Get-PhaseRuntimePayloadRelativePaths | Sort-Object)
         $manifestFiles = @($manifest.files)
@@ -468,6 +838,10 @@ function Test-PhaseRuntimePayload {
             $expectedHash = [string]$entry.sha256
             if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "Invalid hash in runtime manifest: $relativePath" }
             $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            if (Test-HostIsWindows) {
+                $aclProof = Test-SecureAcl -Path $filePath -PublisherSid $publisherSid
+                if (-not $aclProof.Valid) { throw "Runtime ACL validation failed: $($aclProof.Message)" }
+            }
             $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
             if ($actualHash -ne $expectedHash) { throw "Runtime hash mismatch: $relativePath" }
         }
@@ -700,6 +1074,8 @@ function Copy-PhaseRuntimePayload {
     }
 
     Ensure-SecureWorkDir -Path $DestinationRoot
+    $publisherSid = Get-PhaseRuntimePublisherSid
+    if ($publisherSid) { Set-PhaseRuntimePayloadAcl -Path $DestinationRoot -PublisherSid $publisherSid -NoInheritance }
     $publishLock = Enter-PhaseRuntimePublishLock -DestinationRoot $DestinationRoot
     $generationId = [Guid]::NewGuid().ToString("N")
     $generationsRoot = Join-Path $DestinationRoot "runtime-generations"
@@ -718,7 +1094,9 @@ function Copy-PhaseRuntimePayload {
             $sourcePath = Join-Path $SourceRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
             if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Required runtime file missing: $relativePath" }
             $stagePath = Join-Path $stageRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
-            Ensure-Dir (Split-Path -Path $stagePath -Parent)
+            $stageParent = Split-Path -Path $stagePath -Parent
+            Ensure-Dir $stageParent
+            Set-SecureAcl -Path $stageParent -Required
             Copy-Item -LiteralPath $sourcePath -Destination $stagePath -Force -ErrorAction Stop
             Set-SecureAcl -Path $stagePath -Required
             $manifestFiles += [PSCustomObject]@{
@@ -730,10 +1108,26 @@ function Copy-PhaseRuntimePayload {
             schemaVersion = 1
             payloadContract = Get-PhaseRuntimePayloadContractId
             createdUtc = [DateTime]::UtcNow.ToString("o")
+            publisherSid = $publisherSid
             files = @($manifestFiles)
         }
         Save-JsonAtomic -Data $manifest -Path (Join-Path $stageRoot "runtime-manifest.json")
-        Set-SecureAcl -Path $stageRoot -Required
+        if ($publisherSid) {
+            Set-PhaseRuntimePayloadAcl -Path $stageRoot -PublisherSid $publisherSid
+            foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $stageRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+                Set-PhaseRuntimePayloadAcl -Path $stageDirectory.FullName -PublisherSid $publisherSid
+            }
+            Set-PhaseRuntimePayloadAcl -Path (Join-Path $stageRoot 'runtime-manifest.json') -PublisherSid $publisherSid
+            foreach ($stageFile in @(Get-ChildItem -LiteralPath $stageRoot -File -Recurse -Force -ErrorAction Stop | Where-Object Name -ne 'runtime-manifest.json')) {
+                Set-PhaseRuntimePayloadAcl -Path $stageFile.FullName -PublisherSid $publisherSid
+            }
+        }
+        if (-not $publisherSid) {
+            foreach ($stageDirectory in @(Get-ChildItem -LiteralPath $stageRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+                Set-SecureAcl -Path $stageDirectory.FullName -Required
+            }
+            Set-SecureAcl -Path $stageRoot -Required
+        }
 
         $stageValidation = Test-PhaseRuntimePayload -RuntimeRoot $stageRoot
         if (-not $stageValidation.Valid) { throw $stageValidation.Message }
@@ -743,6 +1137,17 @@ function Copy-PhaseRuntimePayload {
         # across crashes, retries, and later publications.
         Move-Item -LiteralPath $stageRoot -Destination $runtimeRoot -ErrorAction Stop
         $generationPublished = $true
+        if ($publisherSid) {
+            Set-PhaseRuntimePayloadAcl -Path $generationsRoot -PublisherSid $publisherSid
+            Set-PhaseRuntimePayloadAcl -Path $runtimeRoot -PublisherSid $publisherSid
+            foreach ($runtimeDirectory in @(Get-ChildItem -LiteralPath $runtimeRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+                Set-PhaseRuntimePayloadAcl -Path $runtimeDirectory.FullName -PublisherSid $publisherSid
+            }
+            Set-PhaseRuntimePayloadAcl -Path (Join-Path $runtimeRoot 'runtime-manifest.json') -PublisherSid $publisherSid
+            foreach ($runtimeFile in @(Get-ChildItem -LiteralPath $runtimeRoot -File -Recurse -Force -ErrorAction Stop | Where-Object Name -ne 'runtime-manifest.json')) {
+                Set-PhaseRuntimePayloadAcl -Path $runtimeFile.FullName -PublisherSid $publisherSid
+            }
+        }
         $publishedValidation = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
         if (-not $publishedValidation.Valid) { throw $publishedValidation.Message }
 
@@ -803,7 +1208,7 @@ function Set-Phase1SafeModeReadyFlag {
     )
 
     if (-not (Test-Path $Path)) {
-        throw "Settings file not found at '$Path' - run Phase 1 first (START.bat -> [1])."
+        throw "Settings file not found at '$Path' - Phase 1 must first run from an authenticated live release."
     }
 
     $state = Get-Content $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -929,7 +1334,8 @@ function Load-State {
     if (-not $ReadOnly) {
         Ensure-SecureWorkDir -Path (Split-Path $Path -Parent)
     }
-    if (-not (Test-Path -LiteralPath $Path)) { throw "Settings file not found at '$Path' - run Phase 1 first (START.bat -> [1])." }
+    if (-not (Test-Path -LiteralPath $Path)) { throw "Settings file not found at '$Path' - Phase 1 must first run from an authenticated live release." }
+    [void](Assert-TrustedExistingControlFile -Path $Path)
     # -Raw ensures the entire file is read as a single string (consistent with backup-restore.ps1).
     # Without -Raw, multi-line JSON could be split into a string array, causing ConvertFrom-Json to
     # receive individual lines instead of a complete JSON document.
@@ -1008,7 +1414,7 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    if ($normalizedPath -notmatch '^C:\\FRAMETIME_CFG\\(?:(?:runtime\\)|(?:runtime-generations\\[a-fA-F0-9]{32}\\))?[a-zA-Z0-9_.-]+\.ps1$') {
+    if ($normalizedPath -notmatch '^C:\\FRAMETIME_CFG\\runtime-generations\\[a-fA-F0-9]{32}\\[a-zA-Z0-9_.-]+\.ps1$') {
         $message = "Set-RunOnce: phase handoff path contains unsupported characters: $scriptPath"
         Write-Warn $message
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
@@ -1026,7 +1432,7 @@ function Set-RunOnce {
         $message = "RunOnce target does not exist: $scriptPath"
         Write-Warn $message
         Write-ConsoleLine "  $([char]0x2139) What to do: Phase 3 will NOT auto-start on next boot." -ForegroundColor Cyan
-        Write-ConsoleLine "    After rebooting, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        Write-ConsoleLine "    After rebooting, invoke PhaseRuntime-ElevationBootstrap.ps1 from the protected generation." -ForegroundColor Cyan
         if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
         return
     }
@@ -1044,15 +1450,42 @@ function Set-RunOnce {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
         return
     }
-    $directCommand = "powershell.exe -NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File `"$normalizedPath`""
-    $elevatedArguments = "-NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File $normalizedPath"
-    $bootstrap = "Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList '$elevatedArguments'"
-    $elevatedCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -Command `"$bootstrap`""
-    if (-not $SafeMode -and $elevatedCommand.Length -gt 260) {
-        $message = "Set-RunOnce: generated phase handoff exceeds the Windows Run command-line limit"
-        Write-Warn $message
-        if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
-        return
+    $powershellPath = Get-TrustedWindowsToolPath -Name powershell
+    $quotedPowerShellPath = '"' + $powershellPath + '"'
+    $directCommand = "$quotedPowerShellPath -NoProfile -ExecutionPolicy $executionPolicy -WindowStyle Normal -File `"$normalizedPath`""
+    $runtimeRoot = Split-Path -Path $normalizedPath -Parent
+    if (-not $SafeMode) {
+        if ((Split-Path -Path $normalizedPath -Leaf) -ne "PostReboot-Setup.ps1") {
+            $message = "Set-RunOnce: normal-boot handoffs may target only PostReboot-Setup.ps1 - rejected: $scriptPath"
+            Write-Warn $message
+            if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message $message) }
+            return
+        }
+        $bootstrapPath = "$runtimeRoot\PhaseRuntime-ElevationBootstrap.ps1"
+        if (-not (Test-Path -LiteralPath $bootstrapPath -PathType Leaf)) {
+            $message = "Set-RunOnce: fixed Phase 3 elevation bootstrap is missing from the protected runtime: $bootstrapPath"
+            Write-Warn $message
+            if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
+            return
+        }
+        $bootstrapItem = Get-Item -LiteralPath $bootstrapPath -Force -ErrorAction SilentlyContinue
+        if (-not $bootstrapItem -or $bootstrapItem.PSProvider.Name -ne 'FileSystem' -or $bootstrapItem.PSIsContainer -or
+            ($bootstrapItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $message = "Set-RunOnce: fixed Phase 3 elevation bootstrap is not a regular non-reparse file: $bootstrapPath"
+            Write-Warn $message
+            if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
+            return
+        }
+        # -File passes the two already ValidateSet-constrained bootstrap values
+        # positionally. Named parameters plus WindowStyle exceed the documented
+        # 260-character Run value limit even under the standard Windows path.
+        $directCommand = "$quotedPowerShellPath -NoProfile -ExecutionPolicy $executionPolicy -File `"$bootstrapPath`" PostReboot-Setup.ps1 $executionPolicy"
+        if ($directCommand.Length -gt 260) {
+            $message = "Set-RunOnce: generated fixed Phase 3 bootstrap handoff exceeds the Windows Run command-line limit"
+            Write-Warn $message
+            if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
+            return
+        }
     }
     if (-not $PSCmdlet.ShouldProcess($registrationName, "Register phase handoff for $normalizedPath")) {
         if ($PassThru) { return (New-WriteOperationResult -Status "Skipped" -Message "Phase handoff skipped: $registrationName -> $normalizedPath") }
@@ -1060,13 +1493,20 @@ function Set-RunOnce {
     }
     try {
         Ensure-SecureWorkDir -Path $CFG_WorkDir
-        Set-SecureAcl -Path $scriptPath -Required
+        $publisherSid = if (Test-HostIsWindows) { Get-PhaseRuntimePublisherSid } else { $null }
+        if ((Test-HostIsWindows) -and -not $publisherSid) { throw "Set-RunOnce: runtime publisher SID is unavailable." }
+        # Ensure-SecureWorkDir hardens mutable control data. Restore only the
+        # non-inheriting RX traversal grant, then prove the payload before the
+        # registry write. This runs only after ShouldProcess approves it.
+        if ($publisherSid) { Set-PhaseRuntimePayloadAcl -Path $CFG_WorkDir -PublisherSid $publisherSid -NoInheritance }
+        $payloadValidation = Test-PhaseRuntimePayload -RuntimeRoot $runtimeRoot
+        if (-not $payloadValidation.Valid) { throw "Set-RunOnce: runtime trust proof changed before registration. $($payloadValidation.Message)" }
         if ($SafeMode) {
             Set-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -Name $registrationName -Value $directCommand -ErrorAction Stop
         } else {
             $runKey = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
             if (-not (Test-Path $runKey)) { New-Item -Path $runKey -Force -ErrorAction Stop | Out-Null }
-            Set-ItemProperty $runKey -Name $registrationName -Value $elevatedCommand -ErrorAction Stop
+            Set-ItemProperty $runKey -Name $registrationName -Value $directCommand -ErrorAction Stop
         }
         Write-OK "Phase handoff: $registrationName -> $normalizedPath"
         if ($PassThru) { return (New-WriteOperationResult -Status "Success" -Message "Phase handoff set: $registrationName -> $normalizedPath") }
@@ -1074,7 +1514,7 @@ function Set-RunOnce {
         $message = "Failed to register phase handoff '$registrationName': $_"
         Write-Err $message
         Write-ConsoleLine "  $([char]0x2139) What to do: Phase 3 will NOT auto-start after reboot." -ForegroundColor Cyan
-        Write-ConsoleLine "    After rebooting, run Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        Write-ConsoleLine "    After rebooting, invoke PhaseRuntime-ElevationBootstrap.ps1 from the protected generation." -ForegroundColor Cyan
         if ($PassThru) { return (New-WriteOperationResult -Status "Failed" -Message $message) }
     }
 }
@@ -1662,7 +2102,9 @@ function Test-SystemCompatibility {
     }
 
     # Windows Server / LTSC - missing AppX, Xbox services, some consumer features
-    $productType = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    $productType = if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
+        (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).ProductType
+    }
     # ProductType: 1=Workstation, 2=DomainController, 3=Server
     if ($productType -and $productType -ne 1) {
         Write-Warn "Windows Server/DC edition detected (ProductType=$productType)."

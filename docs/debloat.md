@@ -165,7 +165,7 @@ start type for `DiagTrack` and `dmwappushservice`.
 
 Telemetry scheduled tasks can be re-enabled via Task Scheduler (taskschd.msc) → navigate to the task path → right-click → Enable.
 
-Autostart entries (Step 14) are backed up by the suite's backup system and can be restored via START.bat → [7] Restore / Rollback → select Step 14.
+Autostart entries (Step 14) are backed up by the suite's backup system. Portable restore is currently unavailable until source authentication is established; retain `backup.json` for a trusted recovery build.
 
 The CloudContent and AdvertisingInfo values are captured before mutation and
 restored through the Recovery flow. Use the values recorded in `backup.json`

@@ -19,11 +19,11 @@
           Microsoft Basic Display Adapter (MSBDA). Resolution limited to 1024x768 but
           the system is usable. User can install GPU driver normally.
         - The per-user Phase 3 handoff was NOT yet registered (Step 3), so Phase 3 won't
-          auto-start. START.bat -> [P] launches the manifest-verified published runtime.
+          auto-start. Invoke the elevation bootstrap from the protected generation.
 
     Crash during Step 3 (per-user Run handoff registration):
         Steps 1+2 completed. Next boot = Normal Mode, GPU driver removed.
-        - Phase 3 won't auto-start. START.bat -> [P] launches the verified runtime.
+        - Phase 3 won't auto-start. Invoke the protected generation's elevation bootstrap.
         - This is the lowest-risk crash point - system boots fine, just needs manual Phase 3.
 
     Power failure during Restart-Computer:
@@ -37,12 +37,137 @@ function Test-PublishedRuntimePayloadBootstrap {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$RuntimeRoot)
 
+    function Assert-ProtectedRuntimeObject {
+        param(
+            [Parameter(Mandatory)][string]$Path,
+            [switch]$Directory,
+            [string]$PublisherSid
+        )
+
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($item.PSProvider.Name -ne 'FileSystem' -or
+            (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or
+            ($Directory -and -not $item.PSIsContainer) -or
+            (-not $Directory -and $item.PSIsContainer)) {
+            throw "runtime object is not a regular protected filesystem $($(if ($Directory) { 'directory' } else { 'file' })): $Path"
+        }
+
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $trustedSids = @('S-1-5-32-544', 'S-1-5-18')
+        $toSid = {
+            param($Identity)
+            try {
+                if ($Identity -is [Security.Principal.SecurityIdentifier]) { return $Identity.Value }
+                return $Identity.Translate([Security.Principal.SecurityIdentifier]).Value
+            } catch {
+                $identityText = [string]$Identity
+                if ($identityText -match '^S-1-[0-9]+(?:-[0-9]+)+$') { return $identityText }
+                if ($identityText -match '(?i)^(BUILTIN\\Administrators|S-1-5-32-544)$') { return 'S-1-5-32-544' }
+                if ($identityText -match '(?i)^(NT AUTHORITY\\SYSTEM|SYSTEM|S-1-5-18)$') { return 'S-1-5-18' }
+                return $null
+            }
+        }
+        if ((& $toSid $acl.Owner) -notin $trustedSids) {
+            throw "runtime object owner is not BUILTIN\\Administrators or SYSTEM: $Path"
+        }
+        if (-not $acl.AreAccessRulesProtected) { throw "runtime object ACL inheritance is not protected: $Path" }
+
+        $unsafeRights = [Security.AccessControl.FileSystemRights]::WriteData -bor
+            [Security.AccessControl.FileSystemRights]::AppendData -bor
+            [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+            [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+            [Security.AccessControl.FileSystemRights]::Delete -bor
+            [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+            [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+            [Security.AccessControl.FileSystemRights]::TakeOwnership
+        $trustedFullControl = @{}
+        $publisherReadExecute = $false
+        # Windows ACL APIs normally add Synchronize to an Allow ReadAndExecute
+        # FileSystemAccessRule. It is safe and required for the ACE we create.
+        $readExecuteRights = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+        $safePublisherRights = $readExecuteRights -bor [Security.AccessControl.FileSystemRights]::Synchronize
+        foreach ($rule in @($acl.Access)) {
+            $ruleSid = & $toSid $rule.IdentityReference
+            if ($null -eq $ruleSid) { throw "runtime object ACL has an unresolvable principal: $Path" }
+            if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
+                if ($ruleSid -notin $trustedSids -and (($rule.FileSystemRights -band $unsafeRights) -ne 0)) {
+                    throw "runtime object ACL grants an untrusted principal write or ownership rights: $Path"
+                }
+                if ($ruleSid -notin $trustedSids -and $PublisherSid) {
+                    if ($ruleSid -ne $PublisherSid -or
+                        (([int64]$rule.FileSystemRights -band (-bnot [int64]$safePublisherRights)) -ne 0)) {
+                        throw "runtime object ACL grants an untrusted principal rights beyond the bound publisher read/execute access: $Path"
+                    }
+                    if (($rule.FileSystemRights -band $readExecuteRights) -eq $readExecuteRights) { $publisherReadExecute = $true }
+                }
+                if ($ruleSid -in $trustedSids -and (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl)) {
+                    $trustedFullControl[$ruleSid] = $true
+                }
+            }
+        }
+        foreach ($trustedSid in $trustedSids) {
+            if (-not $trustedFullControl.ContainsKey($trustedSid)) {
+                throw "runtime object ACL lacks trusted FullControl: $Path"
+            }
+        }
+        if ($PublisherSid -and -not $publisherReadExecute) {
+            throw "runtime object ACL lacks ReadAndExecute for the bound runtime publisher: $Path"
+        }
+    }
+
+    function Get-BoundRuntimePublisherSid {
+        param([Parameter(Mandatory)][string]$PublisherSid)
+
+        if ($PublisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') { throw "runtime manifest publisher SID is invalid" }
+        $currentSid = if ($isWindowsPlatform) {
+            [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        } else {
+            # Isolated Pester validator fixtures exercise the same SID binding
+            # without requiring Windows ACL APIs on macOS/Linux.
+            'S-1-5-21-1000-1000-1000-1001'
+        }
+        if ($PublisherSid -ne $currentSid) { throw "runtime manifest publisher does not match the current user" }
+        return $PublisherSid
+    }
+
     try {
+        $isWindowsPlatform = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
+        $normalizedRuntimeRoot = if ($isWindowsPlatform) {
+            [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        } else {
+            $RuntimeRoot.TrimEnd([char[]]@('\', '/'))
+        }
+        if ($normalizedRuntimeRoot -notmatch '(?i)^C:\\FRAMETIME_CFG\\runtime-generations\\[a-f0-9]{32}$') {
+            throw "runtime root is outside the protected generation path"
+        }
+        $expectedPublisherSid = if ($isWindowsPlatform) {
+            [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        } else { 'S-1-5-21-1000-1000-1000-1001' }
+        if ($expectedPublisherSid -notmatch '^S-1-[0-9]+(?:-[0-9]+)+$') { throw "current runtime publisher SID is invalid" }
+        foreach ($trustedRuntimeAncestor in @('C:\FRAMETIME_CFG', 'C:\FRAMETIME_CFG\runtime-generations')) {
+            Assert-ProtectedRuntimeObject -Path $trustedRuntimeAncestor -Directory -PublisherSid $expectedPublisherSid
+        }
+        Assert-ProtectedRuntimeObject -Path $normalizedRuntimeRoot -Directory -PublisherSid $expectedPublisherSid
         $manifestPath = Join-Path $RuntimeRoot "runtime-manifest.json"
         if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "runtime-manifest.json is missing" }
+        Assert-ProtectedRuntimeObject -Path $manifestPath -PublisherSid $expectedPublisherSid
+        foreach ($runtimeDirectory in @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeDirectory.FullName -Directory -PublisherSid $expectedPublisherSid
+        }
+        foreach ($runtimeFile in @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeFile.FullName -PublisherSid $expectedPublisherSid
+        }
         $manifest = Get-Content -LiteralPath $manifestPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
         if ($manifest.schemaVersion -ne 1) { throw "unsupported runtime manifest schema" }
-        $expectedContract = "bba9d71061a9cd0b7897c97c5792aab42f29d6cd3f89f2bcd80883cd5f2c75c4"
+        $publisherSid = Get-BoundRuntimePublisherSid -PublisherSid ([string]$manifest.publisherSid)
+        Assert-ProtectedRuntimeObject -Path 'C:\FRAMETIME_CFG' -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path 'C:\FRAMETIME_CFG\runtime-generations' -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path $normalizedRuntimeRoot -Directory -PublisherSid $publisherSid
+        Assert-ProtectedRuntimeObject -Path $manifestPath -PublisherSid $publisherSid
+        foreach ($runtimeDirectory in @(Get-ChildItem -LiteralPath $RuntimeRoot -Directory -Recurse -Force -ErrorAction Stop)) {
+            Assert-ProtectedRuntimeObject -Path $runtimeDirectory.FullName -Directory -PublisherSid $publisherSid
+        }
+        $expectedContract = "de9aade388bc34ee1c7d71fa56f994c5642e0225831d8f708c8e65c4585ebcd9"
         $entries = @($manifest.files)
         if ($entries.Count -eq 0) { throw "runtime manifest has no files" }
         $manifestPaths = @($entries | ForEach-Object { [string]$_.path })
@@ -60,9 +185,14 @@ function Test-PublishedRuntimePayloadBootstrap {
                 throw "runtime manifest contains an unsafe path"
             }
         }
-        $rootPath = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        $rootPath = if ($isWindowsPlatform) {
+            $normalizedRuntimeRoot
+        } else {
+            (Convert-Path -LiteralPath $RuntimeRoot).TrimEnd([char[]]@('\', '/'))
+        }
+        $manifestFullPath = Convert-Path -LiteralPath $manifestPath
         $actualPaths = @(Get-ChildItem -LiteralPath $RuntimeRoot -File -Recurse -Force -ErrorAction Stop |
-            Where-Object { $_.FullName -ne $manifestPath } |
+            Where-Object { (Convert-Path -LiteralPath $_.FullName) -ne $manifestFullPath } |
             ForEach-Object {
                 (([IO.Path]::GetFullPath($_.FullName).Substring($rootPath.Length) -replace '^[\\/]+', '') -replace '\\', '/')
             })
@@ -74,6 +204,7 @@ function Test-PublishedRuntimePayloadBootstrap {
             $expectedHash = [string]$entry.sha256
             if ($expectedHash -notmatch '^[A-Fa-f0-9]{64}$') { throw "invalid manifest hash for $relativePath" }
             $filePath = Join-Path $RuntimeRoot ($relativePath -replace '/', [IO.Path]::DirectorySeparatorChar)
+            Assert-ProtectedRuntimeObject -Path $filePath -PublisherSid $publisherSid
             $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256 -ErrorAction Stop).Hash
             if ($actualHash -ne $expectedHash) { throw "runtime hash mismatch: $relativePath" }
         }
@@ -147,6 +278,7 @@ if ($null -ne $PreviewState) {
         $state = Load-State -Path $CFG_StateFile -ReadOnly
         if (-not $SCRIPT:DryRun) {
             $state = Load-State -Path $CFG_StateFile
+            Restore-ProtectedRuntimePublisherTraverse -RuntimeRoot $PSScriptRoot
         }
     } catch {
     Write-Host "  $([char]0x2718) Something went wrong: settings file (state.json) is missing or corrupted." -ForegroundColor Red
@@ -189,7 +321,11 @@ function Register-Phase3UserHandoff {
     [CmdletBinding()]
     param()
 
-    $phase3Script = if ($SCRIPT:DryRun) { Join-Path $CFG_WorkDir "PostReboot-Setup.ps1" } else { "$ScriptRoot\PostReboot-Setup.ps1" }
+    $phase3Script = if ($SCRIPT:DryRun) {
+        "$CFG_WorkDir\runtime-generations\00000000000000000000000000000000\PostReboot-Setup.ps1"
+    } else {
+        "$ScriptRoot\PostReboot-Setup.ps1"
+    }
     $runOnceResult = Set-RunOnce "FRAMETIME_Phase3" $phase3Script -PassThru
     if ($SCRIPT:DryRun -and $runOnceResult.Status -eq "DryRun") {
         Write-Info "DRY-RUN: Phase 3 handoff command and target path were previewed; nothing was registered."
@@ -197,7 +333,7 @@ function Register-Phase3UserHandoff {
     }
     if (-not $runOnceResult.Applied) {
         Write-Err "Phase 3 automatic handoff registration failed."
-        Write-Host "  $([char]0x2139) What to do: after rebooting into Normal Mode, launch Phase 3 manually: START.bat -> [P]" -ForegroundColor Cyan
+        Write-Host "  $([char]0x2139) What to do: after rebooting, invoke PhaseRuntime-ElevationBootstrap.ps1 from the protected generation." -ForegroundColor Cyan
         return $false
     }
     return $true
@@ -218,8 +354,8 @@ try {
         Write-Warn "This script needs Safe Mode to work properly, but you booted normally."
         Write-Host "  $([char]0x2139) Why it matters: Your GPU driver files are in use right now and cannot" -ForegroundColor Cyan
         Write-Host "    be cleanly removed. This could cause a black screen after restart." -ForegroundColor Cyan
-        Write-Host "  $([char]0x2139) Recommended: Go back to START.bat and let it boot into Safe Mode." -ForegroundColor Cyan
-        Write-Info "Aborted. No boot-state changes or GPU driver removal were performed. Boot into Safe Mode first (START.bat -> [1])."
+        Write-Host "  $([char]0x2139) Recommended: return to the authenticated Phase 1 release and prepare Safe Mode again." -ForegroundColor Cyan
+        Write-Info "Aborted. No boot-state changes or GPU driver removal were performed. Authenticated Phase 1 must prepare Safe Mode first."
         if ($phaseStateInvalid) {
             Write-Err "Phase 2 also stopped because state.json has no valid gpuInput value."
             throw [IO.InvalidDataException]::new("Phase 2 state validation failed: gpuInput must be a scalar value from 1 through 4.")
@@ -333,7 +469,7 @@ try {
                 Complete-Step $PHASE 3 "Phase 3 user handoff"
             }
         } else {
-            Write-Info "Phase 3 not registered. Re-run from START.bat when ready."
+            Write-Info "Phase 3 not registered. Re-run its protected elevation bootstrap when ready."
             Skip-Step $PHASE 3 "Phase 3 user handoff"
         }
     } else {
@@ -352,7 +488,7 @@ try {
         } else {
             Write-Err "GPU driver clean removal did not complete: $($driverCleanResult.Message)"
             Write-Host "  $([char]0x2139) What to do: review the warnings above, install or remove the driver manually if needed," -ForegroundColor Cyan
-            Write-Host "    then use START.bat -> [P] to launch the manifest-verified published Phase 3 runtime." -ForegroundColor Cyan
+            Write-Host "    then invoke PhaseRuntime-ElevationBootstrap.ps1 from the protected generation." -ForegroundColor Cyan
         }
     }
 
@@ -408,8 +544,8 @@ try {
     Write-Host "" -ForegroundColor White
     Write-Host "  If GPU driver was partially removed, Windows will load Basic Display" -ForegroundColor White
     Write-Host "  Adapter on next boot. Phase 3 will handle clean driver installation." -ForegroundColor White
-    Write-Host "  If Phase 3 does not start automatically, run it from" -ForegroundColor White
-    Write-Host "  START.bat -> [P] (manifest-verified published Phase 3 runtime)." -ForegroundColor White
+    Write-Host "  If Phase 3 does not start automatically, invoke its elevation bootstrap" -ForegroundColor White
+    Write-Host "  directly from the manifest-verified protected generation." -ForegroundColor White
     Write-Host "" -ForegroundColor White
     if (-not $phaseStateInvalid -and -not $SCRIPT:DryRun -and -not (Test-YoloProfile)) { Read-Host "  Press Enter to exit" }
     if ($phaseStateInvalid) { throw }

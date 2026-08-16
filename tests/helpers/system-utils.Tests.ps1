@@ -4,11 +4,177 @@
 
 BeforeAll {
     . "$PSScriptRoot/_TestInit.ps1"
+    $script:ProjectRoot = (Resolve-Path "$PSScriptRoot/../..").Path
+    $script:AddedGetAclTestSeam = $false
+    if (-not (Get-Command Get-Acl -ErrorAction SilentlyContinue)) {
+        function script:Get-Acl {
+            param($LiteralPath, $ErrorAction)
+            throw 'Get-Acl requires a test double on this non-Windows host.'
+        }
+        $script:AddedGetAclTestSeam = $true
+    }
 }
 
 AfterAll {
+    if ($script:AddedGetAclTestSeam) {
+        Remove-Item -Path Function:script:Get-Acl -Force -ErrorAction SilentlyContinue
+    }
     if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
         Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Describe "Get-TrustedWindowsToolPath" {
+
+    BeforeEach {
+        Reset-TestState
+        $script:TrustedSystemDirectory = Join-Path $SCRIPT:TestTempRoot "trusted-system"
+        $script:HostilePathDirectory = Join-Path $SCRIPT:TestTempRoot "hostile-path"
+        New-Item -ItemType Directory -Path $script:TrustedSystemDirectory -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:HostilePathDirectory -Force | Out-Null
+        Remove-Item -LiteralPath (Join-Path $script:TrustedSystemDirectory "bcdedit.exe") -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $script:HostilePathDirectory "bcdedit.exe") -Recurse -Force -ErrorAction SilentlyContinue
+        Set-Content -LiteralPath (Join-Path $script:TrustedSystemDirectory "bcdedit.exe") -Value "trusted" -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $script:HostilePathDirectory "bcdedit.exe") -Value "hostile" -Encoding ASCII
+    }
+
+    It "uses the supplied system directory even when PATH contains a hostile executable" {
+        $originalPath = $env:PATH
+        try {
+            $env:PATH = "$script:HostilePathDirectory$([IO.Path]::PathSeparator)$originalPath"
+            $resolved = Get-TrustedWindowsToolPath -Name bcdedit -SystemDirectory $script:TrustedSystemDirectory
+        } finally {
+            $env:PATH = $originalPath
+        }
+
+        $resolved | Should -Be ([IO.Path]::GetFullPath((Join-Path $script:TrustedSystemDirectory "bcdedit.exe")))
+        $resolved | Should -Not -Be ([IO.Path]::GetFullPath((Join-Path $script:HostilePathDirectory "bcdedit.exe")))
+    }
+
+    It "rejects an unknown executable name before path resolution" {
+        { Get-TrustedWindowsToolPath -Name "cmd" -SystemDirectory $script:TrustedSystemDirectory } |
+            Should -Throw "*ValidateSet*"
+    }
+
+    It "rejects a directory at an allowlisted executable path" {
+        Remove-Item -LiteralPath (Join-Path $script:TrustedSystemDirectory "bcdedit.exe") -Force
+        New-Item -ItemType Directory -Path (Join-Path $script:TrustedSystemDirectory "bcdedit.exe") -Force | Out-Null
+
+        { Get-TrustedWindowsToolPath -Name bcdedit -SystemDirectory $script:TrustedSystemDirectory } |
+            Should -Throw "*regular, non-reparse file*"
+    }
+
+    It "uses an explicit test seam without requiring a Windows host" {
+        Mock Test-HostIsWindows { $false }
+
+        $resolved = Get-TrustedWindowsToolPath -Name bcdedit -SystemDirectory $script:TrustedSystemDirectory
+
+        $resolved | Should -Be ([IO.Path]::GetFullPath((Join-Path $script:TrustedSystemDirectory "bcdedit.exe")))
+    }
+}
+
+Describe "Assert-TrustedExistingControlFile" {
+
+    BeforeEach {
+        Reset-TestState
+        $script:ControlFile = Join-Path $SCRIPT:TestTempRoot 'trusted-control.json'
+        Set-Content -LiteralPath $script:ControlFile -Value '{}' -Encoding UTF8
+    }
+
+    It "accepts a regular file on the explicit non-Windows shape-only boundary" {
+        Mock Test-HostIsWindows { $false }
+
+        Assert-TrustedExistingControlFile -Path $script:ControlFile | Should -BeTrue
+    }
+
+    It "rejects a reparse-point leaf before ACL inspection" {
+        Mock Get-Item {
+            [PSCustomObject]@{
+                PSProvider = [PSCustomObject]@{ Name = 'FileSystem' }
+                PSIsContainer = $false
+                Attributes = [IO.FileAttributes]::ReparsePoint
+            }
+        }
+
+        { Assert-TrustedExistingControlFile -Path $script:ControlFile } | Should -Throw '*regular non-reparse*'
+    }
+
+    It "rejects a user-owned exact-DACL control file" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-SecureAcl { [PSCustomObject]@{ Valid = $false; Message = 'ACL owner is not BUILTIN\\Administrators or SYSTEM' } }
+
+        { Assert-TrustedExistingControlFile -Path $script:ControlFile } | Should -Throw '*owner is not*'
+    }
+
+    It "rejects an untrusted write ACE on an existing control file" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-SecureAcl { [PSCustomObject]@{ Valid = $false; Message = 'ACL grants an untrusted principal write or ownership rights' } }
+
+        { Assert-TrustedExistingControlFile -Path $script:ControlFile } | Should -Throw '*untrusted principal write*'
+    }
+
+    It "accepts a Windows control file only after trusted ACL proof" {
+        Mock Test-HostIsWindows { $true }
+        Mock Test-SecureAcl { [PSCustomObject]@{ Valid = $true; Message = 'protected' } }
+
+        Assert-TrustedExistingControlFile -Path $script:ControlFile | Should -BeTrue
+        Should -Invoke Test-SecureAcl -Exactly 1 -ParameterFilter { $Path -eq $script:ControlFile }
+    }
+
+    It "permits the Synchronize bit Windows adds to publisher ReadAndExecute" {
+        Mock Test-HostIsWindows { $true }
+        $publisherSid = 'S-1-5-21-1000'
+        Mock Get-Acl {
+            [PSCustomObject]@{
+                Owner = 'BUILTIN\Administrators'
+                AreAccessRulesProtected = $true
+                Access = @(
+                    [PSCustomObject]@{ IdentityReference = 'BUILTIN\Administrators'; AccessControlType = [Security.AccessControl.AccessControlType]::Allow; FileSystemRights = [Security.AccessControl.FileSystemRights]::FullControl },
+                    [PSCustomObject]@{ IdentityReference = 'NT AUTHORITY\SYSTEM'; AccessControlType = [Security.AccessControl.AccessControlType]::Allow; FileSystemRights = [Security.AccessControl.FileSystemRights]::FullControl },
+                    [PSCustomObject]@{ IdentityReference = $publisherSid; AccessControlType = [Security.AccessControl.AccessControlType]::Allow; FileSystemRights = ([Security.AccessControl.FileSystemRights]::ReadAndExecute -bor [Security.AccessControl.FileSystemRights]::Synchronize) }
+                )
+            }
+        }
+
+        (Test-SecureAcl -Path $script:ControlFile -PublisherSid $publisherSid).Valid | Should -BeTrue
+    }
+}
+
+Describe 'Set-SecureAcl WhatIf boundary' {
+
+    It 'does not write or validate when required ACL hardening is previewed' -Skip:(-not $IsWindows) {
+        $fixturePath = Join-Path $SCRIPT:TestTempRoot 'whatif-acl-fixture.json'
+        Set-Content -LiteralPath $fixturePath -Value '{}' -Encoding UTF8
+        Mock Test-Path { $true }
+        Mock Test-HostIsWindows { $true }
+        Mock Set-Acl { throw 'Set-Acl must not run under WhatIf.' }
+        Mock Test-SecureAcl { throw 'Test-SecureAcl must not run under WhatIf.' }
+
+        { Set-SecureAcl -Path $fixturePath -Required -WhatIf } | Should -Not -Throw
+        Should -Invoke Set-Acl -Exactly 0
+        Should -Invoke Test-SecureAcl -Exactly 0
+    }
+
+    It 'keeps the WhatIf no-write and no-validation guard in the non-Windows source contract' -Skip:$IsWindows {
+        $source = Get-Content -LiteralPath (Join-Path $script:ProjectRoot 'helpers/system-utils.ps1') -Raw
+
+        $source | Should -Match '(?s)if \(-not \$PSCmdlet\.ShouldProcess\(\$TargetPath, "Apply restricted Administrators/SYSTEM ACL"\)\) \{ return \$false \}.*?Set-Acl'
+        $source | Should -Match '(?s)\$applied = Set-SuiteDacl.*?if \(\$applied -eq \$false\) \{ return \}.*?\$proof = Test-SecureAcl'
+    }
+}
+
+Describe "trusted inbox command compatibility wrappers" {
+
+    It "routes existing bcdedit-shaped calls through the trusted invoker" {
+        Mock Invoke-TrustedWindowsTool {
+            param($Name, $Arguments)
+            $global:LASTEXITCODE = 0
+            "$Name|$($Arguments -join '|')"
+        }
+
+        $result = bcdedit /enum "{current}"
+
+        $result | Should -Be "bcdedit|/enum|{current}"
     }
 }
 
@@ -260,6 +426,7 @@ Describe "Write helper result contracts" {
         Mock Ensure-SecureWorkDir {}
         Mock Set-SecureAcl {}
         Mock New-Item {}
+        Mock Get-TrustedWindowsToolPath { "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" }
     }
 
     It "Set-RegistryValue returns success status with -PassThru after a write" {
@@ -345,23 +512,26 @@ Describe "Write helper result contracts" {
     }
 
     It "Set-RunOnce returns success status with -PassThru after registration" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq $generationPath }
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = 'verified' } }
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase2" $generationPath -SafeMode -PassThru
 
         $result.Status | Should -Be "Success"
         $result.Applied | Should -Be $true
         Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
-            $Path -eq "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -and
-            $Name -eq "FRAMETIME_CFG_FRAMETIME_Phase3" -and
-            $Value -match "-Verb RunAs" -and $Value -match "-Wait"
+            $Path -eq "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" -and
+            $Name -eq "*!FRAMETIME_Phase2" -and
+            $Value -match "-File" -and $Value -notmatch "-Command"
         }
     }
 
     It "Set-RunOnce accepts an immutable runtime generation target" {
         $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
         Mock Test-Path { $true } -ParameterFilter { $Path -eq $generationPath }
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = 'verified' } }
         Mock Set-ItemProperty {}
 
         $result = Set-RunOnce "FRAMETIME_Phase2" $generationPath -SafeMode -PassThru
@@ -372,11 +542,34 @@ Describe "Write helper result contracts" {
         }
     }
 
+    It "restores publisher traverse immediately before the Safe Mode registry write" {
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
+        $script:TrustOrder = [System.Collections.Generic.List[string]]::new()
+        Mock Test-HostIsWindows { $true }
+        Mock Get-PhaseRuntimePublisherSid { 'S-1-5-21-1000-1000-1000-1001' }
+        Mock Test-Path { $true }
+        Mock Get-TrustedWindowsToolPath { 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' }
+        Mock Set-PhaseRuntimePayloadAcl { $script:TrustOrder.Add('restore') | Out-Null }
+        Mock Test-PhaseRuntimePayload { $script:TrustOrder.Add('validate') | Out-Null; [PSCustomObject]@{ Valid = $true; Message = 'verified' } }
+        Mock Ensure-SecureWorkDir { $script:TrustOrder.Add('harden') | Out-Null }
+        Mock Set-ItemProperty {}
+
+        $result = Set-RunOnce 'FRAMETIME_Phase2' $generationPath -SafeMode -PassThru
+
+        $result.Status | Should -Be 'Success'
+        $script:TrustOrder | Should -Be @('harden', 'restore', 'validate')
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 1 -ParameterFilter {
+            $Path -eq $CFG_WorkDir -and $PublisherSid -eq 'S-1-5-21-1000-1000-1000-1001' -and $NoInheritance
+        }
+    }
+
     It "Set-RunOnce returns failed status with -PassThru when registration throws" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq $generationPath }
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = 'verified' } }
         Mock Set-ItemProperty { throw "access denied" }
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase2" $generationPath -SafeMode -PassThru
 
         $result.Status | Should -Be "Failed"
         $result.Applied | Should -Be $false
@@ -387,7 +580,7 @@ Describe "Write helper result contracts" {
         $SCRIPT:DryRun = $true
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\PostReboot-Setup.ps1" -PassThru
 
         $result.Status | Should -Be "DryRun"
         $result.Applied | Should -Be $false
@@ -395,36 +588,74 @@ Describe "Write helper result contracts" {
     }
 
     It "Set-RunOnce returns skipped status under WhatIf without registration" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\SafeMode-DriverClean.ps1"
+        Mock Test-Path { $true } -ParameterFilter { $Path -eq $generationPath }
         Mock Set-ItemProperty {}
+        Mock Ensure-SecureWorkDir {}
+        Mock Set-SecureAcl {}
+        Mock Set-PhaseRuntimePayloadAcl {}
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = 'verified' } }
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru -WhatIf
+        $result = Set-RunOnce "FRAMETIME_Phase2" $generationPath -SafeMode -PassThru -WhatIf
 
         $result.Status | Should -Be "Skipped"
         $result.Applied | Should -Be $false
         Should -Invoke Set-ItemProperty -Exactly 0
         Should -Invoke Ensure-SecureWorkDir -Exactly 0
         Should -Invoke Set-SecureAcl -Exactly 0
+        Should -Invoke Set-PhaseRuntimePayloadAcl -Exactly 0
+        Should -Invoke Test-PhaseRuntimePayload -Exactly 0
     }
 
     It "Set-RunOnce keeps default no-output behavior for existing callers" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\PostReboot-Setup.ps1"
+        Mock Test-Path { $true }
+        Mock Get-Item {
+            [PSCustomObject]@{
+                PSProvider = [PSCustomObject]@{ Name = 'FileSystem' }
+                PSIsContainer = $false
+                Attributes = [IO.FileAttributes]::Normal
+            }
+        }
+        Mock Get-TrustedWindowsToolPath { "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" }
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
+        Mock Set-SecureAcl {}
+        Mock New-Item {}
         Mock Set-ItemProperty {}
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1"
+        $result = Set-RunOnce "FRAMETIME_Phase3" $generationPath
 
         $result | Should -BeNullOrEmpty
     }
 
-    It "leaves a registered normal-mode handoff pending until explicit cleanup" {
-        Mock Test-Path { $true } -ParameterFilter { $Path -eq "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" }
+    It "stores the fixed normal-mode elevation bootstrap without an interpolated command wrapper" {
+        $generationPath = "C:\FRAMETIME_CFG\runtime-generations\0123456789abcdef0123456789abcdef\PostReboot-Setup.ps1"
+        Mock Test-Path { $true }
+        Mock Get-Item {
+            [PSCustomObject]@{
+                PSProvider = [PSCustomObject]@{ Name = 'FileSystem' }
+                PSIsContainer = $false
+                Attributes = [IO.FileAttributes]::Normal
+            }
+        }
+        Mock Get-TrustedWindowsToolPath { "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" }
+        Mock Test-PhaseRuntimePayload { [PSCustomObject]@{ Valid = $true; Message = "verified" } }
+        Mock Set-SecureAcl {}
+        Mock New-Item {}
         Mock Set-ItemProperty {}
         Mock Remove-ItemProperty {}
 
-        $result = Set-RunOnce "FRAMETIME_Phase3" "C:\FRAMETIME_CFG\PostReboot-Setup.ps1" -PassThru
+        $result = Set-RunOnce "FRAMETIME_Phase3" $generationPath -PassThru
 
-        $result.Applied | Should -Be $true
-        Should -Invoke Set-ItemProperty -Exactly 1
+        $result.Status | Should -Be "Success"
+        Should -Invoke Set-ItemProperty -Exactly 1 -ParameterFilter {
+            $Value -match 'PhaseRuntime-ElevationBootstrap\.ps1' -and
+            $Value -match '-File' -and
+            $Value -notmatch '-Command' -and
+            $Value -notmatch '-Target(?:ExecutionPolicy)?\b' -and
+            $Value -match 'PostReboot-Setup\.ps1 Bypass$' -and
+            $Value.Length -le 260
+        }
         Should -Invoke Remove-ItemProperty -Exactly 0
     }
 

@@ -1,0 +1,12 @@
+// frametime.cfg manual autoexec bootstrap example
+//
+// Phase 1 Step 34 normally creates optimization.cfg in game\csgo\cfg and
+// appends the active exec line below to autoexec.cfg. This example is not an
+// input template for that generated file.
+
+exec optimization.cfg
+
+// Optional repository CFGs copied by Step 34 can be run manually as needed:
+// exec net_stable
+// exec debug_hud
+// exec audio_stable

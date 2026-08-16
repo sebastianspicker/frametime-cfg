@@ -1,0 +1,125 @@
+{
+  "created": "2026-08-10 10:00:00",
+  "entries": [
+    {
+      "type": "registry",
+      "step": "Registry Test Step",
+      "timestamp": "2026-08-10 10:00:01",
+      "path": "HKCU:\\System\\GameConfigStore",
+      "name": "GameDVR_Enabled",
+      "originalValue": 42,
+      "originalType": "DWord",
+      "existed": true,
+      "futureRegistry": null
+    },
+    {
+      "type": "service",
+      "step": "Service Test Step",
+      "timestamp": "2026-08-10 10:00:02",
+      "name": "DiagTrack",
+      "originalStartType": "Auto",
+      "delayedAutoStart": true,
+      "originalStatus": "Running",
+      "futureService": {"keep": true}
+    },
+    {
+      "type": "powerplan",
+      "step": "Powerplan Test Step",
+      "timestamp": "2026-08-10 10:00:03",
+      "originalGuid": "381b4222-f694-41f0-9685-ff5bb260df2e",
+      "originalName": "Balanced",
+      "suiteOwnedGuids": ["11111111-1111-1111-1111-111111111111"],
+      "futurePowerplan": null
+    },
+    {
+      "type": "bootconfig",
+      "step": "Bootconfig Test Step",
+      "timestamp": "2026-08-10 10:00:04",
+      "key": "disabledynamictick",
+      "originalValue": "No",
+      "existed": true,
+      "futureBootconfig": null
+    },
+    {
+      "type": "scheduledtask",
+      "step": "Scheduledtask Test Step",
+      "timestamp": "2026-08-10 10:00:05",
+      "taskName": "frametime-test",
+      "taskPath": "\\",
+      "existed": false,
+      "wasEnabled": false,
+      "scriptPath": null,
+      "futureScheduledtask": {"version": 2}
+    },
+    {
+      "type": "nic_adapter",
+      "step": "NIC Test Step",
+      "timestamp": "2026-08-10 10:00:06",
+      "adapterName": "Ethernet",
+      "interfaceDescription": "Realtek PCIe 2.5GbE",
+      "propertyName": "*EEE",
+      "originalValue": "Enabled",
+      "propertyType": "DisplayValue",
+      "futureNic": null
+    },
+    {
+      "type": "qos_uro",
+      "step": "QoS Test Step",
+      "timestamp": "2026-08-10 10:00:07",
+      "policies": ["CS2 UDP"],
+      "uroState": {"enabled": true},
+      "futureQos": null
+    },
+    {
+      "type": "defender",
+      "step": "Defender Test Step",
+      "timestamp": "2026-08-10 10:00:08",
+      "exclusionPaths": ["C:\\Games\\Counter-Strike 2"],
+      "exclusionProcesses": ["cs2.exe"],
+      "futureDefender": null
+    },
+    {
+      "type": "pagefile",
+      "step": "Pagefile Test Step",
+      "timestamp": "2026-08-10 10:00:09",
+      "automaticManaged": false,
+      "pagefilePath": "C:\\pagefile.sys",
+      "initialSize": 4096,
+      "maximumSize": 8192,
+      "futurePagefile": {"unit": "MB"}
+    },
+    {
+      "type": "dns",
+      "step": "DNS Test Step",
+      "timestamp": "2026-08-10 10:00:10",
+      "adapterName": "Ethernet",
+      "interfaceIndex": 7,
+      "originalDnsServers": ["192.0.2.1", "192.0.2.2"],
+      "futureDns": null
+    },
+    {
+      "type": "drs",
+      "step": "DRS Test Step",
+      "timestamp": "2026-08-10 10:00:11",
+      "profile": "frametime.cfg",
+      "profileCreated": true,
+      "settings": [
+        {
+          "id": 1234,
+          "previousValue": 0,
+          "existed": true,
+          "futureSetting": null
+        }
+      ],
+      "futureDrs": {"driver": "test"}
+    },
+    {
+      "type": "future_backup_type",
+      "step": "Future Step",
+      "payload": {"retained": true},
+      "nullablePayload": null
+    }
+  ],
+  "futureBackup": {"schema": 3},
+  "nullableBackup": null
+}

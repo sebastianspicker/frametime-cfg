@@ -475,8 +475,8 @@ Describe "Test-VerifyPowerPlan" {
 
     It "returns changed when the active CS2 plan has drifted subsettings" {
         Mock powercfg {
-            param([Parameter(ValueFromRemainingArguments)]$CmdArgs)
-            $joined = @($CmdArgs) -join ' '
+            param([string[]]$Arguments)
+            $joined = @($Arguments) -join ' '
             if ($joined -eq '/list') {
                 return @"
 Power Scheme GUID: 11111111-1111-1111-1111-111111111111  (Balanced)

@@ -256,7 +256,11 @@ if ($startStep -le 28) {
         -SideEffects "Can increase CPU wake frequency and power use" `
         -Undo "Delete GlobalTimerResolutionRequests from kernel registry key" `
         -Action {
-            $buildRaw = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "CurrentBuildNumber" -ErrorAction SilentlyContinue).CurrentBuildNumber
+            $buildProps = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" `
+                -Name "CurrentBuildNumber" -ErrorAction SilentlyContinue
+            $buildRaw = if ($buildProps -and $buildProps.PSObject.Properties["CurrentBuildNumber"]) {
+                $buildProps.CurrentBuildNumber
+            }
             $build = 0
             if ($buildRaw) { try { $build = [int]$buildRaw } catch { $build = 0 } }
             if ($build -ge 19041) {

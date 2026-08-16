@@ -77,7 +77,7 @@ Describe "Initialize-Backup" {
         $script:InitOrder | Should -BeNullOrEmpty
     }
 
-    It "acquires the backup lock before trusting an existing backup file" {
+    It "acquires the backup lock before validating an existing backup file" {
         $existing = @{
             entries = @([ordered]@{ type = "registry"; name = "TestValue"; step = "Existing Step" })
             created = "2026-01-01 00:00:00"
@@ -88,12 +88,12 @@ Describe "Initialize-Backup" {
         Mock Test-BackupLock { $false }
         Mock Set-BackupLock { $script:InitOrder.Add("lock") | Out-Null }
         Mock New-BackupFile { $script:InitOrder.Add("new") | Out-Null }
-        Mock Set-SecureAcl { $script:InitOrder.Add("acl") | Out-Null }
+        Mock Assert-TrustedExistingControlFile { $script:InitOrder.Add("validate") | Out-Null }
 
         Initialize-Backup
 
         $script:InitOrder[0] | Should -Be "lock"
-        ($script:InitOrder -join ',') | Should -Be 'lock,acl'
+        ($script:InitOrder -join ',') | Should -Be 'lock,validate'
     }
 
     It "releases its lock when backup initialization fails after acquisition" {

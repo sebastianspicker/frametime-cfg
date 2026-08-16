@@ -36,9 +36,9 @@ powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
     -File .\Run-Optimize.ps1 -FullDryRun -DryRunGpu 2
 ```
 
-The visible `START.bat` menu also offers `[D] Full DRY-RUN`, followed by a GPU
-branch selector. The direct `START.bat dry-run ...` route runs before the
-launcher administrator gate and is the documented zero-prompt form.
+The direct `START.bat dry-run ...` route is the only enabled portable launcher
+path and is the documented zero-prompt form. Other routes fail closed without
+requesting administrator elevation.
 
 ## GPU branch selector
 

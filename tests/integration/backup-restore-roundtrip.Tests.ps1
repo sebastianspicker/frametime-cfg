@@ -17,10 +17,17 @@ BeforeAll {
         param([Parameter(ValueFromRemainingArguments)][string[]]$CmdArgs)
         $null = $CmdArgs
     }
+    if (-not (Get-Command New-NetQosPolicy -ErrorAction SilentlyContinue)) {
+        function global:New-NetQosPolicy {
+            param($Name, [Parameter(ValueFromRemainingArguments)]$RemainingArgs)
+            $null = $Name
+        }
+    }
 }
 
 AfterAll {
     Remove-Item Function:\global:powercfg -Force -ErrorAction SilentlyContinue
+    Remove-Item Function:\global:New-NetQosPolicy -Force -ErrorAction SilentlyContinue
     if ($SCRIPT:TestTempRoot -and (Test-Path $SCRIPT:TestTempRoot)) {
         Remove-Item $SCRIPT:TestTempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -121,7 +128,7 @@ Describe "Registry backup and restore roundtrip" {
             $mock = New-Object PSObject
             $mock | Add-Member -MemberType ScriptMethod -Name GetValueKind -Value { "DWord" }
             return $mock
-        }
+        } -ParameterFilter { $Path -eq "HKCU:\System\GameConfigStore" }
 
         Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -StepTitle "Multi Step"
         Backup-RegistryValue -Path "HKCU:\System\GameConfigStore" -Name "GameDVR_FSEBehavior" -StepTitle "Multi Step"
@@ -493,6 +500,27 @@ Describe "PowerPlan backup and restore roundtrip" {
         Should -Invoke powercfg -Exactly 0 -ParameterFilter { $CmdArgs[0] -eq '/list' }
     }
 
+    It "refuses a backup-only forged power-plan GUID and retains the restore entry" {
+        $originalGuid = '381b4222-f694-41f0-9685-ff5bb260df2e'
+        $forgedGuid = '11111111-2222-3333-4444-555555555555'
+        $stateOwnedGuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        New-TestBackupFile -Entries @([ordered]@{
+            type = 'powerplan'; originalGuid = $originalGuid; originalName = 'Balanced'
+            suiteOwnedGuids = @($forgedGuid); step = 'PowerPlan Test Step'; timestamp = '2026-01-01'
+        })
+        Save-JsonAtomic -Data ([PSCustomObject]@{
+            profile = 'RECOMMENDED'; suiteOwnedPowerPlanGuids = @($stateOwnedGuid)
+        }) -Path $CFG_StateFile
+        Mock powercfg { $global:LASTEXITCODE = 0 }
+
+        Restore-StepChanges -StepTitle 'PowerPlan Test Step' | Should -BeFalse
+
+        Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/setactive' -and $CmdArgs[1] -eq $originalGuid }
+        Should -Not -Invoke powercfg -ParameterFilter { $CmdArgs[0] -eq '/delete' }
+        @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+        @((Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json).suiteOwnedPowerPlanGuids) | Should -Be @($stateOwnedGuid)
+    }
+
     It "retains only failed suite-owned deletions and retries them" {
         $originalGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
         $deletedGuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -594,7 +622,9 @@ Describe "PowerPlan backup and restore roundtrip" {
 
         @((Get-Content -LiteralPath $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 0
         @((Get-Content -LiteralPath $CFG_StateFile -Raw | ConvertFrom-Json).suiteOwnedPowerPlanGuids).Count | Should -Be 0
-        $script:deleteCalls | Should -Be 2
+        # The retry inventories the state-only identity and clears stale
+        # bookkeeping without issuing another delete for an already absent plan.
+        $script:deleteCalls | Should -Be 1
         Should -Invoke powercfg -Exactly 1 -ParameterFilter { $CmdArgs[0] -eq '/list' }
     }
 }
@@ -976,12 +1006,27 @@ Describe "QoS/URO backup and restore roundtrip" {
         Mock Write-Info {}
     }
 
-    It "removes QoS policies and restores URO state" {
-        Backup-QosAndUro -PolicyNames @("CS2 UDP") -UroState "disabled" -StepTitle "QoS Test Step"
+    BeforeEach {
+        $script:SuiteQosPolicies = @(
+            [PSCustomObject]@{
+                Name = 'CS2_UDP_Ports'; IPProtocolMatchCondition = 'UDP'
+                IPDstPortStartMatchCondition = 27015; IPDstPortEndMatchCondition = 27036
+                DSCPAction = 46; NetworkProfile = 'All'
+            },
+            [PSCustomObject]@{
+                Name = 'CS2_App'; AppPathNameMatchCondition = '*\cs2.exe'
+                DSCPAction = 46; NetworkProfile = 'All'
+            }
+        )
+    }
+
+    It "replaces suite policies with their captured original definitions and restores URO state" {
+        Backup-QosAndUro -Policies $script:SuiteQosPolicies -UroState "disabled" -StepTitle "QoS Test Step"
         Flush-BackupBuffer
 
-        Mock Get-NetQosPolicy { [PSCustomObject]@{ Name = "CS2 UDP" } }
+        Mock Get-NetQosPolicy { @($script:SuiteQosPolicies | Where-Object Name -eq $Name) }
         Mock Remove-NetQosPolicy {}
+        Mock New-NetQosPolicy {}
         Mock netsh {
             $global:LASTEXITCODE = 0
             "Ok."
@@ -990,14 +1035,18 @@ Describe "QoS/URO backup and restore roundtrip" {
         $result = Restore-StepChanges -StepTitle "QoS Test Step"
 
         $result | Should -Be $true
-        Should -Invoke Remove-NetQosPolicy -Exactly 1 -ParameterFilter { $Name -eq "CS2 UDP" }
+        Should -Invoke Remove-NetQosPolicy -Exactly 1 -ParameterFilter { $Name -eq 'CS2_UDP_Ports' }
+        Should -Invoke Remove-NetQosPolicy -Exactly 1 -ParameterFilter { $Name -eq 'CS2_App' }
+        Should -Invoke New-NetQosPolicy -Exactly 1 -ParameterFilter { $Name -eq 'CS2_UDP_Ports' }
+        Should -Invoke New-NetQosPolicy -Exactly 1 -ParameterFilter { $Name -eq 'CS2_App' }
     }
 
     It "retains qos_uro entries when policy removal fails" {
-        Backup-QosAndUro -PolicyNames @("CS2 UDP") -UroState "disabled" -StepTitle "QoS Test Step"
+        New-TestBackupFile -Entries @()
+        Backup-QosAndUro -Policies $script:SuiteQosPolicies -UroState "disabled" -StepTitle "QoS Test Step"
         Flush-BackupBuffer
 
-        Mock Get-NetQosPolicy { [PSCustomObject]@{ Name = "CS2 UDP" } }
+        Mock Get-NetQosPolicy { @($script:SuiteQosPolicies | Where-Object Name -eq $Name) }
         Mock Remove-NetQosPolicy { throw "Permission denied" }
         Mock netsh {
             $global:LASTEXITCODE = 0
@@ -1007,6 +1056,62 @@ Describe "QoS/URO backup and restore roundtrip" {
         $result = Restore-StepChanges -StepTitle "QoS Test Step"
 
         $result | Should -Be $false
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "rejects a tampered policy name without deleting or recreating policies" {
+        New-TestBackupFile -Entries @([ordered]@{
+            type = 'qos_uro'; contractVersion = 2; suiteManagedPolicies = @('CS2_UDP_Ports', 'CS2_App', 'Foreign')
+            policyStates = @(); uroState = 'disabled'; step = 'QoS Test Step'; timestamp = '2026-01-01'
+        })
+        Mock Remove-NetQosPolicy {}
+        Mock New-NetQosPolicy {}
+        Mock netsh {}
+
+        Restore-StepChanges -StepTitle 'QoS Test Step' | Should -BeFalse
+
+        Should -Not -Invoke Remove-NetQosPolicy
+        Should -Not -Invoke New-NetQosPolicy
+        Should -Not -Invoke netsh
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "rejects a tampered policy definition without deleting or recreating policies" {
+        $states = @(
+            [PSCustomObject]@{ name = 'CS2_UDP_Ports'; originalExisted = $true; originalDefinition = [PSCustomObject]@{
+                ipProtocolMatchCondition = 'TCP'; ipDstPortStartMatchCondition = 27015; ipDstPortEndMatchCondition = 27036; dscpAction = 46; networkProfile = 'All'
+            } },
+            [PSCustomObject]@{ name = 'CS2_App'; originalExisted = $false; originalDefinition = $null }
+        )
+        New-TestBackupFile -Entries @([ordered]@{
+            type = 'qos_uro'; contractVersion = 2; suiteManagedPolicies = @('CS2_UDP_Ports', 'CS2_App')
+            policyStates = $states; uroState = 'disabled'; step = 'QoS Test Step'; timestamp = '2026-01-01'
+        })
+        Mock Remove-NetQosPolicy {}
+        Mock New-NetQosPolicy {}
+
+        Restore-StepChanges -StepTitle 'QoS Test Step' | Should -BeFalse
+
+        Should -Not -Invoke Remove-NetQosPolicy
+        Should -Not -Invoke New-NetQosPolicy
+        @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
+    }
+
+    It "rejects a non-enum URO state without calling netsh" {
+        New-TestBackupFile -Entries @()
+        Backup-QosAndUro -Policies @() -UroState 'disabled' -StepTitle 'QoS Test Step'
+        Flush-BackupBuffer
+        $backup = Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json
+        $backup.entries[0].uroState = 'enabled & arbitrary'
+        Save-JsonAtomic -Data $backup -Path $CFG_BackupFile
+        Mock Get-NetQosPolicy { $null }
+        Mock Remove-NetQosPolicy {}
+        Mock netsh {}
+
+        Restore-StepChanges -StepTitle 'QoS Test Step' | Should -BeFalse
+
+        Should -Not -Invoke Remove-NetQosPolicy
+        Should -Not -Invoke netsh
         @((Get-Content $CFG_BackupFile -Raw | ConvertFrom-Json).entries).Count | Should -Be 1
     }
 }

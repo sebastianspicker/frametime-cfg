@@ -38,6 +38,10 @@ if ($SmokeTest) {
     exit 0
 }
 
+if (-not $DryRun) {
+    throw "Portable live execution is unavailable until a trusted installer or signed payload establishes the source identity. Use -DryRun for the no-mutation shortcut preview."
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$identity
@@ -87,7 +91,7 @@ $stateExists = Test-Path $CFG_StateFile
 if (-not $stateExists) {
     Write-Warn "state.json not found at $CFG_StateFile"
     Write-Info "Phase 1 must be run at least once to create the configuration."
-    Write-Info "Use START.bat -> [1] to run Phase 1 first."
+    Write-Info "Phase 1 must first run from an authenticated live release."
     Write-Host ""
     Read-Host "  Press Enter to return"
     exit 0
@@ -97,7 +101,7 @@ try {
     $state = Load-State $CFG_StateFile
 } catch {
     Write-Warn "state.json is corrupted: $_"
-    Write-Info "Re-run Phase 1 from START.bat -> [1] to fix."
+    Write-Info "Re-run Phase 1 from an authenticated live release to repair it."
     Read-Host "  Press Enter to return"
     exit 1
 }
@@ -105,7 +109,7 @@ try {
 if (-not (Test-Phase1SafeModeReady -State $state)) {
     Write-Warn "state.json exists, but Phase 1 Safe Mode prep is not marked complete."
     Write-Info "GUI settings alone do not prepare the reboot payload."
-    Write-Info "Run START.bat -> [1] and complete Step 38 before using this shortcut."
+    Write-Info "Run authenticated Phase 1 and complete Step 38 before using this shortcut."
     Read-Host "  Press Enter to return"
     exit 0
 }

@@ -1,0 +1,74 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/northclock-core",
+    "crates/northclock-platform-windows",
+    "crates/northclock-cli",
+    "crates/northclock-gui",
+    "crates/northclock-vram-worker",
+    "xtask",
+]
+default-members = [
+    "crates/northclock-cli",
+    "crates/northclock-vram-worker",
+    "xtask",
+]
+exclude = ["driver", "fuzz"]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+rust-version = "1.92"
+license = "MIT"
+authors = ["Northclock maintainers"]
+repository = "https://github.com/sebastianspicker/northclock"
+
+[workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+eframe = { version = "0.34.3", default-features = false, features = ["default_fonts", "glow"] }
+raw-cpuid = "11.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "0.8"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Devices_DeviceAndDriverInstallation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Etw",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_EventLog",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_Power",
+    "Win32_System_Registry",
+    "Win32_System_Rpc",
+    "Win32_System_Services",
+    "Win32_System_SystemInformation",
+    "Win32_System_Time",
+    "Win32_System_TaskScheduler",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_System_Wmi",
+    "Win32_UI_Shell",
+] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

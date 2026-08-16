@@ -386,7 +386,12 @@ function Load-Dashboard {
 (El "BtnDashVerify"   ).Add_Click({ Switch-Panel "PanelOptimize"; Load-Settings; Load-Optimize; Start-InlineVerify })
 (El "BtnDashBackup"   ).Add_Click({ Switch-Panel "PanelBackup"; Load-Backup })
 (El "BtnDashPhase1"   ).Add_Click({ Launch-Terminal "Run-Optimize.ps1" })
-(El "BtnDashLaunchCs2").Add_Click({ Start-Process "steam://rungameid/730" })
+(El "BtnDashLaunchCs2").Add_Click({
+    'steam://rungameid/730' | Set-ClipboardSafe
+    [System.Windows.MessageBox]::Show(
+        "CS2 is not launched from this elevated window.`n`nThe Steam launch link was copied. Paste it into an unelevated desktop session.",
+        "Steam launch deferred", "OK", "Information") | Out-Null
+})
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ANALYZE
@@ -1223,11 +1228,12 @@ foreach ($rb in @("RadioSafe","RadioRecommended","RadioCompetitive","RadioCustom
 # SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 function Launch-Terminal {
-    param([string]$Script, [string]$ScriptArgs = "")
-    $fileArg = "`"$Script:Root\$Script`""
-    $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File $fileArg"
-    if ($ScriptArgs) { $allArgs += " `"$ScriptArgs`"" }
-    Start-Process powershell -ArgumentList $allArgs
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidateSet("Run-Optimize.ps1", "Boot-SafeMode.ps1")][string]$Script)
+
+    $scriptPath = Get-TrustedDescendantRegularFilePath -Root $Script:Root -RelativePath $Script
+    $allArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File `"$scriptPath`""
+    Start-Process -FilePath (Get-TrustedWindowsToolPath -Name powershell) -ArgumentList $allArgs
 }
 
 function Start-PublishedPhaseRuntime {
@@ -1261,6 +1267,6 @@ function Start-PublishedPhaseRuntime {
     if (-not $PSCmdlet.ShouldProcess($runtimeScript, "Start verified published Phase runtime")) {
         return $false
     }
-    Start-Process powershell -ArgumentList $allArgs
+    Start-Process (Get-TrustedWindowsToolPath -Name powershell) -ArgumentList $allArgs
     return $true
 }
