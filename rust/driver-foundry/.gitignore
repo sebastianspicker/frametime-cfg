@@ -1,0 +1,136 @@
+# --- Build ---
+**/bin/
+**/obj/
+**/target/
+[Bb]uild/
+[Ll]og/
+TestResults/
+*.trx
+coverage*
+*.coverage
+*.coveragexml
+*.nupkg
+**/packages/*
+!**/packages/build/
+
+# --- IDE / OS ---
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# --- Agent / local tooling ---
+.kilo/
+.work/
+work/
+tmp/
+temp/
+*.tmp
+artifacts/
+node_modules/
+package-lock.json
+
+# --- Logs & local work dirs ---
+*.log
+**/logs/
+DDU Logs/
+**/open-cleanstall-work-*/
+**/oc-demo*/
+**/oc-min*/
+**/oc-clean*/
+**/dfoundry-*-demo*/
+
+# --- Secrets / certs ---
+*.pfx
+*.p12
+*.snk
+appsettings.*.local.json
+
+# --- Proprietary closed binaries (reference only; do not publish) ---
+archive/legacy/open-ddu/Display Driver Uninstaller.exe
+archive/legacy/open-ddu/Display Driver Uninstaller.pdb
+archive/legacy/open-ddu/Display Driver Uninstaller.exe.config
+archive/legacy/open-ddu/RE_ARCHIVE/product_reference/Display Driver Uninstaller.exe
+archive/legacy/open-ddu/RE_ARCHIVE/product_reference/Display Driver Uninstaller.pdb
+archive/legacy/open-ddu/RE_ARCHIVE/product_reference/Display Driver Uninstaller.exe.config
+archive/legacy/open-cleanstall/archive/re-nvcleanstall-*/NVCleanstall*.exe
+
+# Optional closed helpers (local materialization only; do not publish)
+data/embedded/*
+!data/embedded/README.md
+archive/legacy/open-cleanstall/open-cleanstall/embedded/*
+!archive/legacy/open-cleanstall/open-cleanstall/embedded/README.md
+
+# Catalog editor backups
+*.bak
+.agents/
+.claude/
+.codex/
+.codegraph/
+.serena/
+.cursor/
+/.vscode/mcp.json
+.repowise/
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/AUDIT_LEDGER.md
+/remediation-ledger.md
+/plan.md
+/progress.md
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+*.jks
+*.keystore
+*.kdbx
+*.ppk
+*.mobileprovision
+*.local.pem
+*.local.key
+secrets.local.*
+credentials.local.*
+.netrc
+.npmrc.local
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+coverage.xml
+htmlcov/
+test-results/
+playwright-report/
+blob-report/
+junit*.xml
+*.sarif
+.build/
+*.local.db
+*.local.sqlite
+*.local.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+DerivedData/
+xcuserdata/
+*.db-wal
+*.db-shm
+.codacy/generated/
+.codacy/logs/
+.codacy/tools-configs/
+.codacy/cli-config.yaml

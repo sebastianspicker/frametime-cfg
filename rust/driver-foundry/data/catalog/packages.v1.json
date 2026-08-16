@@ -1,0 +1,268 @@
+{
+  "schema": "driver-foundry.catalog/v1",
+  "packages": [
+    {
+      "id": "Display.Driver",
+      "title": "Display Driver",
+      "required": true,
+      "dependencies": [],
+      "description": "Required GPU display driver component."
+    },
+    {
+      "id": "HDAudio",
+      "title": "HD Audio via HDMI",
+      "required": false,
+      "dependencies": [],
+      "description": "Audio over HDMI/DisplayPort."
+    },
+    {
+      "id": "PhysX",
+      "title": "PhysX",
+      "required": false,
+      "dependencies": [],
+      "description": "Legacy PhysX system software."
+    },
+    {
+      "id": "NGXCore",
+      "title": "DLSS / NGX Core",
+      "required": false,
+      "dependencies": [],
+      "description": "NGX/DLSS support files."
+    },
+    {
+      "id": "MSVCRT",
+      "title": "Visual C++ Runtimes",
+      "required": false,
+      "dependencies": [],
+      "description": "Microsoft Visual C++ redistributables bundled with the package."
+    },
+    {
+      "id": "Display.Optimus",
+      "title": "Optimus",
+      "required": false,
+      "dependencies": [],
+      "description": "Notebook Optimus hybrid graphics support."
+    },
+    {
+      "id": "NvCamera",
+      "title": "NvCamera / Ansel",
+      "required": false,
+      "dependencies": [],
+      "description": "In-game photo/Ansel capture components."
+    },
+    {
+      "id": "PPC",
+      "title": "USB Type-C / PPC",
+      "required": false,
+      "dependencies": [],
+      "description": "USB-C power delivery / display port controller support."
+    },
+    {
+      "id": "FrameViewSDK",
+      "title": "FrameView SDK",
+      "required": false,
+      "dependencies": [],
+      "description": "FrameView performance measurement SDK."
+    },
+    {
+      "id": "FvSDKSetup",
+      "title": "FrameView SDK Setup",
+      "required": false,
+      "dependencies": ["FrameViewSDK"],
+      "description": "FrameView SDK installer payload."
+    },
+    {
+      "id": "NV3DVision",
+      "title": "3D Vision",
+      "required": false,
+      "dependencies": [],
+      "description": "Legacy 3D Vision stereoscopic components."
+    },
+    {
+      "id": "NV3DVisionUSB.Driver",
+      "title": "3D Vision USB Driver",
+      "required": false,
+      "dependencies": ["NV3DVision"],
+      "description": "USB emitter driver for 3D Vision."
+    },
+    {
+      "id": "NVWMI",
+      "title": "NVWMI",
+      "required": false,
+      "dependencies": [],
+      "description": "NVIDIA WMI provider (often Quadro-oriented)."
+    },
+    {
+      "id": "Display.nView",
+      "title": "nView",
+      "required": false,
+      "dependencies": [],
+      "description": "Legacy multi-display nView desktop manager."
+    },
+    {
+      "id": "Miracast.VirtualAudio",
+      "title": "Miracast Virtual Audio",
+      "required": false,
+      "dependencies": [],
+      "description": "Virtual audio endpoint for Miracast."
+    },
+    {
+      "id": "ShieldWirelessController",
+      "title": "SHIELD Wireless Controller",
+      "required": false,
+      "dependencies": [],
+      "description": "SHIELD game controller support."
+    },
+    {
+      "id": "NvVAD",
+      "title": "NVIDIA Virtual Audio Device",
+      "required": false,
+      "dependencies": [],
+      "description": "Virtual audio device used by broadcast/stream features."
+    },
+    {
+      "id": "NvTelemetry",
+      "title": "Telemetry",
+      "required": false,
+      "dependencies": [],
+      "description": "NVIDIA telemetry components (often stripped)."
+    },
+    {
+      "id": "DisplayDriverCrashAnalyzer",
+      "title": "Display Driver Crash Analyzer",
+      "required": false,
+      "dependencies": [],
+      "description": "Crash dump / analysis helper for the display driver."
+    },
+    {
+      "id": "NvContainer",
+      "title": "NV Container",
+      "required": false,
+      "dependencies": [],
+      "description": "Container service used by App/GFE features."
+    },
+    {
+      "id": "NVPCF",
+      "title": "NVPCF",
+      "required": false,
+      "dependencies": [],
+      "description": "Platform configuration framework component."
+    },
+    {
+      "id": "ShadowPlay",
+      "title": "ShadowPlay",
+      "required": false,
+      "dependencies": ["NvContainer"],
+      "description": "Capture/ShadowPlay components."
+    },
+    {
+      "id": "NvBackend",
+      "title": "NV Backend",
+      "required": false,
+      "dependencies": [],
+      "description": "Backend shared by GFE/App."
+    },
+    {
+      "id": "nodejs",
+      "title": "NodeJS (GFE)",
+      "required": false,
+      "dependencies": [],
+      "description": "Node runtime used by GFE UI middleware."
+    },
+    {
+      "id": "NvvHCI",
+      "title": "NV Virtual HCI",
+      "required": false,
+      "dependencies": [],
+      "description": "Virtual host controller interface used by GFE/App stacks."
+    },
+    {
+      "id": "NvAbHub",
+      "title": "NV AB Hub",
+      "required": false,
+      "dependencies": [],
+      "description": "App/backend hub middleware."
+    },
+    {
+      "id": "Update.Core",
+      "title": "Update Core",
+      "required": false,
+      "dependencies": [],
+      "description": "Shared update infrastructure used by GFE."
+    },
+    {
+      "id": "Display.Update",
+      "title": "Display Update",
+      "required": false,
+      "dependencies": ["Update.Core"],
+      "description": "Display-driver update bits for GFE."
+    },
+    {
+      "id": "GFExperience.NvStreamSrv",
+      "title": "GFE Stream Server",
+      "required": false,
+      "dependencies": ["NvContainer"],
+      "description": "GameStream / streaming server components."
+    },
+    {
+      "id": "GFExperience",
+      "title": "GeForce Experience",
+      "required": false,
+      "dependencies": [
+        "NvContainer",
+        "NvTelemetry",
+        "NvBackend",
+        "nodejs",
+        "NvAbHub",
+        "NvvHCI",
+        "Update.Core",
+        "Display.Update",
+        "GFExperience.NvStreamSrv"
+      ],
+      "description": "GeForce Experience stack."
+    },
+    {
+      "id": "NvCpl",
+      "title": "Legacy Control Panel",
+      "required": false,
+      "dependencies": [],
+      "description": "Classic NVIDIA Control Panel."
+    },
+    {
+      "id": "NvApp.MessageBus",
+      "title": "NVIDIA App Message Bus",
+      "required": false,
+      "dependencies": [],
+      "description": "IPC message bus for NVIDIA App."
+    },
+    {
+      "id": "NvApp",
+      "title": "NVIDIA App",
+      "required": false,
+      "dependencies": [
+        "NvContainer",
+        "NvTelemetry",
+        "NvBackend",
+        "ShadowPlay",
+        "NvCpl",
+        "NvApp.MessageBus",
+        "NvAbHub"
+      ],
+      "description": "NVIDIA App control panel stack."
+    },
+    {
+      "id": "NvDLISR",
+      "title": "DLISR",
+      "required": false,
+      "dependencies": [],
+      "description": "Deep learning image scaling / ISR component."
+    },
+    {
+      "id": "NvModuleTracker",
+      "title": "Module Tracker",
+      "required": false,
+      "dependencies": [],
+      "description": "Process module monitor driver (high sensitivity; often stripped)."
+    }
+  ]
+}

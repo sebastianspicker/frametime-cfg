@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "driver-foundry.driver-index/v1",
+  "updatedUtc": "2026-08-08T00:00:00Z",
+  "sourceUrl": null,
+  "entries": [
+    {
+      "id": "572.16-desktop",
+      "version": "572.16",
+      "branch": "Game Ready",
+      "date": "2025-02-20",
+      "url": "https://us.download.nvidia.com/Windows/572.16/572.16-desktop-win10-win11-64bit-international-dch-whql.exe",
+      "productType": "geforce",
+      "filename": "572.16-desktop-win10-win11-64bit-international-dch-whql.exe",
+      "sha256": null
+    },
+    {
+      "id": "572.16-notebook",
+      "version": "572.16",
+      "branch": "Game Ready",
+      "date": "2025-02-20",
+      "url": "https://us.download.nvidia.com/Windows/572.16/572.16-notebook-win10-win11-64bit-international-dch-whql.exe",
+      "productType": "geforce",
+      "filename": "572.16-notebook-win10-win11-64bit-international-dch-whql.exe",
+      "sha256": null
+    },
+    {
+      "id": "572.16-studio",
+      "version": "572.16",
+      "branch": "Studio",
+      "date": "2025-02-20",
+      "url": "https://us.download.nvidia.com/Windows/572.16/572.16-studio-win10-win11-64bit-international-dch-whql.exe",
+      "productType": "geforce",
+      "filename": "572.16-studio-win10-win11-64bit-international-dch-whql.exe",
+      "sha256": null
+    },
+    {
+      "id": "566.36-desktop",
+      "version": "566.36",
+      "branch": "Game Ready",
+      "date": "2024-12-05",
+      "url": "https://us.download.nvidia.com/Windows/566.36/566.36-desktop-win10-win11-64bit-international-dch-whql.exe",
+      "productType": "geforce",
+      "filename": "566.36-desktop-win10-win11-64bit-international-dch-whql.exe",
+      "sha256": null
+    },
+    {
+      "id": "566.36-notebook",
+      "version": "566.36",
+      "branch": "Game Ready",
+      "date": "2024-12-05",
+      "url": "https://us.download.nvidia.com/Windows/566.36/566.36-notebook-win10-win11-64bit-international-dch-whql.exe",
+      "productType": "geforce",
+      "filename": "566.36-notebook-win10-win11-64bit-international-dch-whql.exe",
+      "sha256": null
+    }
+  ]
+}

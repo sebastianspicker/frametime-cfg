@@ -1,0 +1,13 @@
+[package]
+name = "driver-foundry-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Shared product identity, journal, elevation, and path helpers"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# No extra deps — elevation uses Windows APIs via std + FFI declarations
