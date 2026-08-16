@@ -231,14 +231,18 @@ fn finalize_new_output(staged: &Path, output: &Path, stage: &Path) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static UNIQUE_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn uniq() -> PathBuf {
         let n = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("dfoundry-arch-{n}"))
+        let sequence = UNIQUE_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("dfoundry-arch-{n}-{sequence}"))
     }
 
     #[test]
@@ -293,7 +297,10 @@ mod tests {
 
         let dest = root.join("destination");
         let error = extract_zip(&archive, &dest).unwrap_err();
-        assert!(error.to_string().contains("case-colliding"));
+        assert!(
+            error.to_string().contains("case-colliding"),
+            "unexpected rejection: {error}"
+        );
         assert!(!dest.exists());
         let _ = fs::remove_dir_all(root);
     }
