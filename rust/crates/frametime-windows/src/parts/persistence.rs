@@ -217,16 +217,13 @@ pub fn persist_baseline_benchmark(
 pub fn persist_final_benchmark(
     work_dir: &Path,
     capture: BenchmarkCapture,
+    config: &VerifiedConfig,
 ) -> Result<FinalBenchmarkReceipt, String> {
     // This must be first: on non-Windows `acquire` rejects before this API can
     // create a lock, load configuration, or mutate a persistence file.
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let work_dir = trusted.path();
     let _lock = WorkLock::acquire(work_dir)?;
-    let config = config_beside_executable()?;
-    config
-        .validate()
-        .map_err(|error| format!("invalid adjacent frametime.toml: {error}"))?;
     let state = read_state_for_final(&trusted, work_dir)?;
     let progress = read_progress_for_final(&trusted, work_dir)?;
     let history = read_history_for_final(&trusted, work_dir)?;
@@ -234,7 +231,7 @@ pub fn persist_final_benchmark(
         &state,
         &progress,
         &history,
-        &config,
+        config.value(),
         || fresh_final_receipt_id(&state, &history),
         timestamp(),
         capture,
@@ -548,22 +545,22 @@ fn baseline_benchmark_is_persisted(work_dir: &Path, trusted: &TrustedWorkDir) ->
 /// Execute only the bounded cleanup actions selected by the CLI.
 pub fn cleanup_quick(
     work_dir: &Path,
-    _package: &AuthenticatedPackage,
+    package: &AuthenticatedPackage,
 ) -> Result<CleanupReport, String> {
     let _trusted = TrustedWorkDir::acquire(work_dir)?;
     require_elevation()?;
-    Ok(cleanup_native::run(frametime_core::CleanupMode::Quick, work_dir))
+    Ok(cleanup_native::run(frametime_core::CleanupMode::Quick, work_dir, package.config()))
 }
 
 /// Execute the complete safe local-cleanup set.  It intentionally excludes
 /// driver packages and user-owned game content.
 pub fn cleanup_full(
     work_dir: &Path,
-    _package: &AuthenticatedPackage,
+    package: &AuthenticatedPackage,
 ) -> Result<CleanupReport, String> {
     let _trusted = TrustedWorkDir::acquire(work_dir)?;
     require_elevation()?;
-    Ok(cleanup_native::run(frametime_core::CleanupMode::Full, work_dir))
+    Ok(cleanup_native::run(frametime_core::CleanupMode::Full, work_dir, package.config()))
 }
 
 /// Prepare the driver-cleanup transaction by validating the prepared NVIDIA

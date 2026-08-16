@@ -2,7 +2,7 @@ impl LiveBackend {
     fn verify_observation_action(&self, action: &Action) -> Result<Option<()>, String> {
         match action {
             Action::ObserveConfigState => {
-                verify_config_state(self.config.as_ref(), &self.state).map(Some)
+                verify_config_state(Some(self.config.value()), &self.state).map(Some)
             }
             Action::ObserveGpuInventory => {
                 let observed = discover_hardware()?;
@@ -32,7 +32,7 @@ impl LiveBackend {
                     .ok_or("P1:24 verification requires immutable inspected SMBIOS topology")?;
                 verify_memory_topology(captured).map(Some)
             }
-            Action::FpsCapInfo => verify_fps_cap_info(self.config.as_ref(), &self.state).map(Some),
+            Action::FpsCapInfo => verify_fps_cap_info(Some(self.config.value()), &self.state).map(Some),
             _ => Ok(None),
         }
     }

@@ -47,7 +47,10 @@ fn select_unique_physical_ethernet(
         .get(1)
         .is_some_and(|candidate| candidate.link_speed == selected.link_speed)
     {
-        return Err("multiple highest-speed physical Ethernet interfaces make Nagle binding ambiguous".into());
+        return Err(
+            "multiple highest-speed physical Ethernet interfaces make Nagle binding ambiguous"
+                .into(),
+        );
     }
     Ok(selected)
 }
@@ -62,6 +65,36 @@ fn valid_interface_guid(value: &str) -> bool {
             .iter()
             .enumerate()
             .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
+}
+
+#[cfg(any(test, windows))]
+fn validate_mib_table_layout(
+    count: usize,
+    allocation_base: usize,
+    rows_address: usize,
+    row_size: usize,
+    row_alignment: usize,
+) -> Result<(), String> {
+    const MAX_INTERFACE_ROWS: usize = 16_384;
+    const MAX_TABLE_BYTES: usize = 64 * 1024 * 1024;
+
+    if count > MAX_INTERFACE_ROWS {
+        return Err("IP Helper interface count exceeds its defensive bound".into());
+    }
+    if row_size == 0 || !row_alignment.is_power_of_two() {
+        return Err("IP Helper interface row layout is invalid".into());
+    }
+    let rows_bytes = count
+        .checked_mul(row_size)
+        .ok_or("IP Helper interface table size overflow")?;
+    let allocation_bytes = rows_address
+        .checked_sub(allocation_base)
+        .and_then(|header| header.checked_add(rows_bytes))
+        .ok_or("IP Helper interface table extent overflow")?;
+    if allocation_bytes > MAX_TABLE_BYTES || !rows_address.is_multiple_of(row_alignment) {
+        return Err("IP Helper interface table has an invalid extent or alignment".into());
+    }
+    Ok(())
 }
 
 fn nagle_registry_key(guid: &str) -> Result<String, String> {
@@ -92,7 +125,10 @@ fn capture_nagle_batch(step: String) -> Result<(NagleBinding, Vec<BackupEntry>),
             let BackupEntry::Registry { unknown, .. } = &mut entry else {
                 return Err("Nagle capture did not create a registry backup".into());
             };
-            unknown.insert("interfaceGuid".into(), Value::String(binding.interface_guid.clone()));
+            unknown.insert(
+                "interfaceGuid".into(),
+                Value::String(binding.interface_guid.clone()),
+            );
             unknown.insert("interfaceLuid".into(), Value::from(binding.luid));
             unknown.insert("interfaceIndex".into(), Value::from(binding.if_index));
             Ok(entry)
@@ -190,17 +226,16 @@ mod native_network {
     use std::{ptr, slice};
 
     use windows::{
-        Win32::{
-        NetworkManagement::{
+        Win32::NetworkManagement::{
             IpHelper::{FreeMibTable, GetIfEntry2, GetIfTable2, MIB_IF_ROW2, MIB_IF_TABLE2},
             Ndis::{IfOperStatusUp, NET_LUID_LH},
-        },
         },
         core::GUID,
     };
 
     use super::{
-        NagleBinding, PhysicalEthernetCandidate, nagle_registry_key, select_unique_physical_ethernet,
+        NagleBinding, PhysicalEthernetCandidate, nagle_registry_key,
+        select_unique_physical_ethernet, validate_mib_table_layout,
     };
 
     struct MibTable(*mut MIB_IF_TABLE2);
@@ -216,10 +251,20 @@ mod native_network {
         let mut raw = ptr::null_mut();
         let result = unsafe { GetIfTable2(&mut raw) };
         if result.0 != 0 || raw.is_null() {
-            return Err(format!("enumerate IP Helper interfaces failed: {}", result.0));
+            return Err(format!(
+                "enumerate IP Helper interfaces failed: {}",
+                result.0
+            ));
         }
         let table = MibTable(raw);
         let count = unsafe { (*table.0).NumEntries as usize };
+        validate_mib_table_layout(
+            count,
+            table.0 as usize,
+            unsafe { (*table.0).Table.as_ptr() as usize },
+            std::mem::size_of::<MIB_IF_ROW2>(),
+            std::mem::align_of::<MIB_IF_ROW2>(),
+        )?;
         let rows = unsafe { slice::from_raw_parts((*table.0).Table.as_ptr(), count) };
         let candidates = rows
             .iter()
@@ -247,12 +292,17 @@ mod native_network {
 
     pub(super) fn reobserve(binding: &NagleBinding) -> Result<(), String> {
         let mut row = MIB_IF_ROW2 {
-            InterfaceLuid: NET_LUID_LH { Value: binding.luid },
+            InterfaceLuid: NET_LUID_LH {
+                Value: binding.luid,
+            },
             ..Default::default()
         };
         let result = unsafe { GetIfEntry2(&mut row) };
         if result.0 != 0 {
-            return Err(format!("reobserve captured IP Helper interface failed: {}", result.0));
+            return Err(format!(
+                "reobserve captured IP Helper interface failed: {}",
+                result.0
+            ));
         }
         let candidate = PhysicalEthernetCandidate {
             interface_guid: guid_string(row.InterfaceGuid),
@@ -270,12 +320,30 @@ mod native_network {
             || candidate.luid != binding.luid
             || candidate.if_index != binding.if_index
         {
-            return Err("captured Nagle interface no longer has the exact physical identity".into());
+            return Err(
+                "captured Nagle interface no longer has the exact physical identity".into(),
+            );
         }
         Ok(())
     }
 
     fn guid_string(guid: GUID) -> String {
         format!("{{{guid:?}}}")
+    }
+}
+
+#[cfg(test)]
+mod native_table_bounds_tests {
+    use super::validate_mib_table_layout;
+
+    #[test]
+    fn rejects_excessive_or_overflowing_interface_tables() {
+        assert!(validate_mib_table_layout(16_385, 0x1000, 0x1008, 256, 8).is_err());
+        assert!(validate_mib_table_layout(1, usize::MAX, 0, 256, 8).is_err());
+    }
+
+    #[test]
+    fn rejects_misaligned_interface_rows() {
+        assert!(validate_mib_table_layout(1, 0x1000, 0x1001, 256, 8).is_err());
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "driver-foundry-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "CLI and desktop application for Driver Foundry"
+default-run = "dfoundry"
+
+[[bin]]
+name = "dfoundry"
+path = "src/main.rs"
+
+[dependencies]
+driver-foundry-common = { workspace = true }
+driver-foundry-clean = { workspace = true }
+driver-foundry-install = { workspace = true }
+driver-foundry-gui = { workspace = true }
+clap = { workspace = true }

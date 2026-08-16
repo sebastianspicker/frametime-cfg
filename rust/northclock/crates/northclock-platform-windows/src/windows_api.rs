@@ -21,6 +21,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Shell::IsUserAnAdmin;
 
+use super::abi_validation::{validate_variable_record_extent, VariableRecordExtent};
+
 pub(crate) fn physical_core_count() -> Result<usize> {
     let mut bytes = 0_u32;
     // The sizing call is documented to fail with ERROR_INSUFFICIENT_BUFFER.
@@ -34,6 +36,9 @@ pub(crate) fn physical_core_count() -> Result<usize> {
         usize::try_from(bytes).map_err(|error| NorthclockError::Internal(error.to_string()))?;
     let element_size = size_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>();
     let element_count = byte_len.div_ceil(element_size);
+    let allocation_size = element_count.checked_mul(element_size).ok_or_else(|| {
+        NorthclockError::Internal("processor-topology allocation size overflows usize".into())
+    })?;
     let mut buffer =
         vec![MaybeUninit::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>::uninit(); element_count];
     unsafe {
@@ -47,33 +52,47 @@ pub(crate) fn physical_core_count() -> Result<usize> {
 
     let returned =
         usize::try_from(bytes).map_err(|error| NorthclockError::Internal(error.to_string()))?;
-    if returned > element_count * element_size {
+    if returned > allocation_size {
         return Err(NorthclockError::Internal(
             "Windows wrote beyond the declared topology buffer length".into(),
         ));
     }
     let base = buffer.as_ptr().cast::<u8>();
+    let header_size = size_of::<u32>() * 2;
+    let record_alignment = std::mem::align_of::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>();
     let mut offset = 0_usize;
     let mut cores = 0_usize;
     while offset < returned {
-        if returned - offset < 8 {
-            return Err(NorthclockError::Internal(
-                "truncated processor-topology record".into(),
-            ));
-        }
-        let record = unsafe {
-            &*base
-                .add(offset)
-                .cast::<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>()
+        validate_topology_record_extent(
+            base.addr(),
+            allocation_size,
+            returned,
+            offset,
+            header_size,
+            header_size,
+            record_alignment,
+        )?;
+        // SAFETY: the validated fixed header is entirely within the original
+        // aligned allocation and the bytes were reported by the API as used.
+        let relationship = unsafe { base.add(offset).cast::<i32>().read_unaligned() };
+        // SAFETY: the same header validation covers the Size field at byte 4.
+        let reported_size = unsafe {
+            base.add(offset + size_of::<u32>())
+                .cast::<u32>()
+                .read_unaligned()
         };
-        let size = usize::try_from(record.Size)
+        let size = usize::try_from(reported_size)
             .map_err(|error| NorthclockError::Internal(error.to_string()))?;
-        if size < 8 || offset.checked_add(size).is_none_or(|end| end > returned) {
-            return Err(NorthclockError::Internal(
-                "invalid processor-topology record size".into(),
-            ));
-        }
-        if record.Relationship == RelationProcessorCore {
+        validate_topology_record_extent(
+            base.addr(),
+            allocation_size,
+            returned,
+            offset,
+            size,
+            header_size,
+            record_alignment,
+        )?;
+        if relationship == RelationProcessorCore.0 {
             cores += 1;
         }
         offset += size;
@@ -84,6 +103,27 @@ pub(crate) fn physical_core_count() -> Result<usize> {
         ));
     }
     Ok(cores)
+}
+
+fn validate_topology_record_extent(
+    allocation_address: usize,
+    allocation_size: usize,
+    returned_size: usize,
+    record_offset: usize,
+    record_size: usize,
+    minimum_record_size: usize,
+    record_alignment: usize,
+) -> Result<()> {
+    validate_variable_record_extent(VariableRecordExtent {
+        allocation_address,
+        allocation_size,
+        returned_size,
+        record_offset,
+        record_size,
+        minimum_record_size,
+        record_alignment,
+    })
+    .map_err(|_| NorthclockError::Internal("invalid processor-topology record bounds".into()))
 }
 
 pub(crate) fn logical_processor_count() -> Result<usize> {

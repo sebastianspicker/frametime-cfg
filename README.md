@@ -121,6 +121,10 @@ The repository also contains a self-contained, source-only
 portable packaging commands, but remains an alpha parity effort rather than a
 release-equivalent replacement for the PowerShell product.
 
+The `rust/driver-foundry/` and `rust/northclock/` projects are maintained as
+in-tree frametime.cfg components. They must not be initialized or published as
+separate Git repositories; their source and history belong to this repository.
+
 ## Configuration
 
 [`config.env.ps1`](config.env.ps1) is the central configuration file for the

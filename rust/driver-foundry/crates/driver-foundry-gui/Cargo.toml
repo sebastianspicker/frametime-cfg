@@ -1,0 +1,18 @@
+[package]
+name = "driver-foundry-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Desktop GUI for Driver Foundry"
+
+[dependencies]
+driver-foundry-common = { workspace = true }
+driver-foundry-clean = { workspace = true }
+driver-foundry-install = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+
+[lib]
+name = "driver_foundry_gui"
+path = "src/lib.rs"

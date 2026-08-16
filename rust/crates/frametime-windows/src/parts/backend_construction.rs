@@ -1,20 +1,7 @@
 impl LiveBackend {
-    /// Create the backend using validated state, optional adjacent config, and
+    /// Create the backend from a retained-verifier configuration snapshot and
     /// native display-adapter discovery.
-    pub fn new(work_dir: PathBuf) -> Result<Self, String> {
-        let config = config_beside_executable()?;
-        Self::new_with_optional_config(work_dir, Some(config))
-    }
-
-    /// Create the backend with a caller-supplied, validated data-only config.
-    pub fn new_with_config(work_dir: PathBuf, config: Config) -> Result<Self, String> {
-        config
-            .validate()
-            .map_err(|error| format!("invalid config: {error}"))?;
-        Self::new_with_optional_config(work_dir, Some(config))
-    }
-
-    fn new_with_optional_config(work_dir: PathBuf, config: Option<Config>) -> Result<Self, String> {
+    pub fn new(work_dir: PathBuf, config: VerifiedConfig) -> Result<Self, String> {
         let trusted_work_dir = TrustedWorkDir::acquire(&work_dir)?;
         require_elevation()?;
         let state = load_state(trusted_work_dir.path())?;
@@ -78,11 +65,6 @@ impl LiveBackend {
     fn require_descriptor_inputs(&self, descriptor: &ActionDescriptor) -> Result<(), String> {
         for input in descriptor.required_inputs {
             match input {
-                RequiredInput::ValidatedConfig if self.config.is_none() => {
-                    return Err(
-                        "native action requires validated frametime.toml configuration".into(),
-                    );
-                }
                 RequiredInput::GpuBranch if self.configured_gpu_branch().is_none() => {
                     return Err("native action requires a validated GPU branch".into());
                 }

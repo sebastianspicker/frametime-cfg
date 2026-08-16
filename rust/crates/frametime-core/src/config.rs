@@ -108,6 +108,8 @@ pub struct Nic {
 pub enum ConfigError {
     #[error("could not read configuration: {0}")]
     Io(#[from] std::io::Error),
+    #[error("configuration is not valid UTF-8: {0}")]
+    Utf8(#[from] std::str::Utf8Error),
     #[error("invalid TOML configuration: {0}")]
     Parse(#[from] toml::de::Error),
     #[error("fps_cap.percent must be between 0.01 and 0.50")]
@@ -132,8 +134,17 @@ pub enum ConfigError {
 
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let raw = fs::read_to_string(path)?;
-        let parsed: Self = toml::from_str(&raw)?;
+        Self::parse_bytes(&fs::read(path)?)
+    }
+
+    /// Parse and validate one immutable configuration byte snapshot.
+    pub fn parse_bytes(bytes: &[u8]) -> Result<Self, ConfigError> {
+        Self::parse_str(std::str::from_utf8(bytes)?)
+    }
+
+    /// Parse and validate UTF-8 configuration text.
+    pub fn parse_str(raw: &str) -> Result<Self, ConfigError> {
+        let parsed: Self = toml::from_str(raw)?;
         parsed.validate()?;
         Ok(parsed)
     }
@@ -224,6 +235,19 @@ mod tests {
     #[test]
     fn validates_checked_in_defaults() {
         valid().validate().expect("valid defaults");
+    }
+
+    #[test]
+    fn parse_bytes_binds_utf8_and_validation() {
+        assert_eq!(
+            Config::parse_bytes(include_bytes!("../../../frametime.toml")).expect("fixture"),
+            valid()
+        );
+        assert!(matches!(
+            Config::parse_bytes(&[0xff]),
+            Err(ConfigError::Utf8(_))
+        ));
+        assert!(Config::parse_bytes(b"unknown = true").is_err());
     }
 
     #[test]

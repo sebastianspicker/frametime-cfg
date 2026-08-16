@@ -39,6 +39,7 @@ pub fn show_log(work_dir: &Path) -> Result<(), String> {
 pub fn run_network_stack_transaction(
     work_dir: &Path,
     confirmed: bool,
+    config: VerifiedConfig,
 ) -> Result<frametime_core::RunReport, String> {
     if !confirmed {
         return Err("P1:16 requires explicit operator confirmation".into());
@@ -46,7 +47,7 @@ pub fn run_network_stack_transaction(
     let step = network_stack_step()?;
     let state = load_state(work_dir)?;
     let progress = load_progress(work_dir)?;
-    let backend = LiveBackend::new(work_dir.to_path_buf())?;
+    let backend = LiveBackend::new(work_dir.to_path_buf(), config)?;
     let mut engine = frametime_core::Engine::new(backend, progress);
     engine
         .run_with_consent(&[step], state.profile, |_| true)
@@ -80,30 +81,32 @@ pub fn reset_progress(work_dir: &Path) -> Result<(), String> {
 ///
 /// Invalid, unknown, and failed entries remain in `backup.json`; successful
 /// entries are removed atomically, so a subsequent run is a bounded retry.
-pub fn restore_all(work_dir: &Path) -> Result<(), String> {
-    restore_matching(work_dir, |_| true)
+pub fn restore_all(work_dir: &Path, config: &VerifiedConfig) -> Result<(), String> {
+    restore_matching(work_dir, config, |_| true)
 }
 
 /// Restore only records captured for an exact catalog step title. Records for
 /// other steps, unknown records, and failed restores remain byte-compatible in
 /// the active backup file for later retry.
-pub fn restore_selected(work_dir: &Path, step_title: &str) -> Result<(), String> {
+pub fn restore_selected(
+    work_dir: &Path,
+    step_title: &str,
+    config: &VerifiedConfig,
+) -> Result<(), String> {
     if step_title.is_empty() || step_title.len() > 128 {
         return Err("restore step title is invalid".into());
     }
-    restore_matching(work_dir, |entry| entry.step() == Some(step_title))
+    restore_matching(work_dir, config, |entry| entry.step() == Some(step_title))
 }
 
 fn restore_matching(
     work_dir: &Path,
+    config: &VerifiedConfig,
     selected: impl Fn(&BackupEntry) -> bool,
 ) -> Result<(), String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let work_dir = trusted.path();
     require_elevation()?;
-    // A backup is not recovery authority for config-selected identities. Bind
-    // every restore attempt to the validated executable-adjacent config.
-    let config = config_beside_executable()?;
     let _lock = WorkLock::acquire(work_dir)?;
     let mut backup: BackupFile = read_json_trusted(&trusted, BACKUP_FILE)
         .map_err(|error| format!("read backup: {error}"))?;
@@ -114,7 +117,7 @@ fn restore_matching(
             retained.push(entry.clone());
             continue;
         }
-        match restore_entry(entry, &config) {
+        match restore_entry(entry, config.value()) {
             Ok(()) => {}
             Err(error) => {
                 retained.push(entry.clone());
@@ -175,7 +178,7 @@ pub fn export_backup(work_dir: &Path, destination: &Path) -> Result<(), String> 
 
 #[cfg(test)]
 mod backend_public_tests {
-    use super::{network_stack_step, run_network_stack_transaction};
+    use super::{VerifiedConfig, network_stack_step, run_network_stack_transaction};
     use std::path::Path;
 
     #[test]
@@ -188,7 +191,13 @@ mod backend_public_tests {
 
     #[test]
     fn network_facade_rejects_missing_confirmation_before_backend_construction() {
-        let error = run_network_stack_transaction(Path::new("not-the-live-root"), false)
+        use sha2::{Digest, Sha256};
+
+        let bytes = include_bytes!("../../../../frametime.toml").to_vec();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let config = VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64, &digest)
+            .expect("verified fixture");
+        let error = run_network_stack_transaction(Path::new("not-the-live-root"), false, config)
             .expect_err("confirmation must fail before any platform operation");
         assert!(error.contains("explicit operator confirmation"));
     }

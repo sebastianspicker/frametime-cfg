@@ -7,6 +7,54 @@ pub enum AbiValidationError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VariableRecordExtent {
+    pub allocation_address: usize,
+    pub allocation_size: usize,
+    pub returned_size: usize,
+    pub record_offset: usize,
+    pub record_size: usize,
+    pub minimum_record_size: usize,
+    pub record_alignment: usize,
+}
+
+pub fn validate_variable_record_extent(
+    extent: VariableRecordExtent,
+) -> Result<(), AbiValidationError> {
+    if extent.record_alignment == 0 || !extent.record_alignment.is_power_of_two() {
+        return Err(AbiValidationError::InvalidBounds);
+    }
+    if !extent
+        .allocation_address
+        .is_multiple_of(extent.record_alignment)
+        || !extent.record_offset.is_multiple_of(extent.record_alignment)
+        || !extent.record_size.is_multiple_of(extent.record_alignment)
+    {
+        return Err(AbiValidationError::InvalidBounds);
+    }
+    if extent.returned_size > extent.allocation_size {
+        return Err(AbiValidationError::OutOfRange);
+    }
+    if extent.record_size < extent.minimum_record_size {
+        return Err(AbiValidationError::InvalidBounds);
+    }
+    let record_address = extent
+        .allocation_address
+        .checked_add(extent.record_offset)
+        .ok_or(AbiValidationError::InvalidBounds)?;
+    if !record_address.is_multiple_of(extent.record_alignment) {
+        return Err(AbiValidationError::InvalidBounds);
+    }
+    let record_end = extent
+        .record_offset
+        .checked_add(extent.record_size)
+        .ok_or(AbiValidationError::InvalidBounds)?;
+    if record_end > extent.returned_size || record_end > extent.allocation_size {
+        return Err(AbiValidationError::InvalidBounds);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EtwPresentHeaderFields {
     pub total_size: usize,
     pub header_size: usize,
@@ -122,6 +170,41 @@ mod tests {
         assert_eq!(
             validate_nvapi_thermal_header(3, 3, 0, 3),
             Err(AbiValidationError::MissingValue)
+        );
+    }
+
+    #[test]
+    fn variable_record_extent_requires_aligned_contained_records() {
+        let valid = VariableRecordExtent {
+            allocation_address: 0x1000,
+            allocation_size: 96,
+            returned_size: 80,
+            record_offset: 32,
+            record_size: 48,
+            minimum_record_size: 8,
+            record_alignment: 8,
+        };
+        assert_eq!(validate_variable_record_extent(valid), Ok(()));
+        assert_eq!(
+            validate_variable_record_extent(VariableRecordExtent {
+                record_offset: 36,
+                ..valid
+            }),
+            Err(AbiValidationError::InvalidBounds)
+        );
+        assert_eq!(
+            validate_variable_record_extent(VariableRecordExtent {
+                record_size: 56,
+                ..valid
+            }),
+            Err(AbiValidationError::InvalidBounds)
+        );
+        assert_eq!(
+            validate_variable_record_extent(VariableRecordExtent {
+                returned_size: 104,
+                ..valid
+            }),
+            Err(AbiValidationError::OutOfRange)
         );
     }
 }

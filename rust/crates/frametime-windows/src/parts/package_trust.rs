@@ -89,6 +89,7 @@ impl AuthenticatedExecutable {
 pub struct AuthenticatedPackage {
     root: PathBuf,
     manifest: PackageManifest,
+    config: VerifiedConfig,
     gui: AuthenticatedExecutable,
     cli: AuthenticatedExecutable,
     #[cfg(windows)]
@@ -105,6 +106,10 @@ impl AuthenticatedPackage {
     #[must_use]
     pub fn manifest(&self) -> &PackageManifest {
         &self.manifest
+    }
+    #[must_use]
+    pub fn config(&self) -> &VerifiedConfig {
+        &self.config
     }
     #[must_use]
     pub fn gui(&self) -> &AuthenticatedExecutable {

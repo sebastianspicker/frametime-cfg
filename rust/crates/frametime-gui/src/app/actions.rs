@@ -63,10 +63,24 @@ pub(super) fn start_network_apply(window: HWND) {
         }
         return;
     }
+    let Some(config) = with_state(window, |app| {
+        app.package
+            .package()
+            .map(|package| package.config().clone())
+    })
+    .flatten() else {
+        update_status(
+            window,
+            StatusKind::Warning,
+            "Authenticated package authority is no longer available.",
+        );
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let result = frametime_windows::run_network_stack_transaction(Path::new(WORK_DIR), true)
-            .and_then(|report| model::format_network_apply_report(&report));
+        let result =
+            frametime_windows::run_network_stack_transaction(Path::new(WORK_DIR), true, config)
+                .and_then(|report| model::format_network_apply_report(&report));
         let _ = sender.send(NativeWorkerResult::Transaction(result));
     });
     let _ = with_state(window, |app| {
@@ -134,8 +148,8 @@ pub(super) fn secondary_action(window: HWND, tertiary: bool) {
                 "Restore every supported backup entry? Failed records stay in backup.json for retry.",
                 "Restore all backups",
             ) {
-                start_native_recovery(window, true, || {
-                    frametime_windows::restore_all(Path::new(WORK_DIR)).map(|()| "Recovery completed. Retained entries, if any, are shown in the refreshed grid.".into())
+                start_native_recovery(window, true, |config| {
+                    frametime_windows::restore_all(Path::new(WORK_DIR), &config).map(|()| "Recovery completed. Retained entries, if any, are shown in the refreshed grid.".into())
                 });
             }
         }
@@ -163,7 +177,7 @@ pub(super) fn quaternary_action(window: HWND) {
                 "Clear backup records",
             ) =>
         {
-            start_native_recovery(window, true, || {
+            start_native_recovery(window, true, |_| {
                 frametime_windows::clear_backup(Path::new(WORK_DIR))
                     .map(|()| "Backup records cleared after explicit confirmation.".into())
             })
@@ -298,8 +312,8 @@ pub(super) fn restore_selected(window: HWND) {
         &format!("Restore only the selected entry: {step}? Other entries remain for later retry."),
         "Restore selected backup",
     ) {
-        start_native_recovery(window, true, move || {
-            frametime_windows::restore_selected(Path::new(WORK_DIR), &step).map(|()| {
+        start_native_recovery(window, true, move |config| {
+            frametime_windows::restore_selected(Path::new(WORK_DIR), &step, &config).map(|()| {
                 "Selected recovery entries completed. Other records remain in the backup grid."
                     .into()
             })
@@ -347,7 +361,7 @@ pub(super) fn selected_recovery_step(window: HWND) -> Option<String> {
 pub(super) fn start_native_recovery(
     window: HWND,
     requires_elevation: bool,
-    operation: impl FnOnce() -> Result<String, String> + Send + 'static,
+    operation: impl FnOnce(frametime_windows::VerifiedConfig) -> Result<String, String> + Send + 'static,
 ) {
     if !require_authenticated_package(window) {
         return;
@@ -372,9 +386,22 @@ pub(super) fn start_native_recovery(
         );
         return;
     }
+    let Some(config) = with_state(window, |app| {
+        app.package
+            .package()
+            .map(|package| package.config().clone())
+    })
+    .flatten() else {
+        update_status(
+            window,
+            StatusKind::Warning,
+            "Authenticated package authority is no longer available.",
+        );
+        return;
+    };
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
-        let _ = sender.send(NativeWorkerResult::Transaction(operation()));
+        let _ = sender.send(NativeWorkerResult::Transaction(operation(config)));
     });
     let _ = with_state(window, |app| {
         app.native_result = Some(receiver);
@@ -395,7 +422,7 @@ pub(super) fn export_backup(window: HWND) {
     let Some(destination) = choose_backup_destination(window) else {
         return;
     };
-    start_native_recovery(window, false, move || {
+    start_native_recovery(window, false, move |_| {
         frametime_windows::export_backup(Path::new(WORK_DIR), &destination).map(|()| {
             format!(
                 "Backup exported and byte-verified at {}.",

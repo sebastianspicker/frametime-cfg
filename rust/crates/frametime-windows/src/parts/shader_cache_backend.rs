@@ -6,7 +6,7 @@ fn is_shader_cache_operation(operation: Operation) -> bool {
 
 impl LiveBackend {
     fn inspect_shader_cache_with_audit(&mut self) -> Result<Inspection, String> {
-        let inventory = shader_cache_inventory(self.config.as_ref())?;
+        let inventory = shader_cache_inventory(Some(self.config.value()))?;
         let file = load_audit_file(&self._trusted_work_dir)?;
         let pending = p1_3_pending_audit(&file)?;
         inspection_from_shader_cache_audit(&inventory, pending.as_ref())
@@ -23,7 +23,7 @@ impl LiveBackend {
         let pending = load_audit_file(&self._trusted_work_dir)
             .and_then(|file| p1_3_pending_audit(&file))
             .inspect_err(|_| self.transaction_lock = None)?;
-        let inventory = shader_cache_inventory(self.config.as_ref()).inspect_err(|_| {
+        let inventory = shader_cache_inventory(Some(self.config.value())).inspect_err(|_| {
             self.transaction_lock = None;
         })?;
         if inventory.is_empty() && pending.is_none() {

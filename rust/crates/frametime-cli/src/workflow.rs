@@ -77,14 +77,16 @@ pub(crate) fn run_live(command: Command) -> Result<(), AppError> {
         Command::Restore { yes } => {
             require_yes(yes, "restore")?;
             match require_authenticated_package() {
-                Ok(_package) => frametime_windows::restore_all(&work_dir).map_err(AppError::failed),
+                Ok(package) => frametime_windows::restore_all(&work_dir, package.config())
+                    .map_err(AppError::failed),
                 Err(package_error) => {
-                    let _runtime = retain_selected_runtime(&work_dir).map_err(|runtime_error| {
+                    let runtime = retain_selected_runtime(&work_dir).map_err(|runtime_error| {
                         AppError::failed(format!(
                             "restore requires an authenticated package or selected protected runtime; package: {package_error}; runtime: {runtime_error}"
                         ))
                     })?;
-                    frametime_windows::restore_all(&work_dir).map_err(AppError::failed)
+                    frametime_windows::restore_all(&work_dir, runtime.config())
+                        .map_err(AppError::failed)
                 }
             }
         }
@@ -131,6 +133,7 @@ fn run_phase_one(
         state.profile,
         progress,
         yes,
+        package.config().clone(),
     )?;
     let (_, progress) = load_session(work_dir)?;
     require_phase_one_handoff_ready(&progress).map_err(|error| {
@@ -189,7 +192,7 @@ fn run_boot_safe_mode(work_dir: &Path, yes: bool) -> Result<(), AppError> {
 
 fn run_phase_two(work_dir: &Path, yes: bool) -> Result<(), AppError> {
     require_boot_mode(BootMode::SafeMode, "phase2")?;
-    let _runtime = require_selected_runtime(work_dir, "phase2")?;
+    let runtime = require_selected_runtime(work_dir, "phase2")?;
     let (state, progress) = load_session(work_dir)?;
     match authorize_live(
         PhaseRequest::PhaseTwo,
@@ -208,6 +211,7 @@ fn run_phase_two(work_dir: &Path, yes: bool) -> Result<(), AppError> {
                 state.profile,
                 progress,
                 yes,
+                runtime.config().clone(),
             )?;
             let (_, updated_progress) = load_session(work_dir)?;
             if updated_progress
@@ -224,7 +228,7 @@ fn run_phase_two(work_dir: &Path, yes: bool) -> Result<(), AppError> {
 
 fn run_phase_three(work_dir: &Path, yes: bool) -> Result<(), AppError> {
     require_boot_mode(BootMode::Normal, "phase3")?;
-    let _runtime = require_selected_runtime(work_dir, "phase3")?;
+    let runtime = require_selected_runtime(work_dir, "phase3")?;
     let (state, progress) = load_session(work_dir)?;
     let receipt_route =
         phase_three_receipt_route(final_benchmark_status(work_dir).map_err(AppError::failed)?)?;
@@ -259,6 +263,7 @@ fn run_phase_three(work_dir: &Path, yes: bool) -> Result<(), AppError> {
         state.profile,
         progress,
         yes,
+        runtime.config().clone(),
     )?;
     match final_benchmark_status(work_dir).map_err(AppError::failed)? {
         FinalBenchmarkStatus::Absent => Err(AppError::failed(
@@ -316,7 +321,7 @@ pub(crate) fn run_final_benchmark(request: VprofBenchmarkRequest) -> Result<(), 
     let capture = read_final_benchmark_capture(request)?;
     let work_dir = PathBuf::from(WINDOWS_WORK_DIR);
     require_boot_mode(BootMode::Normal, "final-benchmark")?;
-    let _runtime = require_selected_runtime(&work_dir, "final-benchmark")?;
+    let runtime = require_selected_runtime(&work_dir, "final-benchmark")?;
     let (state, progress) = load_session(&work_dir)?;
     authorize_live(
         PhaseRequest::FinalBenchmark,
@@ -325,7 +330,7 @@ pub(crate) fn run_final_benchmark(request: VprofBenchmarkRequest) -> Result<(), 
         BootMode::Normal,
         RuntimeBinding::VerifiedSelectedExecutable,
     )?;
-    persist_final_benchmark_capture(capture)?;
+    persist_final_benchmark_capture(capture, runtime.config())?;
     let (state, progress) = load_session(&work_dir)?;
     authorize_live_with_final_benchmark_evidence(
         PhaseRequest::ClearPhaseThreeHandoff,
@@ -561,13 +566,14 @@ fn run_live_steps(
     profile: Profile,
     progress: Progress,
     yes: bool,
+    config: frametime_windows::VerifiedConfig,
 ) -> Result<(), AppError> {
     let steps = step_catalog()
         .iter()
         .filter(|step| filter(step))
         .copied()
         .collect::<Vec<_>>();
-    let backend = LiveBackend::new(work_dir.to_path_buf()).map_err(AppError::failed)?;
+    let backend = LiveBackend::new(work_dir.to_path_buf(), config).map_err(AppError::failed)?;
     let mut engine = Engine::new(backend, progress);
     let report = engine
         .run_with_control(

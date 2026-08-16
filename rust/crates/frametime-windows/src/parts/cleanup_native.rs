@@ -14,19 +14,16 @@ use frametime_core::{
 #[cfg(windows)]
 use crate::cleanup_shader::{CleanupShaderCacheKind, clear_cleanup_shader_cache};
 use crate::{
-    AuthenticatedPackage, Progress, launch_published_safe_mode_handoff, load_driver_transaction,
-    load_progress, publish_current_packaged_runtime, require_elevation,
+    AuthenticatedPackage, Progress, VerifiedConfig, launch_published_safe_mode_handoff,
+    load_driver_transaction, load_progress, publish_current_packaged_runtime, require_elevation,
 };
 #[cfg(windows)]
-use crate::{
-    CommandName, CommandVector, GpuBranch, config_beside_executable, copy_text_to_clipboard,
-    discover_hardware,
-};
+use crate::{CommandName, CommandVector, GpuBranch, copy_text_to_clipboard, discover_hardware};
 
 #[cfg(any(test, windows))]
 const STEAM_VALIDATE_730_URI: &str = "steam://validate/730";
 
-pub(crate) fn run(mode: CleanupMode, _work_dir: &Path) -> CleanupReport {
+pub(crate) fn run(mode: CleanupMode, _work_dir: &Path, config: &VerifiedConfig) -> CleanupReport {
     if matches!(mode, CleanupMode::Driver) {
         return CleanupReport {
             action_results: vec![CleanupActionResult {
@@ -42,7 +39,7 @@ pub(crate) fn run(mode: CleanupMode, _work_dir: &Path) -> CleanupReport {
         .into_iter()
         .map(|spec| CleanupActionResult {
             action: spec.action,
-            outcome: action_outcome(spec.action),
+            outcome: action_outcome(spec.action, config),
         })
         .collect::<Vec<_>>();
     let restart_required = action_results.iter().any(|result| {
@@ -100,8 +97,8 @@ fn driver_report(work_dir: &Path, package: &AuthenticatedPackage) -> CleanupRepo
 }
 
 #[cfg(windows)]
-fn action_outcome(action: CleanupAction) -> CleanupActionOutcome {
-    match action_effect(action) {
+fn action_outcome(action: CleanupAction, config: &VerifiedConfig) -> CleanupActionOutcome {
+    match action_effect(action, config) {
         Ok(affected_items) => CleanupActionOutcome::Completed { affected_items },
         Err(CleanupDisposition::Inapplicable(reason)) => {
             CleanupActionOutcome::Inapplicable { reason }
@@ -112,7 +109,7 @@ fn action_outcome(action: CleanupAction) -> CleanupActionOutcome {
 }
 
 #[cfg(not(windows))]
-fn action_outcome(_action: CleanupAction) -> CleanupActionOutcome {
+fn action_outcome(_action: CleanupAction, _config: &VerifiedConfig) -> CleanupActionOutcome {
     CleanupActionOutcome::Deferred {
         reason: "native cleanup requires supported Windows x64".into(),
     }
@@ -126,7 +123,10 @@ enum CleanupDisposition {
 }
 
 #[cfg(windows)]
-fn action_effect(action: CleanupAction) -> Result<usize, CleanupDisposition> {
+fn action_effect(
+    action: CleanupAction,
+    config: &VerifiedConfig,
+) -> Result<usize, CleanupDisposition> {
     use CleanupAction::{
         ClearAmdDxShaderCache, ClearApplicationEventLog, ClearCs2App730ShaderCache,
         ClearCurrentUserTemp, ClearDirectXShaderCache, ClearNvidiaDxShaderCache,
@@ -135,10 +135,10 @@ fn action_effect(action: CleanupAction) -> Result<usize, CleanupDisposition> {
         ResetWinsockCatalog, TrimSystemFileCacheWorkingSet,
     };
     match action {
-        ClearCs2App730ShaderCache => shader(CleanupShaderCacheKind::Cs2),
-        ClearNvidiaDxShaderCache => shader(CleanupShaderCacheKind::NvidiaDx),
-        ClearNvidiaGlShaderCache => shader(CleanupShaderCacheKind::NvidiaGl),
-        ClearDirectXShaderCache => shader(CleanupShaderCacheKind::DirectX),
+        ClearCs2App730ShaderCache => shader(config, CleanupShaderCacheKind::Cs2),
+        ClearNvidiaDxShaderCache => shader(config, CleanupShaderCacheKind::NvidiaDx),
+        ClearNvidiaGlShaderCache => shader(config, CleanupShaderCacheKind::NvidiaGl),
+        ClearDirectXShaderCache => shader(config, CleanupShaderCacheKind::DirectX),
         ClearAmdDxShaderCache => {
             if discover_hardware()
                 .map_err(CleanupDisposition::Failed)?
@@ -149,7 +149,7 @@ fn action_effect(action: CleanupAction) -> Result<usize, CleanupDisposition> {
                     "no exact AMD display adapter is active".into(),
                 ))
             } else {
-                shader(CleanupShaderCacheKind::AmdDx)
+                shader(config, CleanupShaderCacheKind::AmdDx)
             }
         }
         ClearWindowsTemp => cleanup_paths::windows_temp().map_err(CleanupDisposition::Failed),
@@ -187,15 +187,17 @@ fn reset_winsock_catalog() -> Result<usize, String> {
 }
 
 #[cfg(windows)]
-fn shader(kind: CleanupShaderCacheKind) -> Result<usize, CleanupDisposition> {
+fn shader(
+    config: &VerifiedConfig,
+    kind: CleanupShaderCacheKind,
+) -> Result<usize, CleanupDisposition> {
     if !crate::shader_cache_delete_qualified() {
         return Err(CleanupDisposition::Deferred(
             "handle-backed shader-cache deletion is disabled pending Windows VM qualification"
                 .into(),
         ));
     }
-    let config = config_beside_executable().map_err(CleanupDisposition::Failed)?;
-    clear_cleanup_shader_cache(&config, kind).map_err(CleanupDisposition::Failed)
+    clear_cleanup_shader_cache(config.value(), kind).map_err(CleanupDisposition::Failed)
 }
 
 #[cfg(windows)]
@@ -369,9 +371,22 @@ mod dns {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
+
+    fn verified_config() -> VerifiedConfig {
+        let bytes = include_bytes!("../../../../frametime.toml").to_vec();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64, &digest)
+            .expect("verified fixture")
+    }
+
     #[test]
     fn report_has_one_result_in_exact_core_order_even_when_every_host_action_is_deferred() {
-        let report = run(CleanupMode::Full, Path::new("C:\\FRAMETIME_CFG"));
+        let report = run(
+            CleanupMode::Full,
+            Path::new("C:\\FRAMETIME_CFG"),
+            &verified_config(),
+        );
         assert_eq!(
             report.action_results.len(),
             cleanup_actions(CleanupMode::Full).len()
