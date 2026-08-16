@@ -1,0 +1,13 @@
+[package]
+name = "driver-foundry-clean"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GPU/audio driver cleanup engine with dry-run and Windows live adapters"
+
+[dependencies]
+driver-foundry-common = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
