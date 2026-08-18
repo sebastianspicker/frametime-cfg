@@ -4,6 +4,7 @@ Thumbs.db
 Desktop.ini
 
 # IDE / editor
+/.mcp.json
 .vscode/
 .idea/
 .fleet/
