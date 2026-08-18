@@ -30,5 +30,5 @@ The first three commands are the cross-platform quality gate. The release build 
 - Keep cohesive Rust source files at or below 600 physical lines when splitting does not weaken the domain boundary.
 - Prefer small, reviewable changes that preserve safety boundaries.
 - Match existing Rust module style and add focused tests for behavior changes.
-- Update [docs/STATUS.md](docs/STATUS.md) when user-visible behavior or a safety boundary changes.
+- Update [README.md](README.md) when user-visible behavior or a safety boundary changes.
 - Preserve catalog attribution and the project's non-affiliation statement.
