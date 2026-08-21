@@ -1,8 +1,0 @@
-"VideoConfig"
-{
-    // keep this comment
-    "setting.defaultres" "1920"
-    "setting.msaa_samples" "2" // keep managed note
-    "setting.msaa_samples" "4" // duplicate managed setting
-    "future.unmanaged" "retain-me"
-}

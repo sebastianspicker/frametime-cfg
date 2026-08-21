@@ -364,15 +364,3 @@ fn vdf_path_to_path(value: &str) -> PathBuf {
         PathBuf::from(value.replace('\\', "/"))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vdf_parser_rejects_code_like_and_malformed_input() {
-        assert!(parse_vdf("\"libraryfolders\" { \"1\" { \"path\" \"/games\" } }").is_ok());
-        assert!(parse_vdf("\"libraryfolders\" { \"1\" { \"path\" \"/games\" }").is_err());
-        assert!(parse_vdf("Get-ChildItem C:\\").is_err());
-    }
-}

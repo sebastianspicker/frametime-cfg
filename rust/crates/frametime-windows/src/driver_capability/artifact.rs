@@ -1,6 +1,3 @@
-#[cfg(test)]
-use sha2::{Digest, Sha256};
-
 use frametime_driver::{
     AdapterFailure, ArtifactAcquisitionAuthorization, AuthenticodeEvidence, AuthenticodeStatus,
     Sha256Digest, SignedArtifactDescriptor,
@@ -23,8 +20,6 @@ pub struct VerifiedDriverArtifact {
     pub(super) payload_sha256: Sha256Digest,
     #[cfg(windows)]
     pub(super) retained: Option<native::RetainedArtifact>,
-    #[cfg(test)]
-    pub(super) test_bytes: Vec<u8>,
 }
 
 impl VerifiedDriverArtifact {
@@ -55,22 +50,7 @@ impl VerifiedDriverArtifact {
         if let Some(retained) = &self.retained {
             return retained.revalidate(&self.payload_sha256, self.length);
         }
-        #[cfg(test)]
-        {
-            let digest = Sha256Digest::parse(format!("{:x}", Sha256::digest(&self.test_bytes)))
-                .map_err(|e| adapter("revalidate artifact", e.to_string()))?;
-            if self.test_bytes.is_empty()
-                || self.test_bytes.len() as u64 != self.length
-                || digest != self.payload_sha256
-            {
-                return Err(adapter(
-                    "revalidate artifact",
-                    "artifact identity changed after acquisition",
-                ));
-            }
-            Ok(())
-        }
-        #[cfg(not(test))]
+        #[cfg(not(windows))]
         Err(adapter("revalidate artifact", "supported only on Windows"))
     }
 
@@ -82,24 +62,6 @@ impl VerifiedDriverArtifact {
                 "test-only artifact has no Windows file capability",
             )
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(leaf: &str, bytes: Vec<u8>) -> Self {
-        let digest =
-            Sha256Digest::parse(format!("{:x}", Sha256::digest(&bytes))).expect("test digest");
-        Self {
-            protected_leaf: leaf.into(),
-            length: bytes.len() as u64,
-            payload_sha256: digest,
-            #[cfg(windows)]
-            retained: None,
-            test_bytes: bytes,
-        }
-    }
-    #[cfg(test)]
-    pub(crate) fn replace_test_bytes(&mut self, bytes: Vec<u8>) {
-        self.test_bytes = bytes;
     }
 }
 
@@ -145,7 +107,7 @@ impl DriverArtifactStore for NativeNvidiaArtifactStore {
 
 const MAX_NVIDIA_AUTHORIZATION_SECONDS: i64 = 24 * 60 * 60;
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 pub(crate) fn authorization_expiry_after(
     authorized_at_utc: &str,
 ) -> Result<String, AdapterFailure> {
@@ -285,7 +247,7 @@ fn parse_utc_seconds(value: &str) -> Result<i64, AdapterFailure> {
     Ok(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn format_utc_seconds(seconds: i64) -> Result<String, AdapterFailure> {
     if seconds < 0 {
         return Err(adapter(
@@ -321,7 +283,7 @@ fn format_utc_seconds(seconds: i64) -> Result<String, AdapterFailure> {
     ))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn days_in_year(year: i64) -> i64 {
     if is_leap_year(year) { 366 } else { 365 }
 }

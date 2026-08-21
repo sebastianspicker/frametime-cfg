@@ -398,7 +398,7 @@ impl NvidiaArtifactLocation {
 }
 
 mod artifact;
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 pub(crate) use artifact::authorization_expiry_after;
 pub(crate) use artifact::validate_bounded_nvidia_authorization;
 pub use artifact::{

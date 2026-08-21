@@ -104,7 +104,7 @@ function Test-PublishedRuntimePayloadBootstrap {
         $currentSid = if ($isWindowsPlatform) {
             [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         } else {
-            # Isolated Pester validator fixtures exercise the same SID binding
+            # The validation path uses the same SID binding
             # without requiring Windows ACL APIs on macOS/Linux.
             'S-1-5-21-1000-1000-1000-1001'
         }

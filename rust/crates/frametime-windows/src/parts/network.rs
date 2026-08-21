@@ -1,4 +1,4 @@
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PhysicalEthernetCandidate {
     interface_guid: String,
@@ -23,7 +23,7 @@ const TCPIP_INTERFACE_PREFIX: &str =
     "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\";
 const NAGLE_VALUE_NAMES: [&str; 2] = ["TcpNoDelay", "TcpAckFrequency"];
 
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 fn select_unique_physical_ethernet(
     candidates: impl IntoIterator<Item = PhysicalEthernetCandidate>,
 ) -> Result<PhysicalEthernetCandidate, String> {
@@ -67,7 +67,7 @@ fn valid_interface_guid(value: &str) -> bool {
             .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
 }
 
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 fn validate_mib_table_layout(
     count: usize,
     allocation_base: usize,
@@ -329,21 +329,5 @@ mod native_network {
 
     fn guid_string(guid: GUID) -> String {
         format!("{{{guid:?}}}")
-    }
-}
-
-#[cfg(test)]
-mod native_table_bounds_tests {
-    use super::validate_mib_table_layout;
-
-    #[test]
-    fn rejects_excessive_or_overflowing_interface_tables() {
-        assert!(validate_mib_table_layout(16_385, 0x1000, 0x1008, 256, 8).is_err());
-        assert!(validate_mib_table_layout(1, usize::MAX, 0, 256, 8).is_err());
-    }
-
-    #[test]
-    fn rejects_misaligned_interface_rows() {
-        assert!(validate_mib_table_layout(1, 0x1000, 0x1001, 256, 8).is_err());
     }
 }

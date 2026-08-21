@@ -4,6 +4,7 @@ Thumbs.db
 Desktop.ini
 
 # IDE / editor
+/.mcp.json
 .vscode/
 .idea/
 .fleet/
@@ -147,6 +148,7 @@ scripts/topology_inventory.sh
 coverage.xml
 *.coverage
 *.trx
+test-results-*.xml
 *.sarif
 *.jsonl
 *.clixml
@@ -155,6 +157,10 @@ coverage.xml
 *.wer
 *.dmp
 *.har
+
+# Removed test-only surfaces and generated fuzz output
+/rust/fixtures/
+/rust/northclock/fuzz/
 *.nupkg
 
 # Local Windows-style artifact paths produced during cross-platform tests
@@ -162,7 +168,6 @@ C:*
 tmp-winstyle-check*
 
 # Test artifacts
-testResults.xml
 test-results.xml
 junit.xml
 junit-*.xml
@@ -215,3 +220,16 @@ xcuserdata/
 
 # Local Rust documentation ledgers
 /rust/docs/*ledger*.md
+
+# Generated test and coverage output (local only)
+/coverage/
+/htmlcov/
+/.coverage
+/.coverage.*
+/.pytest_cache/
+/test-results/
+/playwright-report/
+/blob-report/
+/coverage.xml
+/junit.xml
+/junit-*.xml

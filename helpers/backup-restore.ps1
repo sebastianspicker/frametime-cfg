@@ -13,7 +13,7 @@
 $CFG_BackupFile = "$CFG_WorkDir\backup.json"
 $CFG_BackupLockFile = "$CFG_WorkDir\backup.lock"
 # Snapshot the configured Step 14 names into the same script scope as the
-# restore functions. Pester and GUI runspaces can introduce child scopes, so
+# restore functions. GUI runspaces can introduce child scopes, so
 # looking up CFG_Autostart_Remove later is not reliable.
 $SCRIPT:CFG_AutostartRestoreAllowlist = @($CFG_Autostart_Remove)
 $SCRIPT:CFG_SuiteQosPolicyNames = @('CS2_UDP_Ports', 'CS2_App')

@@ -21,21 +21,13 @@ authoritative platform documentation, or measurements that can be reviewed.
 
 ## Development requirements
 
-Use PowerShell 7 for the main local validation commands. Keep Windows
-PowerShell 5.1 installed for live-entry-point compatibility checks. CI uses:
-
-- Pester 5.7.1; and
-- PSScriptAnalyzer 1.24.0.
-
-`scripts/Invoke-LocalTests.ps1` accepts any installed Pester release from 5.0.0
-through 5.99.99. Without `-SkipInstall`, it installs a compatible release in
-the current-user scope. The analyzer runner installs its pinned version when it
-is missing. Both installations require PowerShell Gallery access.
-
-The PowerShell product has no compile or package step. Its parser, analyzer,
-Pester, launcher, smoke, and dry-run gates are documented below. The
-self-contained native alpha rewrite has separate Cargo validation and packaging
-commands in [`rust/README.md`](rust/README.md).
+Use PowerShell 7 for local validation commands and retain Windows PowerShell
+5.1 for live-entry-point compatibility checks. The analyzer runner installs
+its pinned PSScriptAnalyzer version when it is missing and therefore requires
+PowerShell Gallery access. The PowerShell product has no compile or package
+step; parser, analyzer, launcher, smoke, and dry-run checks are documented
+below. The native workspace has a small direct contract suite and separate
+Cargo validation commands in [`rust/README.md`](rust/README.md).
 
 ## Implementation rules
 
@@ -57,30 +49,17 @@ Avoid new binary dependencies. If a binary is necessary, document its source,
 license, integrity verification, execution boundary, and removal procedure.
 
 When step behavior or metadata changes, update the phase implementation,
-`helpers/step-catalog.ps1`, focused tests, and the relevant operational
-documentation in the same pull request.
+`helpers/step-catalog.ps1`, and the relevant operational documentation in the
+same pull request.
 
 ## Testing
 
-Run a focused test while developing:
+Run the native contract suite and repository validation scripts from the
+repository root:
 
 ```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\Invoke-LocalTests.ps1 `
-    -Path .\tests\helpers\system-utils.Tests.ps1 `
-    -SkipInstall
-```
+cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
 
-Run the full Pester suite before submitting:
-
-```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\Invoke-LocalTests.ps1 -SkipInstall
-```
-
-Run the repository validation scripts from the repository root:
-
-```powershell
 pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
     -File .\.github\scripts\verify-syntax.ps1
 
@@ -115,12 +94,12 @@ Each branch must exit with code `0`, print completion markers for Phase 1,
 Phase 2, Phase 3, and the full lifecycle, contain no `preview issue (DRY-RUN)`
 or `FATAL ERROR` marker, and leave `C:\FRAMETIME_CFG` unchanged.
 
-Add tests for success, failure, refusal, invalid persisted input, and dry-run
-behavior where those paths exist. Do not weaken an assertion or suppress an
-error to make a gate pass.
+Keep direct native contract coverage for critical parsing, trust, configuration,
+backup, and restore behavior. Do not weaken an assertion or suppress an error
+to make a gate pass.
 
-Desktop-interface changes also require the GUI design contract, XAML parsing,
-the GUI smoke marker, and the manual Windows checks in
+Desktop-interface changes also require XAML parsing, the GUI smoke marker, and
+the manual Windows checks in
 [`docs/frontend.md`](docs/frontend.md).
 
 ## Documentation

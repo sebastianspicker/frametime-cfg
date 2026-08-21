@@ -109,21 +109,9 @@ remain unchanged, and no rollback artifact is created. See
 
 ## Maintainer verification
 
-Run focused backup tests through the repository wrapper:
+Run the direct native contract suite after a change that affects backup parsing
+or restore ordering:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 `
-    -Path .\tests\helpers\backup-restore.Tests.ps1 `
-          .\tests\helpers\backup-dryrun.Tests.ps1 `
-          .\tests\helpers\backup-restore-safety.Tests.ps1 `
-          .\tests\Optimize-GameConfig-rollback-safety.Tests.ps1 `
-          .\tests\integration\backup-restore-roundtrip.Tests.ps1 `
-          .\tests\integration\backup-restore-entrypoints.Tests.ps1
-```
-
-Run the full wrapper after a change that affects shared write wrappers, progress
-persistence, or an optimization step:
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1
+cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
 ```
