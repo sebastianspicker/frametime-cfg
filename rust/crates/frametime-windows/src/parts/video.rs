@@ -147,7 +147,7 @@ impl VideoController {
         })
     }
 
-    #[cfg(any(test, windows))]
+    #[cfg(windows)]
     fn apply_with_platform(
         &self,
         tier: VideoTier,

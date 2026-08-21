@@ -1,6 +1,5 @@
 /target/
 /driver/target/
-/fuzz/target/
 /.idea/
 /.vscode/
 *.pdb

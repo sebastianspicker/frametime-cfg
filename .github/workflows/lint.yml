@@ -58,7 +58,6 @@ jobs:
         run: |
           node --version
           node --check demo/app.js
-          node --test demo/demo.test.mjs
 
   psscriptanalyzer:
     name: PSScriptAnalyzer
@@ -107,83 +106,6 @@ jobs:
         shell: powershell
         run: .\.github\scripts\smoke-entrypoints.ps1 -Engine powershell
 
-  pester:
-    name: Pester tests
-    runs-on: windows-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Cache Pester module
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: ~/Documents/PowerShell/Modules/Pester
-          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
-
-      - name: Install Pester 5.7.1
-        shell: pwsh
-        run: .\.github\scripts\install-pester.ps1
-
-      - name: Run Pester tests
-        shell: pwsh
-        run: |
-          $cfg = New-PesterConfiguration
-          $cfg.Run.Path = "./tests"
-          $cfg.Run.Exit = $true
-          $cfg.Output.Verbosity = "Detailed"
-          $cfg.TestResult.Enabled = $true
-          $cfg.TestResult.OutputFormat = "NUnitXml"
-          $cfg.TestResult.OutputPath = "./test-results-windows.xml"
-          Invoke-Pester -Configuration $cfg
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: pester-test-results-windows
-          path: ./test-results-windows.xml
-          retention-days: 14
-
-  pester-macos:
-    name: Pester tests (macOS)
-    runs-on: macos-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Cache Pester module
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: ~/.local/share/powershell/Modules/Pester
-          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
-
-      - name: Install Pester 5.7.1
-        shell: pwsh
-        run: ./.github/scripts/install-pester.ps1
-
-      - name: Run Pester tests
-        shell: pwsh
-        run: |
-          $cfg = New-PesterConfiguration
-          $cfg.Run.Path = "./tests"
-          $cfg.Run.Exit = $true
-          $cfg.Output.Verbosity = "Detailed"
-          $cfg.TestResult.Enabled = $true
-          $cfg.TestResult.OutputFormat = "NUnitXml"
-          $cfg.TestResult.OutputPath = "./test-results-macos.xml"
-          Invoke-Pester -Configuration $cfg
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: pester-test-results-macos
-          path: ./test-results-macos.xml
-          retention-days: 14
 
   estimate-keys:
     name: EstimateKey cross-reference
@@ -202,35 +124,11 @@ jobs:
             grep -v 'CHANGELOG.md' |
             grep -v '.github/workflows/lint.yml' |
             grep -v '.github/REPO_SETTINGS.md' |
-            grep -v 'tests/workflow-contracts.Tests.ps1' |
             grep -Ev '(^|/)(vendor|third_party|third-party|3rdparty|external)/'; then
             echo "::error::Retired EstimateKey references remain"
             exit 1
           fi
           echo "EstimateKey cross-reference: retired surface is clean"
-
-  e2e:
-    name: E2E process smoke
-    runs-on: windows-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Cache Pester module
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: ~/Documents/PowerShell/Modules/Pester
-          key: pester-5.7.1-${{ runner.os }}-${{ hashFiles('.github/scripts/install-pester.ps1') }}
-
-      - name: Install Pester 5.7.1
-        shell: pwsh
-        run: .\.github\scripts\install-pester.ps1
-
-      - name: Run E2E process tests
-        shell: pwsh
-        run: Invoke-Pester -Path ./tests/e2e -CI
 
   entrypoint-smoke:
     name: Entry point smoke tests

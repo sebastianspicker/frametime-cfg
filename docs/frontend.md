@@ -91,20 +91,11 @@ window behavior, or screenshots.
 
 ## Verification
 
-Run the focused frontend contracts:
+Parse all PowerShell files and run `xmllint --noout ui/frametime-gui.xaml`
+when available before release. Run the native direct contract suite separately:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 `
-    -Path .\tests\gui-design-contract.Tests.ps1 `
-          .\tests\helpers\gui-panels.Tests.ps1
-```
-
-Also parse all PowerShell files, run `xmllint --noout ui/frametime-gui.xaml`
-when available, and run the full local test entrypoint
-before release:
-
-```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1
+cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
 ```
 
 On Windows, manually verify Overview, Assess including cancellation, setup

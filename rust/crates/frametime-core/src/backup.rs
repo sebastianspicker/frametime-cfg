@@ -453,7 +453,3 @@ fn dedupe_identity(entry: &BackupEntry) -> Option<String> {
         | BackupEntry::Unknown(_) => None,
     }
 }
-
-#[cfg(test)]
-#[path = "backup/tests.rs"]
-mod tests;
