@@ -78,8 +78,6 @@ jobs:
     name: Northclock source gates
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/northclock-target
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -89,6 +87,8 @@ jobs:
           toolchain: 1.96.0
           targets: x86_64-pc-windows-msvc
           components: clippy,rustfmt
+      - name: Configure isolated build directory
+        run: printf 'CARGO_TARGET_DIR=%s\n' "$RUNNER_TEMP/northclock-target" >> "$GITHUB_ENV"
       - uses: taiki-e/install-action@b20dedce73af6905cdc30d6611090c9b67557c8d
         with:
           tool: cargo-deny@0.20.2
