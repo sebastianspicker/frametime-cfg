@@ -5,6 +5,5 @@
   "ignores": [
     "target/**",
     "driver/target/**",
-    "fuzz/target/**"
   ]
 }

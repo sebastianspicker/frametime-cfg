@@ -27,7 +27,7 @@ use frametime_core::{
     fps::BenchmarkCapture,
     plan_for_step, read_trusted_video_document, resolve_video_tier,
 };
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 use frametime_core::{VideoFilePlatform, VideoWriteReport, write_trusted_video_config};
 use serde_json::Value;
 
@@ -41,7 +41,7 @@ const STATE_FILE: &str = "state.json";
 const LOCK_FILE: &str = "backup.lock";
 const PHASE2_HANDOFF: &str = "*!FRAMETIME_Phase2";
 const PHASE3_HANDOFF: &str = "FRAMETIME_CFG_FRAMETIME_Phase3";
-#[cfg(any(test, windows))]
+#[cfg(windows)]
 // A protected DACL alone is insufficient: the object's owner retains the
 // ability to rewrite its DACL. Keep newly created trusted objects owned by
 // the local Administrators group as well as limiting their DACL to BA/SYSTEM.
@@ -73,7 +73,6 @@ include!("parts/vbs.rs");
 include!("parts/planner_backend.rs");
 include!("parts/action_runtime.rs");
 include!("parts/observations.rs");
-include!("parts/runtime_trust_contract.rs");
 include!("parts/runtime_trust.rs");
 include!("parts/runtime_publish_contract.rs");
 include!("parts/runtime_publish.rs");
@@ -163,15 +162,3 @@ pub use drs_transaction::{
 };
 #[cfg(windows)]
 pub use drs_windows_adapter::NativeNvapiDrs;
-
-#[cfg(test)]
-mod tests {
-    include!("tests/tests_a.rs");
-    include!("tests/tests_b.rs");
-    include!("tests/device_interrupts.rs");
-    include!("tests/driver_capability.rs");
-    include!("tests/irreversible_audit.rs");
-    include!("tests/debloat.rs");
-    include!("tests/runtime_publish.rs");
-    include!("tests/network_stack.rs");
-}

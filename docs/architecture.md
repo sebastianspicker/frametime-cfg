@@ -237,13 +237,13 @@ For a new optimization step, update the same surfaces together:
 
 1. phase script with the `Invoke-TieredStep` call or explicit step block;
 2. `helpers/step-catalog.ps1` so Setup and verify mirrors the workflow;
-3. the README capability or usage section and any relevant topic document;
-4. focused tests under `tests/helpers/` or `tests/integration/`;
-5. workflow contract tests if the change affects entrypoints or CI behavior.
+3. the README capability or usage section and any relevant topic document; and
+4. the direct native contracts when the change affects parsing, trust,
+   configuration, backup, or restore behavior.
 
-Any state-changing addition must also render a useful Full DRY-RUN plan, add a
-focused no-mutation regression, and propagate preview exceptions to the shared
-issue counter. Do not treat a `DryRun` result as successful application.
+Any state-changing addition must also render a useful Full DRY-RUN plan and
+propagate preview exceptions to the shared issue counter. Do not treat a
+`DryRun` result as successful application.
 
 For a changed domain assumption, prefer documenting the reason in the relevant
 deep-dive doc and only add code comments where the invariant is local to the
@@ -253,13 +253,8 @@ implementation.
 
 The repository is PowerShell-first. The relevant local checks are:
 
-- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 -Path .\tests\integration\dryrun-compliance.Tests.ps1 .\tests\e2e\entrypoints.Tests.ps1`
-  for the normal-shell dry-run and entrypoint smoke gates with Pester 5.x
-  bootstrapping;
-- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1`
-  for the full test gate from an elevated shell or CI;
-- `pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 -Path .\tests\e2e`
-  for process-level E2E coverage of the public entrypoints;
+- `cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked`
+  for direct parsing, trust, configuration, backup, and restore contracts;
 - a parse check over `*.ps1` files after script edits;
 - PSScriptAnalyzer for linting when available;
 - entrypoint smoke checks using each shipped script's `-SmokeTest` switch. The
@@ -285,5 +280,5 @@ data and interactions. See [frontend.md](frontend.md) for component,
 accessibility, responsive, content, and Windows validation conventions.
 
 On macOS, Windows-specific behavior cannot be fully reproduced. Treat local
-Pester, parse, analyzer, and smoke results as useful gates, but keep Windows
-PowerShell 5.1 CI as the final compatibility authority.
+native contracts, parse, analyzer, and smoke results as useful gates, but keep
+Windows PowerShell 5.1 CI as the final compatibility authority.

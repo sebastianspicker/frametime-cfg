@@ -129,7 +129,6 @@ fn hygiene(root: &Path) -> Result<(), Vec<String>> {
 
 fn is_ignored_cargo_output(relative: &Path) -> bool {
     relative.as_os_str() == OsStr::new("target")
-        || relative.as_os_str() == Path::new("fuzz").join("target").as_os_str()
 }
 
 fn is_forbidden_directory(lower_name: &str) -> bool {
@@ -218,17 +217,16 @@ mod tests {
     }
 
     #[test]
-    fn ignores_only_canonical_cargo_output_roots() {
+    fn ignores_only_the_workspace_cargo_output_root() {
         assert!(is_ignored_cargo_output(Path::new("target")));
-        assert!(is_ignored_cargo_output(&Path::new("fuzz").join("target")));
     }
 
     #[test]
     fn rejects_nested_and_noncanonical_target_directories() {
         for path in [
             Path::new("crates").join("target"),
-            Path::new("fuzz").join("target").join("artifacts"),
-            Path::new("fuzz").join("..").join("target"),
+            Path::new("nested").join("target"),
+            Path::new("nested").join("..").join("target"),
             Path::new(".").join("target"),
         ] {
             assert!(

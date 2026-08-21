@@ -85,7 +85,7 @@ file operations have separate or incomplete recovery behavior. See
 
 ## Automated checks
 
-The repository workflows parse PowerShell, run PSScriptAnalyzer and Pester,
-exercise entrypoint previews, scan common credential and unsafe-execution
+The repository workflows parse PowerShell, run PSScriptAnalyzer and compact
+native contract checks, exercise entrypoint previews, scan common credential and unsafe-execution
 patterns, and require pinned GitHub Action revisions. These checks reduce known
 risk but do not replace review or live validation.

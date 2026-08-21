@@ -90,9 +90,9 @@ Internet access is required only for automatic NVIDIA driver retrieval,
 user-initiated live network diagnostics, and links opened for manual downloads.
 Full DRY-RUN and most local inspection paths do not require network access.
 
-Developer validation uses PowerShell 7, Pester 5, and PSScriptAnalyzer 1.24.0.
-Windows PowerShell 5.1 is also required to reproduce the compatibility gates.
-CI installs Pester 5.7.1.
+Developer validation uses PowerShell 7, PSScriptAnalyzer 1.24.0, and the
+native Rust contract suite. Windows PowerShell 5.1 is also required to
+reproduce the compatibility gates.
 
 ## Installation
 
@@ -247,12 +247,10 @@ cancelled merely by choosing a lower profile.
 | `PostReboot-Setup.ps1` | Phase 3 normal-mode entry point |
 | `Cleanup.ps1`, `FpsCap-Calculator.ps1`, `Verify-Settings.ps1` | Standalone operator tools |
 | `frametime-gui.ps1`, `ui/` | WPF controller and XAML layout |
-| `demo/` | Dependency-free browser demonstration and Node static checks |
+| `demo/` | Dependency-free browser demonstration |
 | `helpers/` | State, backup, safety, hardware, driver, network, and GUI functions |
 | `config.env.ps1` | Executable central configuration |
 | `cfgs/` | CS2 CFG sources and Valve latency target data |
-| `tests/` | Pester unit, integration, contract, and process tests |
-| `scripts/` | Local test runner |
 | `.github/` | CI, validation scripts, templates, and repository policy |
 | `docs/` | Operational and implementation-specific documentation |
 | `rust/` | Self-contained native alpha rewrite, compatibility ledger, and Cargo workspaces |
@@ -272,7 +270,8 @@ For a behavior change:
 
 1. update the phase or helper implementation;
 2. update `helpers/step-catalog.ps1` when step metadata changes;
-3. add focused Pester coverage, including failure and preview behavior;
+3. add or update a direct Rust contract test when the change crosses a trust,
+   persistence, parsing, or public boundary;
 4. update the relevant operational document; and
 5. run the applicable local and Windows compatibility gates.
 
@@ -282,27 +281,10 @@ required operation complete after failure.
 
 ## Testing
 
-Install Pester 5 in the current-user scope and run all tests:
+Run the direct native contract suite:
 
-```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\Invoke-LocalTests.ps1
-```
-
-If Pester 5 is already installed, prevent dependency installation:
-
-```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\Invoke-LocalTests.ps1 -SkipInstall
-```
-
-Run a focused test file:
-
-```powershell
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\scripts\Invoke-LocalTests.ps1 `
-    -Path .\tests\helpers\system-utils.Tests.ps1 `
-    -SkipInstall
+```console
+cargo test --manifest-path rust/Cargo.toml -p frametime-core --test critical_contracts
 ```
 
 Additional repository gates:
@@ -332,19 +314,17 @@ pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
 cmd.exe /d /c START.bat dry-run all
 ```
 
-The browser demonstration uses the Node.js runtime bundled on CI runners and
-has no package dependencies or lockfile:
+The browser demonstration has no package dependencies or lockfile. Check its
+syntax directly:
 
 ```console
 node --check demo/app.js
-node --test demo/demo.test.mjs
 ```
 
 The analyzer runner installs PSScriptAnalyzer 1.24.0 if needed. Dependency
-installation requires access to PowerShell Gallery. CI runs Windows and macOS
-Pester jobs, Windows PowerShell compatibility and entry-point smoke jobs, an
-end-to-end process smoke job, syntax and analyzer checks, repository contracts,
-and separate secret and script-safety checks.
+installation requires access to PowerShell Gallery. CI runs the compact native
+contract suite, Windows PowerShell compatibility and entry-point smoke jobs,
+syntax and analyzer checks, and separate secret and script-safety checks.
 
 ## Deployment and operation
 
@@ -374,8 +354,6 @@ run.
 
 - `Portable live execution is unavailable`: use the strict preview. A future
   live release requires a trusted installer or independently signed payload.
-- `Pester 5.x is not installed`: rerun `scripts\Invoke-LocalTests.ps1` without
-  `-SkipInstall`, or install a Pester version from 5.0.0 through 5.99.99.
 - Phase 3 does not start: sign in with the same administrator account used in
   Phase 2 and invoke the protected generation's elevation bootstrap directly.
 - Runtime payload validation fails: do not bypass manifest validation by

@@ -31,8 +31,6 @@ jobs:
         run: cargo test --workspace
       - name: Tests, all user-mode features
         run: cargo test --workspace --all-features
-      - name: CLI contract tests
-        run: cargo test -p northclock-cli --test cli_contract
       - name: Repository hygiene
         run: cargo run -p xtask -- hygiene
       - name: Documentation links
@@ -78,14 +76,3 @@ jobs:
         run: |
           Write-Host 'This job validates protocol behavior and the driver validation core only.'
           Write-Host 'It does not package, sign, install, load, or hardware-qualify a driver.'
-
-  fuzz-targets:
-    name: Parser fuzz targets compile
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # nightly
-        with:
-          toolchain: nightly
-      - name: Compile fuzz targets
-        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets

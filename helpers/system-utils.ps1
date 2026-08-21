@@ -83,7 +83,7 @@ function Invoke-TrustedWindowsTool {
     & $toolPath @Arguments
 }
 
-# Keep the existing command-shaped call sites and Pester mocks compatible while
+# Keep the existing command-shaped call sites compatible while
 # routing every bare inbox-tool invocation through the trusted resolver above.
 function global:bcdedit { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name bcdedit @Arguments }
 function global:powercfg { [CmdletBinding()] param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments) Invoke-TrustedWindowsTool -Name powercfg @Arguments }
@@ -272,7 +272,7 @@ function Test-SecureAcl {
                 }
                 return $Identity.Translate([Security.Principal.SecurityIdentifier]).Value
             } catch {
-                # This also keeps deterministic Pester ACL doubles usable on
+                # This also keeps deterministic ACL handling usable on
                 # non-Windows hosts without loosening Windows behaviour.
                 $identityText = [string]$Identity
                 if ($identityText -match '^S-1-[0-9]+(?:-[0-9]+)+$') { return $identityText }

@@ -33,7 +33,7 @@ const POLICIES: [NetworkStackPolicy; 2] =
 
 /// Decodes the provider's paired NetworkProfile qualifiers.  The provider
 /// supplies the numeric masks, rather than P1:16 assuming a copied mask.
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn decode_network_profile_qualifiers(
     bit_map: &[String],
     bit_values: &[String],

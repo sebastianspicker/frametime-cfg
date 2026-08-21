@@ -59,7 +59,7 @@ impl LiveBackend {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn debloat_backup_entries(
     snapshot: &DebloatSnapshot,
     step: &str,
@@ -129,7 +129,7 @@ fn debloat_backup_entries(
     Ok(entries)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn debloat_appx_subjects(snapshot: &DebloatSnapshot) -> Vec<frametime_core::AppxRemovalSubject> {
     let mut subjects = snapshot
         .installed
@@ -147,7 +147,7 @@ fn debloat_appx_subjects(snapshot: &DebloatSnapshot) -> Vec<frametime_core::Appx
     subjects
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 const fn service_start_name(value: ServiceStartType) -> &'static str {
     match value {
         ServiceStartType::Automatic => "Automatic",
@@ -157,7 +157,7 @@ const fn service_start_name(value: ServiceStartType) -> &'static str {
         ServiceStartType::System => "System",
     }
 }
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 const fn service_status_name(value: ServiceStatus) -> &'static str {
     match value {
         ServiceStatus::Running => "Running",

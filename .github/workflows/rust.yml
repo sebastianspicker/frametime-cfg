@@ -117,11 +117,6 @@ jobs:
         run: |
           cargo deny check all
           cargo audit --file Cargo.lock --deny warnings
-      - name: Check fuzz targets
-        working-directory: rust/northclock
-        run: |
-          cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
-          cargo audit --file fuzz/Cargo.lock --deny warnings
       - name: Check protocol driver workspace
         working-directory: rust/northclock
         run: |

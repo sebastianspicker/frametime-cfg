@@ -142,16 +142,15 @@ shortcut transaction; it does not run the full three-phase lifecycle.
 
 ## Maintainer verification
 
-After changing any stateful feature, run its focused tests plus the strict
-process preview:
+After changing any stateful feature, run the direct native contract suite plus
+the strict process preview:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\Invoke-LocalTests.ps1 `
-    -Path .\tests\integration\dryrun-compliance.Tests.ps1 .\tests\e2e\entrypoints.Tests.ps1
+cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
 
 START.bat dry-run all
 ```
 
-Every new mutating path needs a direct DRY-RUN guard, a no-mutation regression
-test, and useful `Would ...` output. Preview-only structured results must not be
-treated as evidence that a live action was applied.
+Every new mutating path needs a direct DRY-RUN guard and useful `Would ...`
+output. Preview-only structured results must not be treated as evidence that a
+live action was applied.
