@@ -1,0 +1,15 @@
+[package]
+name = "frametime-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+frametime-domain = { path = "../frametime-domain" }
+frametime-windows = { path = "../frametime-windows" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

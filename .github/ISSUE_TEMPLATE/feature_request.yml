@@ -39,14 +39,14 @@ body:
     attributes:
       label: Category
       options:
-        - Windows registry or scheduler
-        - NVIDIA driver or DRS
-        - AMD or Intel GPU
-        - Network or NIC
-        - CS2 configuration
-        - Power plan
-        - Services or AppX
-        - Desktop interface
+        - Native CLI or workflow
+        - Native GUI
+        - Package authentication or trusted runtime
+        - Windows adapter or reboot handoff
+        - Hardware diagnostics
+        - Driver preparation
+        - Packaged CS2 configuration
+        - Northclock or Driver Foundry tool workspace
         - CI or repository maintenance
         - Documentation
         - Other

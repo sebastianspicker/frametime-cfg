@@ -1,147 +1,37 @@
 # Contributing
 
-Contributions must preserve the repository's preview, persistence, phase
-handoff, and recovery boundaries. Keep each change small enough for a Windows
-or PowerShell maintainer to review without unrelated refactoring.
+Contributions must preserve the native trust, recovery, and Windows-evidence boundaries.
 
-## Before starting
+## Development
 
-Use a current source checkout and review:
+Use the root workspace and pinned toolchain. Before opening a pull request, run:
 
-- [`README.md`](README.md) for supported hosts, commands, and limitations;
-- [`docs/architecture.md`](docs/architecture.md) for phase and helper ownership;
-- [`docs/dry-run.md`](docs/dry-run.md) for the no-persistence preview contract;
-- [`docs/backup-restore.md`](docs/backup-restore.md) for recovery coverage; and
-- [`docs/evidence.md`](docs/evidence.md) before adding or changing a tuning
-  recommendation.
-
-Do not infer a general performance effect from a registry value, a community
-guide, or one machine. New system changes need a reproducible defect,
-authoritative platform documentation, or measurements that can be reviewed.
-
-## Development requirements
-
-Use PowerShell 7 for local validation commands and retain Windows PowerShell
-5.1 for live-entry-point compatibility checks. The analyzer runner installs
-its pinned PSScriptAnalyzer version when it is missing and therefore requires
-PowerShell Gallery access. The PowerShell product has no compile or package
-step; parser, analyzer, launcher, smoke, and dry-run checks are documented
-below. The native workspace has a small direct contract suite and separate
-Cargo validation commands in [`rust/README.md`](rust/README.md).
-
-## Implementation rules
-
-For a state-changing operation:
-
-1. route execution through the existing tier, risk, validation, and structured
-   result conventions;
-2. render an explicit Full DRY-RUN action without persistent side effects;
-3. capture supported original state through
-   `helpers/backup-restore.ps1` before mutation;
-4. validate persisted paths, value names, identifiers, and commands as
-   untrusted input at restore and handoff boundaries;
-5. stop the step when a required capture, write, or postcondition fails;
-6. do not call `Complete-Step` after an unsuccessful required operation; and
-7. document operations that require separate or manual recovery.
-
-Preserve Windows PowerShell 5.1 compatibility in live entry points and helpers.
-Avoid new binary dependencies. If a binary is necessary, document its source,
-license, integrity verification, execution boundary, and removal procedure.
-
-When step behavior or metadata changes, update the phase implementation,
-`helpers/step-catalog.ps1`, and the relevant operational documentation in the
-same pull request.
-
-## Testing
-
-Run the native contract suite and repository validation scripts from the
-repository root:
-
-```powershell
-cargo test --manifest-path rust/Cargo.toml --workspace --all-targets --all-features --locked
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\verify-syntax.ps1
-
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\verify-syntax.ps1
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\run-psscriptanalyzer.ps1
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\verify-launcher-contracts.ps1
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\smoke-entrypoints.ps1 -Engine pwsh
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\.github\scripts\smoke-entrypoints.ps1 -Engine powershell
-
-pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass `
-    -File .\frametime-gui.ps1 -SmokeTest
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity
+cargo test --workspace --all-targets --all-features --locked
+cargo run -p frametime-cli -- dry-run all
+cargo check --workspace --all-targets --all-features --target x86_64-pc-windows-msvc --locked
 ```
 
-Changes to live execution, registry, boot configuration, phase handoffs,
-services, tasks, files, drivers, AppX, NVIDIA DRS, power, network, clipboard, or
-reboot behavior also require the four-branch preview:
+Run the matching workspace commands inside `tools/northclock` or `tools/driver-foundry` when changing those independent tools.
 
-```powershell
-cmd.exe /d /c START.bat dry-run all
-```
+## Design rules
 
-Each branch must exit with code `0`, print completion markers for Phase 1,
-Phase 2, Phase 3, and the full lifecycle, contain no `preview issue (DRY-RUN)`
-or `FATAL ERROR` marker, and leave `C:\FRAMETIME_CFG` unchanged.
+- Keep dependency direction explicit: Windows depends on domain; app depends on domain and Windows; CLI/GUI depend on app. Direct entrypoint access to domain is limited to presentation value types, and direct Windows access is limited to startup or native UI plumbing.
+- Put policies, values, and platform-independent state in `frametime-domain`; keep Windows APIs, handles, registry, process, and filesystem boundaries in `frametime-windows`.
+- Route entrypoint behavior through `frametime-app`. CLI and GUI crates should translate presentation input and output, not duplicate workflow rules.
+- Treat `assets/` and `frametime.toml` as canonical package inputs. Do not create a second configuration or asset authority.
+- Preserve the fixed `C:\FRAMETIME_CFG` protected root and retained-handle checks. State-changing code must require authenticated package authority.
+- Capture supported state before mutation, bind recovery to exact identities, reobserve mutable targets, and fail closed on missing evidence.
+- Keep source preview non-persistent and do not represent it as Windows qualification.
 
-Keep direct native contract coverage for critical parsing, trust, configuration,
-backup, and restore behavior. Do not weaken an assertion or suppress an error
-to make a gate pass.
+## Windows evidence
 
-Desktop-interface changes also require XAML parsing, the GUI smoke marker, and
-the manual Windows checks in
-[`docs/frontend.md`](docs/frontend.md).
+Host checks cannot prove Windows integration. Changes to privilege, package trust, registry, BCD, Safe Mode, services, drivers, NVAPI, networking, filesystem protection, or GUI accessibility need focused Windows VM or hardware evidence. Document what was exercised, the host and Windows version, privileges, input conditions, observed result, and recovery result. Never replace missing live evidence with a claim based on source tests.
 
-## Documentation
+## Documentation and package changes
 
-Documentation must describe the checked-in implementation and current
-validation status. Keep commands, paths, profile behavior, configuration names,
-recovery limits, and screenshots synchronized with the source. Remove obsolete
-instructions instead of retaining them as history.
+Update the README and relevant `docs/native/` page with behavior changes. Package changes must update [`package-layout.txt`](package-layout.txt) and preserve manifest, catalog, hash, signature, publisher-pin, and retained-identity verification. See [package security](docs/package-security.md).
 
-Do not add performance estimates without committed reproducible artifacts. Do
-not publish raw logs, state, machine diagnostics, or screenshots that have not
-completed the manual interface checks in [`docs/frontend.md`](docs/frontend.md).
-
-## Repository hygiene
-
-Do not commit runtime state, logs, test reports, personal paths, credentials,
-private system information, local recordings, draft screenshots, or local
-analysis workspaces.
-
-Before submitting, inspect tracked and ignored state:
-
-```powershell
-git status --short
-git ls-files -ci --exclude-standard
-```
-
-The second command must produce no paths. Tracked source must not depend on an
-ignore rule to remain visible.
-
-## Pull requests
-
-Use one pull request for one behavior or documentation objective. Include:
-
-- the problem and scope;
-- runtime, privilege, persistence, and recovery effects;
-- tests added or changed;
-- exact validation commands and results; and
-- platform checks or live behavior that could not be reproduced.
-
-Use sanitized excerpts when output is needed for review. Do not attach complete
-logs, state files, backups, or system reports.
-
-Report vulnerabilities through the process in
-[`.github/SECURITY.md`](.github/SECURITY.md), not through a public issue with
-technical details.
+Keep the product surface native Rust and keep the five application crates in the root workspace.

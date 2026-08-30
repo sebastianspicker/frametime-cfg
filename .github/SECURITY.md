@@ -2,90 +2,18 @@
 
 ## Scope
 
-Protected Phase 2/3 handoffs and any future trusted frametime.cfg live release
-run PowerShell with administrator privileges and can modify the registry, boot
-configuration, services, scheduled tasks, power plans, network adapters, AppX
-packages, and display-driver packages. The portable checkout is preview-only.
-Recovery can also remove legacy Defender exclusions recorded by an older checkout.
-Security reports are especially relevant when they concern:
+Reports are welcome for package authentication, publisher-pin validation, catalog and manifest verification, retained-handle and protected-root checks, privilege transitions, reboot handoffs, untrusted input, Windows API boundaries, recovery, and data exposure.
 
-- command, path, registry, JSON, or configuration injection
-- bypass of Full DRY-RUN or confirmation boundaries
-- unsafe handling of persisted state, backups, or runtime payloads
-- execution of an untrusted download or local executable
-- privilege-boundary or ACL failures
-- incomplete failure handling that reports a required operation as applied
-- exposure of logs, inventory, paths, credentials, or other local data
+State-changing operations require an authenticated package. The implementation verifies the package manifest and catalog, file identities and hashes, configured publisher pin, current PE role, and retained file handles. It persists runtime state only below `C:\FRAMETIME_CFG` through a protected-directory boundary.
 
-## Version support
+## Reporting
 
-There is no tagged public alpha and no stated maintenance or security-support
-period. Reports against the current release candidate are accepted. A version
-support table should be added only when tagged versions and a maintenance policy
-exist.
+Use GitHub private vulnerability reporting when available. Otherwise open a public issue asking for a private contact channel without technical details. Do not publish exploit code, sensitive logs, machine identifiers, state files, package signatures, or reproduction details before agreement.
 
-## Reporting a vulnerability
+Include the affected commit or package version, entrypoint, Windows version and architecture, required privileges, minimized reproduction, observed and expected behavior, and sanitized evidence.
 
-Use GitHub private vulnerability reporting when the repository Security tab
-shows a `Report a vulnerability` action. This setting must be confirmed before
-the public alpha. If the action is unavailable, open a public issue containing
-no technical details and ask the maintainer to provide a private reporting
-channel. Do not include exploit details, proof-of-concept code, logs, or
-affected-system data in a public issue.
+## Boundaries
 
-Include, where available:
+Source builds and strict previews are not authenticated releases and do not prove live Windows behavior. Windows package-signing, UAC, Safe Mode, driver, registry, network, NVAPI, filesystem, and recovery behavior require dedicated VM or hardware validation.
 
-- affected version, commit, or source snapshot
-- affected entry point and execution mode
-- reproduction steps and required privileges
-- expected and observed trust-boundary behavior
-- sanitized output or a minimal proof of concept
-- a suggested remediation, if known
-
-No response-time guarantee is stated for the alpha period.
-
-## Data and network behavior
-
-The project does not automatically send logs, inventory, backup data, or state
-files to its maintainers. It does collect that information locally under
-`C:\FRAMETIME_CFG` during live execution.
-
-Automatic NVIDIA driver retrieval contacts NVIDIA. User-initiated network
-diagnostics can make HTTP requests, send ICMP probes to live Valve SDR targets,
-or open TCP connections to port 27017 on checked-in Steam connection-manager
-candidates. Links opened or copied for manual downloads are visible in the source.
-Do not place credentials or secrets in repository configuration or runtime
-state.
-
-## Download and execution boundaries
-
-- The portable checkout is preview-only. Its live entrypoints fail closed
-  because the current alpha has no trusted installer or signed payload manifest
-  that authenticates the source tree before elevation.
-- The only implemented automatic executable download is an NVIDIA driver package
-  from an allowlisted NVIDIA host.
-- A downloaded driver must pass path, file, and NVIDIA Authenticode validation
-  before an installation process is started.
-- Phase 2 and Phase 3 run from a fixed runtime payload whose exact file set and
-  SHA-256 manifest are validated.
-- The codebase rejects `Invoke-Expression`, encoded-command download cradles,
-  and untrusted workflow triggers through local and CI checks.
-
-## Preview and recovery boundaries
-
-`Run-Optimize.ps1 -FullDryRun` and `START.bat dry-run` provide the strict
-no-persistence preview contract. Preview success confirms control-flow and
-guard behavior. It does not prove that a privileged Windows API call will
-succeed during live execution. See [`docs/dry-run.md`](../docs/dry-run.md).
-
-Supported restore entries are recorded in `C:\FRAMETIME_CFG\backup.json` before
-their corresponding mutation. AppX removal, driver-package removal, and some
-file operations have separate or incomplete recovery behavior. See
-[`docs/backup-restore.md`](../docs/backup-restore.md).
-
-## Automated checks
-
-The repository workflows parse PowerShell, run PSScriptAnalyzer and compact
-native contract checks, exercise entrypoint previews, scan common credential and unsafe-execution
-patterns, and require pinned GitHub Action revisions. These checks reduce known
-risk but do not replace review or live validation.
+The project does not upload local state, logs, or diagnostics by default. Do not place secrets in `frametime.toml`, package inputs, logs, or bug reports.

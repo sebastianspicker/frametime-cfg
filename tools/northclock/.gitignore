@@ -1,0 +1,8 @@
+/target/
+/driver/target/
+*.pdb
+*.dmp
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

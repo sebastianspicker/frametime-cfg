@@ -1,0 +1,16 @@
+// frametime.cfg CS2 video guidance artifact
+//
+// This is intentionally NOT a deployable CS2 configuration file. Do not copy
+// it into Steam userdata and do not use it to replace cs2_video.txt. CS2 owns
+// that file and its format can change with game updates.
+//
+// Choose a goal and make changes only through the supported CS2 and driver UI:
+//   - Raw latency: compare refresh, fullscreen, V-Sync, tearing, and fps_max 0.
+//   - NVIDIA VRR: validate G-SYNC/VRR, V-Sync, Reflex, and a deliberate cap.
+//   - AMD FreeSync: validate FreeSync/VRR and supported AMD game features.
+//   - GPU-constrained: reduce the measured bottleneck one UI setting at a time.
+//
+// Capture the same map and workload before and after each change. The Rust
+// application can discover one trusted numeric-userdata cs2_video.txt for
+// read-only inspection, but never writes, backs up, clears attributes on, or
+// inserts keys into CS2 video files.
