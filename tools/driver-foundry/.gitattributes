@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.cfg text eol=crlf
+*.exe binary
+*.dll binary
+*.pdb binary
+*.zip binary
+*.7z binary
+*.sfx binary

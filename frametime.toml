@@ -1,0 +1,25 @@
+autostart_remove = [
+  "OneDrive", "Spotify", "Discord", "Teams", "Skype", "AdobeUpdater",
+  "AdobeGCInvoker", "CCleaner", "Dropbox", "GoogleDriveFS",
+  "EpicGamesLauncher", "RTSS",
+]
+
+[fps_cap]
+# Raw latency permits tearing. Set `measured_cap` only after repeated captures
+# show that P1 FPS sustains it; select a VRR ceiling in the explicit VRR path.
+strategy = "raw"
+measured_cap = 0
+# VRR example: strategy = "vrr", refresh_hz = 240, ceiling_margin_hz = 3.
+# The final capture must show P1 FPS at or above the requested 237 FPS ceiling.
+
+[paths]
+shader_cache = [
+  "%ProgramFiles(x86)%\\Steam\\steamapps\\shadercache\\730",
+  "%ProgramFiles%\\Steam\\steamapps\\shadercache\\730",
+  "D:\\Steam\\steamapps\\shadercache\\730",
+  "E:\\Steam\\steamapps\\shadercache\\730",
+  "F:\\Steam\\steamapps\\shadercache\\730",
+]
+nvidia_dx_cache = "%LOCALAPPDATA%\\NVIDIA\\DXCache"
+nvidia_gl_cache = "%LOCALAPPDATA%\\NVIDIA\\GLCache"
+directx_shader_cache = "%LOCALAPPDATA%\\D3DSCache"

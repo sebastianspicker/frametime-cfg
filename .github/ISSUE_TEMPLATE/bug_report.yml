@@ -10,17 +10,19 @@ body:
         but remove personal or private system information.
 
   - type: dropdown
-    id: phase
+    id: component
     attributes:
-      label: Which phase/step?
+      label: Affected component
       options:
-        - Phase 1 - Normal boot
-        - Phase 2 - Safe Mode
-        - Phase 3 - Final setup
-        - FPS Cap Calculator
-        - Cleanup
-        - Verify-Settings
-        - Desktop interface
+        - Native CLI command or workflow
+        - Native GUI
+        - Authenticated package or publisher validation
+        - Trusted work directory, state, or reboot handoff
+        - Packaged CS2 configuration
+        - Hardware diagnostics
+        - Driver preparation
+        - Northclock or Driver Foundry tool workspace
+        - Build, CI, or packaging
         - Other
     validations:
       required: true
@@ -28,8 +30,8 @@ body:
   - type: input
     id: step
     attributes:
-      label: Step number (if applicable)
-      placeholder: "e.g. Step 16, Step 27"
+      label: Command, GUI action, or workflow operation (if applicable)
+      placeholder: "e.g. frametime dry-run all, frametime hardware doctor, Phase 2"
 
   - type: dropdown
     id: profile
@@ -76,25 +78,28 @@ body:
   - type: dropdown
     id: execution_mode
     attributes:
-      label: Execution mode
+      label: Execution context
       options:
-        - Live optimization
-        - Full DRY-RUN
-        - Scoped DRY-RUN
-        - Smoke test
+        - Authenticated release package
+        - Unsigned development package
+        - CLI dry-run
+        - CLI workflow mutation
+        - Native GUI
+        - Read-only hardware diagnostic
+        - Build or CI
         - Not sure
     validations:
       required: true
 
   - type: input
-    id: dryrun_context
+    id: command_context
     attributes:
-      label: DRY-RUN context (if applicable)
+      label: Command and package context (if applicable)
       description: >-
-        Include launcher, GPU branch, PowerShell version, final phase marker,
+        Include the native command or GUI action, package mode, sanitized error,
         exit code, and whether C:\FRAMETIME_CFG changed.
       placeholder: >-
-        START.bat dry-run 3; Windows PowerShell 5.1; PHASE 2 marker missing;
+        frametime dry-run all; unsigned package; adapter capability unavailable;
         exit 1; C:\FRAMETIME_CFG unchanged
 
   - type: textarea

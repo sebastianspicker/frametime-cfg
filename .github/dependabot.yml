@@ -12,7 +12,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/rust"
+    directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -22,7 +22,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/rust/northclock"
+    directory: "/tools/northclock"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -32,7 +32,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/rust/northclock/driver"
+    directory: "/tools/northclock/driver"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
@@ -42,7 +42,7 @@ updates:
           - "*"
 
   - package-ecosystem: "cargo"
-    directory: "/rust/driver-foundry"
+    directory: "/tools/driver-foundry"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

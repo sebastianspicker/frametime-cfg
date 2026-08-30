@@ -1,9 +1,76 @@
-# OS
-.DS_Store
-Thumbs.db
-Desktop.ini
+# Rust build and package output
+target/
+dist/
+*.pdb
+*.dmp
+*.profraw
+*.profdata
+/tools/northclock/fuzz/
 
-# IDE / editor
+# Test and analysis output
+/.codacy/
+/coverage/
+/htmlcov/
+/reports/
+test-results/
+playwright-report/
+blob-report/
+.coverage
+.coverage.*
+*.coverage
+*.sarif
+junit*.xml
+test-results-*.xml
+
+# Runtime and diagnostic state
+/state.json
+/state.json.corrupt*
+/progress.json
+/progress.json.corrupt*
+/backup.json
+/backup.lock
+/backup.*.json
+/backup.corrupt.*.json
+/benchmark_history.json
+/latency_history.json
+*.log
+*.etl
+*.evtx
+*.wer
+*.har
+C:*
+tmp-winstyle-check*
+
+# Local environments, credentials, and certificates
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+*.local.json
+*.local.yaml
+*.local.yml
+*.local.toml
+*.personal.json
+*.personal.yaml
+*.personal.yml
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+*.credentials
+*.credential
+*.secret
+*.token
+credentials.json
+secrets.json
+service-account*.json
+
+# Editors and local tooling
 /.mcp.json
 .vscode/
 .idea/
@@ -17,219 +84,73 @@ Desktop.ini
 *.swo
 *~
 
-# PowerShell
-*.psm1.bak
-
-# Third-party binary artifacts (not our property)
-FPSHEAVEN2026.pow
-cs2_blur_fix.nip
-*.nip
-*.pow
-
-# Runtime state (generated on target machine)
-state.json
-state.json.corrupt*
-progress.json
-progress.json.corrupt*
-backup.json
-backup.lock
-backup.*.json
-backup.corrupt.*.json
-benchmark_history.json
-latency_history.json
-frametime.log
-frametime_current.log
-frametime_*.log
-
-# Secrets and credentials - never commit these
-.env
-.env.*
-!.env.example
-!.env.*.example
-!.env.sample
-!.env.template
-.npmrc.local
-*.pem
-*.key
-*.p12
-*.pfx
-*.jks
-*.keystore
-*.cer
-*.crt
-*.kdbx
-*.ovpn
-*.credentials
-*.credential
-*.secret
-*.token
-id_rsa
-id_ed25519
-*.secrets
-credentials.json
-secrets.json
-service-account*.json
-*_token
-*.gpg
-
-# Personal configurations (internal testing only)
-*.personal.ps1
-*.personal.json
-*.personal.yaml
-*.personal.yml
-*.local.ps1
-*.local.json
-*.local.yaml
-*.local.yml
-
-# Local assistant and automation state
-.claude/
-/progress.md
-
-# Local-only automation and private workspace
-/.agents/
-/.codex/
-/.codegraph/
-/.kilo/
-/.serena/
+# Local development assistants and generated indexes
+.agent/
 .agents/
+.ai/
+.claude/
 .codex/
 .codegraph/
-.kilo/
-.serena/
 .cursor/
+.kilo/
 .repowise/
-/.internal/
-.github/codex/
-.github/workflows/codex.yml
-HARNESS_PRINCIPLES.md
-code_review.md
-/docs/archive/
-AGENT_AUDIT_REPORT.md
-debug-log-*.md
-scripts/topology_inventory.sh
-
-# Local instruction drafts and exported sessions
-/AGENTS.md
-/CLAUDE.md
-/GEMINI.md
-/AUDIT_LEDGER.md
-/remediation-ledger.md
+.serena/
+AGENT.md
+AGENTS.md
+agent.md
+agents.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+.cursorrules
+copilot-instructions.md
+agent-context*
+agent-instructions*
+agent-memory*
+agent-notes*
+agent-output*
+agent-report*
+instructions-for-agent.*
+AI_AUDIT*
+AI_NOTES*
+AI_REPORT*
+AI_REVIEW*
+AI_SUMMARY*
+AGENT_LEDGER.md
+AUDIT_LEDGER.md
+IMPLEMENTATION_LEDGER.md
+PROGRESS_LEDGER.md
+TASK_LEDGER.md
+/notes.md
+/plan.md
+/progress.md
+/scratchpad*
+/status.md
+/tasks.md
+/worklog*
+/devlog*
 /.github/copilot-instructions.md
 /.github/instructions/
 /.github/prompts/
 /conversation-exports/
+/evaluation-results/
 /prompt-drafts/
 /task-reports/
-/evaluation-results/
 
-# Root-only private notes and working papers
-/private/
-/local/
-/scratch/
-/tmp/
-/temp/
-/notes.md
-/plan.md
-/status.md
+# Optional local Driver Foundry helpers
+/tools/driver-foundry/data/embedded/*
+!/tools/driver-foundry/data/embedded/README.md
 
-# Local analysis outputs; keep durable config such as .codacy/codacy.config.json
-/.codacy/cli-config.yaml
-/.codacy/generated/
-/.codacy/logs/
-/.codacy/results/
-/.codacy/tmp/
-/.codacy/tools-configs/
-/coverage/
-/reports/
-/.cache/
-/test-artifacts/
-/TestResults/
-coverage.xml
-*.coverage
-*.trx
-test-results-*.xml
-*.sarif
-*.jsonl
-*.clixml
-*.etl
-*.evtx
-*.wer
-*.dmp
-*.har
+# Third-party Windows tuning artifacts
+FPSHEAVEN2026.pow
+*.nip
+*.pow
 
-# Removed test-only surfaces and generated fuzz output
-/rust/fixtures/
-/rust/northclock/fuzz/
-*.nupkg
-
-# Local Windows-style artifact paths produced during cross-platform tests
-C:*
-tmp-winstyle-check*
-
-# Test artifacts
-test-results.xml
-junit.xml
-junit-*.xml
-
-# Local GUI captures; publish only after Windows accessibility review
-/docs/screenshots/*.local.png
-/docs/screenshots/*.draft.png
-
-# Debug scripts
-debug-*.bat
-debug-*.ps1
-transcript*.txt
-transcript*.log
-
-# Temp
+# Temporary and operating-system files
 *.tmp
 *.bak
 *.orig
 *.rej
-
-# Nested local tooling and generated artifacts
-.codacy/generated/
-.codacy/logs/
-.codacy/tools-configs/
-.codacy/cli-config.yaml
-__pycache__/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-test-results/
-playwright-report/
-blob-report/
-junit*.xml
-node_modules/
-target/
-.build/
-DerivedData/
-xcuserdata/
-*.db-wal
-*.db-shm
-*.sqlite-wal
-*.sqlite-shm
-*.sqlite3-wal
-*.sqlite3-shm
-*.local.db
-*.local.sqlite
-*.local.sqlite3
-
-# Local Rust documentation ledgers
-/rust/docs/*ledger*.md
-
-# Generated test and coverage output (local only)
-/coverage/
-/htmlcov/
-/.coverage
-/.coverage.*
-/.pytest_cache/
-/test-results/
-/playwright-report/
-/blob-report/
-/coverage.xml
-/junit.xml
-/junit-*.xml
+.DS_Store
+Thumbs.db
+Desktop.ini

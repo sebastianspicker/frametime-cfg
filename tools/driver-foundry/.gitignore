@@ -1,0 +1,17 @@
+/target/
+
+# Optional local helper binaries
+/data/embedded/*
+!/data/embedded/README.md
+
+# Local work created by cleanup and install previews
+DDU Logs/
+open-cleanstall-work-*/
+oc-demo*/
+oc-min*/
+oc-clean*/
+dfoundry-*-demo*/
+
+*.log
+*.tmp
+*.pdb

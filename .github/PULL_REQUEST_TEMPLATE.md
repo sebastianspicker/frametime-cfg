@@ -1,39 +1,22 @@
 # Pull request
 
-## What does this PR do?
+## Summary
 
-<!-- Brief description of the change -->
+<!-- What changed and why? -->
 
 ## Evidence
 
-<!-- Link benchmarks, testing results, or sources that support this change -->
-
-## Scope
-
-- [ ] Runtime behavior changed
-- [ ] Documentation/configuration only
-- [ ] Desktop interface or accessibility contract changed
+<!-- Commands run, Windows VM or hardware evidence, and relevant documents. -->
 
 ## Checklist
 
-- [ ] Tested on a real system (not just theory)
-- [ ] CI `PSScriptAnalyzer` passes clean
-- [ ] Native Rust source gates pass when `rust/` changes
-- [ ] Driver Foundry Windows tests pass when its workspace changes
-- [ ] New state-changing paths have a useful Full DRY-RUN plan and focused no-mutation test
-- [ ] `START.bat dry-run all` exits cleanly with no preview issues and unchanged suite state (if runtime behavior changed)
-- [ ] Backup/restore handles the new changes
-- [ ] README and relevant docs updated (if applicable)
-- [ ] Public docs describe the current checkout and contain no stale screenshots
-- [ ] New runtime dependencies are documented and justified
-- [ ] Local-only artifacts remain ignored or archived intentionally
-- [ ] Codacy local evidence and Codacy Cloud status are not conflated
-
-## Security
-
-- [ ] No secrets, tokens, API keys, or credentials in the diff
-- [ ] No personal paths, raw diagnostics, runtime state, or private workspace artifacts
-- [ ] No `Invoke-Expression` / `iex` / `-EncodedCommand` usage
-- [ ] New system-modifying calls respect `$SCRIPT:DryRun` guard
-- [ ] No new `Invoke-WebRequest` calls to untrusted URLs
-- [ ] Workflow changes (if any): actions pinned to SHA, permissions minimal
+- [ ] `cargo fmt --all -- --check` passes.
+- [ ] Root Clippy and test gates pass.
+- [ ] `cargo run -p frametime-cli -- dry-run all` was run when workflow behavior changed.
+- [ ] Windows target check was run for root workspace changes.
+- [ ] Independent `tools/` workspace gates were run when applicable.
+- [ ] Package, protected-root, retained-handle, and publisher-pin invariants remain intact.
+- [ ] State-changing changes include focused Windows evidence or explicitly retain the qualification gap.
+- [ ] Recovery coverage and documentation were updated when behavior changed.
+- [ ] No secrets, local runtime state, personal paths, or private diagnostics are included.
+- [ ] The product surface remains native Rust and the five application crates remain in the root workspace.

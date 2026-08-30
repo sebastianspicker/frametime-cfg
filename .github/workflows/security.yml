@@ -31,9 +31,8 @@ jobs:
         run: |
           echo "=== Scanning for hardcoded secrets ==="
           FOUND=0
-          # Scan all tracked first-party documentation, including files that
-          # would normally live in ignored local audit workspaces.
-          EXCLUDE_ANALYSIS_PATHS='(^|/)(vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
+          # Scan first-party source, configuration, and documentation.
+          EXCLUDE_ANALYSIS_PATHS='(^|/)(vendor|third_party|third-party|3rdparty|external)/|\.git/'
 
           # Patterns that should never appear in committed code
           PATTERNS=(
@@ -48,14 +47,14 @@ jobs:
           )
 
           for pattern in "${PATTERNS[@]}"; do
-            if grep -rEn "$pattern" --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
+            if grep -rEn "$pattern" --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
               echo "::error::Potential secret found matching pattern: $pattern"
               FOUND=$((FOUND + 1))
             fi
           done
 
           # Check for generic password/secret assignments
-          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.ps1' --include='*.psd1' --include='*.bat' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
+          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
             echo "::error::Potential hardcoded credential assignment found"
             FOUND=$((FOUND + 1))
           fi
@@ -72,8 +71,8 @@ jobs:
           fi
           echo "Secret scan: clean"
 
-  script-safety:
-    name: PowerShell safety patterns
+  native-runtime-boundary:
+    name: Native runtime and package boundaries
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -81,122 +80,46 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check for dangerous PowerShell patterns
+      - name: Enforce the native product surface
         shell: bash
         run: |
-          echo "=== Checking PowerShell scripts for dangerous patterns ==="
-          FOUND=0
-          EXCLUDE_ANALYSIS_PATHS='(^|/)(docs/archive|vendor|third_party|third-party|3rdparty|external|\.codacy/generated)/|\.git/'
-
-          # Invoke-Expression / iex - remote code execution vector
-          if grep -rEn '\b(Invoke-Expression|iex)\b' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '# safe:' | grep -v 'PSScriptAnalyzer'; then
-            echo "::error::Invoke-Expression/iex found - potential code injection vector"
-            FOUND=$((FOUND + 1))
-          fi
-
-          # DownloadString + Invoke-Expression (classic cradle)
-          if grep -rEn 'DownloadString|DownloadFile.*\.(exe|bat|cmd|ps1|vbs)' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
-            echo "::error::WebClient DownloadString/DownloadFile to executable found"
-            FOUND=$((FOUND + 1))
-          fi
-
-          # Encoded command execution (obfuscation)
-          if grep -rEin '\-encodedcommand|\-enc ' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
-            echo "::error::Encoded command execution found - potential obfuscated payload"
-            FOUND=$((FOUND + 1))
-          fi
-
-          # Unrestricted execution policy set inside scripts
-          if grep -rEn 'Set-ExecutionPolicy\s+Unrestricted' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
-            echo "::warning::Set-ExecutionPolicy Unrestricted found - verify necessity"
-          fi
-
-          # Restart-Computer -Force without DRY-RUN gate or user prompt
-          # All uses must be inside a DryRun guard or after Confirm-Risk/Read-Host.
-          # 50-line lookback: Cleanup.ps1 has DryRun exit ~45 lines before the restart.
-          RESTART_HITS=$(grep -rEn 'Restart-Computer\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
-          if [ -n "$RESTART_HITS" ]; then
-            while IFS= read -r line; do
-              FILE=$(echo "$line" | cut -d: -f1)
-              LINENO_HIT=$(echo "$line" | cut -d: -f2)
-              START=$((LINENO_HIT > 50 ? LINENO_HIT - 50 : 1))
-              CONTEXT=$(sed -n "${START},${LINENO_HIT}p" "$FILE")
-              if ! echo "$CONTEXT" | grep -qEi 'DryRun|Confirm-Risk|Read-Host'; then
-                echo "::error::Restart-Computer -Force at $FILE:$LINENO_HIT without DRY-RUN gate or user prompt"
-                FOUND=$((FOUND + 1))
-              fi
-            done <<< "$RESTART_HITS"
-          fi
-
-          # Remove-Item -Recurse -Force on bare variable paths (dangerous if empty/wrong)
-          # Excludes test files (cleanup of temp dirs is expected) and literal paths.
-          REMOVE_HITS=$(grep -rEn 'Remove-Item\s+\$\w+\s+-Recurse\s+-Force' --include='*.ps1' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'tests/' || true)
-          if [ -n "$REMOVE_HITS" ]; then
-            while IFS= read -r line; do
-              FILE=$(echo "$line" | cut -d: -f1)
-              LINENO_HIT=$(echo "$line" | cut -d: -f2)
-              VARNAME=$(echo "$line" | grep -oP 'Remove-Item\s+\$\K\w+')
-              START=$((LINENO_HIT > 10 ? LINENO_HIT - 10 : 1))
-              CONTEXT=$(sed -n "${START},${LINENO_HIT}p" "$FILE")
-              if ! echo "$CONTEXT" | grep -qEi "Test-Path|if.*\\\$${VARNAME}"; then
-                echo "::warning::Remove-Item -Recurse -Force on \$$VARNAME at $FILE:$LINENO_HIT - verify path is validated"
-              fi
-            done <<< "$REMOVE_HITS"
-          fi
-
-          if [ "$FOUND" -gt 0 ]; then
-            echo "::error::Dangerous pattern(s) found. Review before merging."
+          echo "=== Checking native product surface ==="
+          LEGACY_FILES=$(find . -maxdepth 1 -type f \
+            \( -iname '*.ps1' -o -iname '*.psd1' -o -iname '*.bat' -o -iname '*.cmd' -o -iname '*.xaml' \) \
+            -print)
+          if [ -n "$LEGACY_FILES" ]; then
+            echo "::error::The root product surface must contain only the native Rust runtime:"
+            printf '%s\n' "$LEGACY_FILES"
             exit 1
           fi
-          echo "Script safety check: clean"
+          if [ -e helpers ] || [ -e ui ]; then
+            echo "::error::The root product surface must not contain an alternate helper or markup runtime"
+            exit 1
+          fi
+          echo "Native product surface: clean"
 
-      - name: Check public launcher scripts
+      - name: Check native package boundary
         shell: bash
         run: |
-          echo "=== Checking public launcher scripts ==="
-          FOUND=0
+          echo "=== Checking native package boundary ==="
+          test -f scripts/package.cmd
+          test -f package-layout.txt
 
-          for launcher in START.bat START-GUI.bat; do
-            if [ ! -f "$launcher" ]; then
-              echo "::error::Missing launcher: $launcher"
-              FOUND=$((FOUND + 1))
-              continue
-            fi
+          if grep -Ein '\.(ps1|psd1|bat|cmd|xaml)(/|$)' package-layout.txt; then
+            echo "::error::The native package layout must not contain retired runtime files"
+            exit 1
+          fi
 
-            if grep -Ein '\-encodedcommand|\-enc ' "$launcher"; then
-              echo "::error::Encoded command execution found in $launcher"
-              FOUND=$((FOUND + 1))
-            fi
-
-            if grep -Ein 'Invoke-WebRequest|curl|bitsadmin|certutil' "$launcher"; then
-              echo "::error::Network download primitive found in $launcher"
-              FOUND=$((FOUND + 1))
-            fi
-
-            if grep -Ein 'EnableDelayedExpansion' "$launcher"; then
-              echo "::error::Delayed expansion can corrupt or execute launcher path data in $launcher"
-              FOUND=$((FOUND + 1))
-            fi
-
-            if grep -Ein '\-Command.*%~(f|d|p|dp)0' "$launcher"; then
-              echo "::error::Filesystem path interpolated into executable PowerShell text in $launcher"
-              FOUND=$((FOUND + 1))
+          for required_marker in \
+            'if /i "%~x1"==".ps1"' \
+            'PowerShell source file is not permitted in the package' \
+            'PowerShell runtime or source dependency marker in package file'; do
+            if ! grep -Fq "$required_marker" scripts/package.cmd; then
+              echo "::error::scripts/package.cmd no longer enforces the native package boundary: $required_marker"
+              exit 1
             fi
           done
-
-          if ! grep -Fq 'portable WPF launcher is unavailable' START-GUI.bat; then
-            echo "::error::START-GUI.bat is missing the fail-closed portable boundary"
-            FOUND=$((FOUND + 1))
-          fi
-          if grep -Ein 'powershell|Verb[[:space:]]+RunAs|frametime-gui\.ps1' START-GUI.bat; then
-            echo "::error::START-GUI.bat must not start PowerShell from the portable tree"
-            FOUND=$((FOUND + 1))
-          fi
-
-          if [ "$FOUND" -gt 0 ]; then
-            exit 1
-          fi
-          echo "Launcher safety check: clean"
+          echo "Native package boundary: clean"
 
   workflow-integrity:
     name: Workflow file integrity

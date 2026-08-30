@@ -1,0 +1,246 @@
+// frametime.cfg - August 2026 CS2 competitive baseline
+// Research cutoff: 19 August 2026, Steam build 24828357.
+//
+// Deterministic starter configuration for a current client that may contain
+// stale or misconfigured values. It uses a balanced competitive baseline and
+// keeps hardware-, route-, and sound-colouration choices in named add-ons.
+// Back up any existing game\csgo\cfg\autoexec.cfg before using this file.
+
+// -----------------------------------------------------------------------------
+// Console, frame pacing, presentation, and visibility
+// -----------------------------------------------------------------------------
+
+con_enable "1"
+fps_max "400"                     // Current configured baseline; set before joining
+fps_max_ui "200"                  // Current configured menu cap
+fps_max_tools "120"               // Current tools/non-match cap
+engine_no_focus_sleep "20"        // Reduce background work while unfocused
+r_player_visibility_mode "1"      // Boost Player Contrast
+r_drawtracers_firstperson "0"     // Avoid misleading first-person tracer feedback
+r_fullscreen_gamma "2.2"          // Neutral PC starting point; calibrate the display
+r_show_build_info "1"             // Preserve build evidence for bug reports
+cl_showfps "0"                    // Use conditional telemetry below
+
+// -----------------------------------------------------------------------------
+// Current Source 2 networking and matchmaking
+// -----------------------------------------------------------------------------
+
+rate "786432"                     // Current configured receive-rate reset
+cl_net_buffer_ticks "0"           // None: no manual packet-delay buffer
+mm_dedicated_search_maxping "50"  // Competitive search preference; may extend queues
+cl_timeout "30"                   // Normal disconnect tolerance
+
+// Conditional normal-play telemetry: 0 never, 1 poor only, 2 always.
+// The 8 ms / 60 ms / 1% thresholds are frametime.cfg competitive policy,
+// not Valve defaults. Adjust them to the target display and region.
+cl_hud_telemetry_frametime_show "1"
+cl_hud_telemetry_frametime_poor "8"
+cl_hud_telemetry_ping_show "1"
+cl_hud_telemetry_ping_poor "60"
+cl_hud_telemetry_net_misdelivery_show "1"
+cl_hud_telemetry_net_misdelivery_poor "1"
+cl_hud_telemetry_net_quality_graph_show "0"
+cl_hud_telemetry_net_detailed "0"
+cl_hud_telemetry_serverrecvmargin_graph_show "0"
+
+// -----------------------------------------------------------------------------
+// Mouse and movement input
+// -----------------------------------------------------------------------------
+
+// At 800 DPI, sensitivity 1.0 is an 800-eDPI competitive starter. Restore the
+// player's practiced value when their mouse DPI or muscle memory differs.
+sensitivity "1.0"
+zoom_sensitivity_ratio "1.0"
+m_pitch "0.022"
+m_yaw "0.022"
+mouse_inverty "0"
+option_duck_method "0"            // Hold to duck
+option_speed_method "0"           // Hold to walk
+
+// -----------------------------------------------------------------------------
+// Static high-contrast starter crosshair
+// -----------------------------------------------------------------------------
+
+cl_crosshairstyle "4"
+cl_crosshairsize "2"
+cl_crosshairthickness "0.5"
+cl_crosshairgap "-3"
+cl_crosshairdot "0"
+cl_crosshair_t "0"
+cl_crosshair_drawoutline "0"
+cl_crosshairusealpha "1"
+cl_crosshairalpha "255"
+cl_crosshaircolor "1"             // Green preset; custom RGB requires color 5
+cl_crosshairgap_useweaponvalue "0"
+cl_crosshair_recoil "0"
+cl_crosshair_friendly_warning "1"
+cl_crosshair_sniper_width "1"
+
+// -----------------------------------------------------------------------------
+// Grenade crosshair
+// -----------------------------------------------------------------------------
+
+cl_grenadecrosshair_decoy "1"
+cl_grenadecrosshair_explosive "1"
+cl_grenadecrosshair_fire "1"
+cl_grenadecrosshair_flash "1"
+cl_grenadecrosshair_smoke "1"
+cl_grenadecrosshair_keepusercrosshair "1"
+cl_grenadecrosshairdelay_decoy "0"
+cl_grenadecrosshairdelay_explosive "0"
+cl_grenadecrosshairdelay_fire "0"
+cl_grenadecrosshairdelay_flash "0"
+cl_grenadecrosshairdelay_smoke "0"
+
+// -----------------------------------------------------------------------------
+// Maximum-clearance starter viewmodel
+// -----------------------------------------------------------------------------
+
+viewmodel_presetpos "0"
+viewmodel_fov "68"
+viewmodel_offset_x "2.5"
+viewmodel_offset_y "0"
+viewmodel_offset_z "-1.5"
+cl_prefer_lefthanded "0"
+
+// -----------------------------------------------------------------------------
+// Radar, HUD, teammate information, and visual noise
+// -----------------------------------------------------------------------------
+
+cl_radar_always_centered "0"
+cl_radar_rotate "1"
+cl_radar_scale "0.4"
+cl_radar_scale_alternate "1.0"
+cl_radar_scale_dynamic "0"
+cl_radar_icon_scale_min "0.6"
+cl_radar_square_with_scoreboard "1"
+cl_hud_radar_scale "1.0"
+cl_hud_radar_background_alpha "1.0"
+cl_hud_radar_map_additive "1"
+
+hud_scaling "0.9"
+safezonex "1.0"
+safezoney "1.0"
+hud_showtargetid "1"
+cl_hud_color "12"
+cl_showloadout "1"
+cl_teamid_overhead_mode "3"
+cl_teamid_overhead_colors_show "1"
+cl_teamid_overhead_fade_near_crosshair "0.5"
+cl_teammate_colors_show "2"
+cl_teamcounter_playercount_instead_of_avatars "1"
+cl_allow_animated_avatars "0"
+cl_show_equipped_character_for_player_avatars "0"
+cl_show_clan_in_death_notice "0"
+cl_weapon_selection_rarity_color "0"
+
+// -----------------------------------------------------------------------------
+// Gameplay-client behavior, buy menu, sniper behavior, and spectating
+// -----------------------------------------------------------------------------
+
+cl_autohelp "0"
+gameinstructor_enable "0"
+cl_new_user_phase "-1"            // Experienced-player baseline
+cl_dm_buyrandomweapons "0"
+cl_silencer_mode "0"              // Prevent accidental suppressor removal
+cl_use_opens_buy_menu "0"
+cl_buywheel_nonumberpurchasing "1"
+cl_buywheel_donate_key "0"
+cl_inventory_radial_immediate_select "1"
+cl_inventory_radial_tap_to_cycle "1"
+cl_sniper_auto_rezoom "0"
+cl_sniper_delay_unscope "0"
+cl_sniper_show_inaccuracy "0"
+cl_show_observer_crosshair "2"
+cl_observed_bot_crosshair "0"
+cl_spec_show_bindings "0"
+cl_radial_radio_tap_to_ping "1"
+cl_ragdoll_limit "0"              // Low-clutter preference, not a proven FPS gain
+
+// -----------------------------------------------------------------------------
+// Audio, voice, and distraction control
+// -----------------------------------------------------------------------------
+
+// Select the real output device in CS2. Never set speaker_config or a device ID.
+volume "0.70"                      // Safe listening still depends on OS/device gain
+snd_headphone_eq "0"              // Natural: no additional coloration
+snd_spatialize_lerp "0"           // Physically accurate L/R default
+snd_autodetect_latency "1"        // Current automatic-latency reset
+snd_mixahead "0.001"              // Current pinned mixer-buffer reset
+snd_mute_losefocus "1"            // Mute the game when it loses focus
+snd_voipvolume "0.70"
+voice_modenable "1"               // Push-to-talk enabled; bind remains player-owned
+voice_always_sample_mic "0"
+voice_loopback "0"
+
+snd_menumusic_volume "0"
+snd_roundstart_volume "0"
+snd_roundaction_volume "0"
+snd_roundend_volume "0"
+snd_mapobjective_volume "0"
+snd_deathcamera_volume "0"
+snd_mvp_volume "0"
+snd_tensecondwarning_volume "0.10"
+snd_mute_mvp_music_live_players "1"
+
+// -----------------------------------------------------------------------------
+// Lobby, privacy, and non-match UI
+// -----------------------------------------------------------------------------
+
+// Lobby privacy is selected in the current UI; the numeric
+// lobby_default_privacy_bits2 bitfield is not a portable invite-only contract.
+cl_invites_only_mainmenu "1"
+cl_invites_only_friends "0"
+cl_hide_avatar_images "0"
+cl_sanitize_muted_players "1"
+cl_sanitize_player_names "0"
+cl_server_graphic1_enable "0"
+cl_server_graphic2_enable "0"
+
+// -----------------------------------------------------------------------------
+// Optional add-ons and UI-owned video branches
+// -----------------------------------------------------------------------------
+
+// Run add-ons manually; the baseline does not auto-execute them:
+//   exec competitive_2026         - complete opt-in pro-consensus match profile
+//   exec frame_raw_uncapped        - fps_max 0, before joining a server
+//   exec frame_baseline_400        - restore the 400 FPS baseline
+//   exec audio_eq_crisp            - optional mid/high emphasis
+//   exec audio_eq_smooth           - optional reduced mid/high energy
+//   exec audio_legacy_lr_isolation - legacy hard L/R trial
+//   exec audio_stable              - restore Natural/physical/automatic audio
+//   exec audio_lowlatency_025      - larger-buffer stability experiment
+//   exec net_stable                - buffering None / reset
+//   exec net_unstable              - 1 Packet trial for measured delivery misses
+//   exec net_bad                   - 2 Packets only when misses persist at 1
+//   exec debug_hud / debug_hud_off - temporary diagnostics / normal telemetry
+
+// Balanced FPS-first in-game Video baseline:
+//   Display mode: Fullscreen; refresh: highest stable
+//   Resolution: native clarity, or 1280x960 4:3 stretched preference
+//   Boost Player Contrast: Enabled
+//   MSAA/CMAA2: CMAA2 or 2x; 4x only with measured GPU headroom
+//   Global Shadows: Low; Dynamic Shadows: All
+//   Model/Texture: Medium; Texture Filtering: AF4x
+//   Shader: Low; Particle: Low; Ambient Occlusion: Disabled
+//   HDR: Quality; FSR: Disabled unless genuinely GPU-bound
+//
+// Raw latency: V-Sync Off, tearing accepted, Reflex/Anti-Lag 2 Enabled, and
+// exec frame_raw_uncapped (or a separately measured sustainable cap).
+// NVIDIA VRR: G-SYNC On + V-Sync On + Reflex On; keep driver ULLM at default.
+// AMD VRR: FreeSync On + Anti-Lag 2 when supported; measure V-Sync/cap behavior.
+// Use the current game/driver UI: cs2_video.txt numeric enums are not stable CVars.
+
+echo "[frametime-cfg] August 2026 competitive baseline loaded"
+
+// Intentionally absent because removed, read-only, internal, cheat, server-owned,
+// superseded, or ineffective under the selected controller: speaker_config,
+// lobby_default_privacy_bits2, tv_nochat, inactive outline/custom-RGB/style-1/
+// style-2 crosshair fields, cl_cmdrate, cl_updaterate, cl_interp,
+// cl_interp_ratio, cl_net_buffer_ticks_use_interp,
+// cl_tickpacket_desired_queuelength, net_client_steamdatagram_enable_override,
+// engine_low_latency_sleep_after_client_tick, r_low_latency, m_rawinput,
+// m_customaccel, m_mouseaccel1/2, cl_righthand, viewmodel_recoil,
+// cl_disable_ragdolls, cl_ragdoll_physics_enable, old bob/shift CVars,
+// net_graph, mat_queue_mode, r_dynamic, cl_forcepreload, and sv_*/mp_*.
+// Leave Steam Launch Options empty by default.
