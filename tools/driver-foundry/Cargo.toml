@@ -22,11 +22,11 @@ driver-foundry-install = { path = "crates/driver-foundry-install" }
 driver-foundry-gui = { path = "crates/driver-foundry-gui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = "2"
 url = "2"
 clap = { version = "4", features = ["derive"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
-ureq = { version = "2", default-features = true }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+ureq = { version = "3", default-features = true }
 eframe = { version = "0.36.1", default-features = false, features = ["default_fonts", "glow", "x11"] }
 egui = { version = "0.36.1" }
