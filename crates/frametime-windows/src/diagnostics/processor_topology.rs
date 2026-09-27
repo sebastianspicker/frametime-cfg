@@ -21,7 +21,8 @@ impl ProcessorTopologyProvider for WindowsProcessorTopologyProvider {
         Ok(ProcessorTopology {
             groups: vec![ProcessorGroup {
                 group_number: 0,
-                active_logical_processors: logical_processors as u8,
+                active_logical_processors: u8::try_from(logical_processors)
+                    .map_err(|_| DeviceBindingError::UnsupportedProcessorTopology)?,
             }],
         })
     }

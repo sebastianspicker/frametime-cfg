@@ -1,4 +1,5 @@
 use crate::*;
+use frametime_domain::binding::is_canonical_braced_guid;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NagleBinding {
     pub(crate) interface_guid: String,
@@ -12,20 +13,8 @@ pub(crate) const TCPIP_INTERFACE_PREFIX: &str =
     "SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\";
 pub(crate) const NAGLE_VALUE_NAMES: [&str; 2] = ["TcpNoDelay", "TcpAckFrequency"];
 
-pub(crate) fn valid_interface_guid(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    bytes.len() == 38
-        && bytes.first() == Some(&b'{')
-        && bytes.last() == Some(&b'}')
-        && [9, 14, 19, 24].iter().all(|index| bytes[*index] == b'-')
-        && bytes[1..37]
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
-}
-
 pub(crate) fn nagle_registry_key(guid: &str) -> Result<String, String> {
-    if !valid_interface_guid(guid) {
+    if !is_canonical_braced_guid(guid) {
         return Err("network interface GUID is not an exact registry identity".into());
     }
     Ok(format!("{TCPIP_INTERFACE_PREFIX}{guid}"))

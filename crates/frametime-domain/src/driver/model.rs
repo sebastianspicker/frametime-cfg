@@ -60,7 +60,7 @@ fn require_text(value: &str, field: &'static str) -> Result<(), ValidationError>
     }
 }
 
-fn validate_leaf(value: &str, field: &'static str) -> Result<(), ValidationError> {
+pub(super) fn validate_leaf(value: &str, field: &'static str) -> Result<(), ValidationError> {
     require_nonempty_leaf(value, field)?;
     require_leaf_within_length_limit(value, field)?;
     reject_current_directory_leaf(value, field)?;
@@ -123,7 +123,7 @@ fn reject_control_characters_in_leaf(
     }
 }
 
-fn validate_token(value: &str, field: &'static str) -> Result<(), ValidationError> {
+pub(super) fn validate_token(value: &str, field: &'static str) -> Result<(), ValidationError> {
     if value.is_empty()
         || value.len() > 128
         || !value
@@ -253,6 +253,8 @@ pub struct PublishedDriverPackage {
     pub original_inf_name: String,
     pub provider_name: String,
     pub driver_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_store_package_sha256: Option<Sha256Digest>,
     #[serde(flatten, default)]
     pub extensions: Extensions,
 }

@@ -5,6 +5,8 @@
 //! pinned upstream revision and loads only the absolute System32 driver DLL.
 use std::{error::Error, fmt};
 
+use serde::{Deserialize, Serialize};
+
 /// The canonical DRS profile created when CS2 has no dedicated profile.
 pub const CS2_PROFILE_NAME: &str = "Counter-strike 2";
 pub(crate) const CS2_PROFILE_ALIASES: [&str; 2] = [CS2_PROFILE_NAME, "Counter-Strike 2"];
@@ -14,7 +16,8 @@ mod policy;
 pub use policy::*;
 
 /// A lossless original DWORD value. `None` means the setting did not exist.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DrsOriginalSetting {
     pub id: u32,
     pub value: Option<u32>,
@@ -22,14 +25,16 @@ pub struct DrsOriginalSetting {
 
 /// The original owner of an application registration. `None` means no DRS
 /// profile owned that executable before this transaction.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DrsApplicationOriginal {
     pub application: String,
     pub profile: Option<String>,
 }
 
 /// The complete recovery record required before the profile is changed.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DrsBackup {
     pub profile: String,
     pub profile_created: bool,

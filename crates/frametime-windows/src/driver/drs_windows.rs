@@ -27,6 +27,10 @@ mod native_drs_windows {
         NVDRS_DWORD_TYPE, NvDrsApplicationV4, NvDrsProfile, NvDrsSetting, unicode_argument,
     };
     use crate::{DrsError, DrsOriginalSetting, NvapiDrs};
+    use frametime_domain::driver::{
+        DrsApplicationSnapshot, DrsItemKey, DrsItemKind, DrsProfileSnapshot, DrsSettingSnapshot,
+        DrsSnapshot, NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION,
+    };
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct NativeDrsSession(*mut c_void);
@@ -48,11 +52,21 @@ mod native_drs_windows {
     type GetSetting = unsafe extern "C" fn(Handle, Handle, u32, *mut NvDrsSetting) -> Status;
     type SetSetting = unsafe extern "C" fn(Handle, Handle, *mut NvDrsSetting) -> Status;
     type DeleteSetting = unsafe extern "C" fn(Handle, Handle, u32) -> Status;
+    type GetNumProfiles = unsafe extern "C" fn(Handle, *mut u32) -> Status;
+    type EnumProfiles = unsafe extern "C" fn(Handle, u32, *mut Handle) -> Status;
+    type EnumApplications =
+        unsafe extern "C" fn(Handle, Handle, u32, *mut u32, *mut NvDrsApplicationV4) -> Status;
+    type EnumSettings =
+        unsafe extern "C" fn(Handle, Handle, u32, *mut u32, *mut NvDrsSetting) -> Status;
 
     const OK: Status = 0;
     const SETTING_NOT_FOUND: Status = -160;
     const PROFILE_NOT_FOUND: Status = -163;
     const EXECUTABLE_NOT_FOUND: Status = -166;
+
+    #[path = "helpers.rs"]
+    mod helpers;
+    use helpers::*;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct NativeDrsProfile(Handle);
@@ -76,6 +90,10 @@ mod native_drs_windows {
         get_setting: GetSetting,
         set_setting: SetSetting,
         delete_setting: DeleteSetting,
+        get_num_profiles: GetNumProfiles,
+        enum_profiles: EnumProfiles,
+        enum_applications: EnumApplications,
+        enum_settings: EnumSettings,
     }
 
     impl NativeNvapiDrs {
@@ -129,6 +147,193 @@ mod native_drs_windows {
         #[must_use]
         pub const fn interface_version() -> &'static str {
             "nvapi-public-sdk-cd6918f60b3c9a0476fdfe7e89bb32330602049d"
+        }
+
+        /// Enumerates every public customized DRS profile, binding, and typed
+        /// value. Predefined profiles with no custom application or setting
+        /// records are omitted rather than copied as driver defaults.
+        pub fn capture_customized_profiles(&mut self) -> Result<DrsSnapshot, DrsError> {
+            crate::driver::drs::with_session(self, |api, session| {
+                let mut count = 0_u32;
+                status(
+                    unsafe { (api.get_num_profiles)(session.0, &mut count) },
+                    "DRS_GetNumProfiles",
+                )?;
+                if count > 4_096 {
+                    return Err(error("DRS_EnumProfiles", "profile bound exceeded"));
+                }
+                let mut profiles = Vec::new();
+                for index in 0..count {
+                    let mut handle = std::ptr::null_mut();
+                    status(
+                        unsafe { (api.enum_profiles)(session.0, index, &mut handle) },
+                        "DRS_EnumProfiles",
+                    )?;
+                    if handle.is_null() {
+                        return Err(error("DRS_EnumProfiles", "returned a null profile"));
+                    }
+                    let profile = NativeDrsProfile(handle);
+                    let mut info = NvDrsProfile::query()
+                        .map_err(|reason| error("prepare profile query", reason))?;
+                    status(
+                        unsafe { (api.get_profile_info)(session.0, handle, &mut info) },
+                        "DRS_GetProfileInfo",
+                    )?;
+                    if info.application_count > 4_096 || info.setting_count > 4_096 {
+                        return Err(error("DRS_GetProfileInfo", "profile item bound exceeded"));
+                    }
+                    let applications =
+                        api.enumerate_applications(session, &profile, info.application_count)?;
+                    let settings = api.enumerate_settings(session, &profile, info.setting_count)?;
+                    if info.is_predefined == 0 || !applications.is_empty() || !settings.is_empty() {
+                        profiles.push(DrsProfileSnapshot {
+                            name: info
+                                .name()
+                                .map_err(|reason| error("decode profile name", reason))?,
+                            applications,
+                            settings,
+                        });
+                    }
+                }
+                let snapshot = DrsSnapshot {
+                    schema_version: NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION,
+                    profiles,
+                };
+                snapshot
+                    .validate()
+                    .map_err(|reason| error("validate DRS snapshot", format!("{reason:?}")))?;
+                Ok(snapshot)
+            })
+        }
+
+        /// Merge-restores a backup without deleting profiles or driver
+        /// defaults. Rejected values and conflicting application bindings are
+        /// returned for explicit reconciliation.
+        pub fn merge_customized_profiles(
+            &mut self,
+            snapshot: &DrsSnapshot,
+        ) -> Result<Vec<DrsItemKey>, DrsError> {
+            snapshot
+                .validate()
+                .map_err(|reason| error("validate DRS restore", format!("{reason:?}")))?;
+            crate::driver::drs::with_session(self, |api, session| {
+                let mut incompatible = Vec::new();
+                for captured in &snapshot.profiles {
+                    let profile = match api.find_profile_by_name(session, &captured.name)? {
+                        Some(profile) => profile,
+                        None => api.create_profile(session, &captured.name)?,
+                    };
+                    for application in &captured.applications {
+                        match api.find_application_profile(session, &application.executable)? {
+                            None => {
+                                if api
+                                    .bind_application(session, &profile, &application.executable)
+                                    .is_err()
+                                {
+                                    incompatible.push(DrsItemKey {
+                                        profile: captured.name.clone(),
+                                        kind: DrsItemKind::Application,
+                                        key: application.executable.clone(),
+                                    });
+                                }
+                            }
+                            Some(owner) if owner == profile => {}
+                            Some(_) => incompatible.push(DrsItemKey {
+                                profile: captured.name.clone(),
+                                kind: DrsItemKind::Application,
+                                key: application.executable.clone(),
+                            }),
+                        }
+                    }
+                    for setting in &captured.settings {
+                        let mut value = NvDrsSetting::typed(setting.setting_id, &setting.value)
+                            .map_err(|reason| error("prepare typed DRS setting", reason))?;
+                        if status(
+                            unsafe { (api.set_setting)(session.0, profile.0, &mut value) },
+                            "DRS_SetSetting",
+                        )
+                        .is_err()
+                        {
+                            incompatible.push(DrsItemKey {
+                                profile: captured.name.clone(),
+                                kind: DrsItemKind::Setting,
+                                key: setting.setting_id.to_string(),
+                            });
+                        }
+                    }
+                }
+                api.save_settings(session)?;
+                Ok(incompatible)
+            })
+        }
+
+        fn enumerate_applications(
+            &mut self,
+            session: &NativeDrsSession,
+            profile: &NativeDrsProfile,
+            count: u32,
+        ) -> Result<Vec<DrsApplicationSnapshot>, DrsError> {
+            let mut applications = Vec::new();
+            for index in 0..count {
+                let mut item = NvDrsApplicationV4::named("")
+                    .map_err(|reason| error("prepare application enumeration", reason))?;
+                let mut returned = 1_u32;
+                status(
+                    unsafe {
+                        (self.enum_applications)(
+                            session.0,
+                            profile.0,
+                            index,
+                            &mut returned,
+                            &mut item,
+                        )
+                    },
+                    "DRS_EnumApplications",
+                )?;
+                if returned != 1 {
+                    return Err(error("DRS_EnumApplications", "unexpected result count"));
+                }
+                if !item.is_predefined() {
+                    applications.push(DrsApplicationSnapshot {
+                        executable: item
+                            .name()
+                            .map_err(|reason| error("decode application name", reason))?,
+                    });
+                }
+            }
+            Ok(applications)
+        }
+
+        fn enumerate_settings(
+            &mut self,
+            session: &NativeDrsSession,
+            profile: &NativeDrsProfile,
+            count: u32,
+        ) -> Result<Vec<DrsSettingSnapshot>, DrsError> {
+            let mut settings = Vec::new();
+            for index in 0..count {
+                let mut item = NvDrsSetting::query()
+                    .map_err(|reason| error("prepare setting enumeration", reason))?;
+                let mut returned = 1_u32;
+                status(
+                    unsafe {
+                        (self.enum_settings)(session.0, profile.0, index, &mut returned, &mut item)
+                    },
+                    "DRS_EnumSettings",
+                )?;
+                if returned != 1 {
+                    return Err(error("DRS_EnumSettings", "unexpected result count"));
+                }
+                if !item.current_is_predefined() {
+                    settings.push(DrsSettingSnapshot {
+                        setting_id: item.setting_id(),
+                        value: item
+                            .current_value()
+                            .map_err(|reason| error("decode typed DRS setting", reason))?,
+                    });
+                }
+            }
+            Ok(settings)
         }
     }
 
@@ -324,170 +529,6 @@ mod native_drs_windows {
                 ),
             }
         }
-    }
-
-    struct Functions {
-        initialize: Initialize,
-        create_session: CreateSession,
-        destroy_session: SessionCall,
-        load_settings: SessionCall,
-        save_settings: SessionCall,
-        find_profile: FindProfile,
-        get_profile_info: ProfileInfo,
-        create_profile: CreateProfile,
-        delete_profile: ProfileCall,
-        create_application: CreateApplication,
-        delete_application: DeleteApplication,
-        find_application: FindApplication,
-        get_setting: GetSetting,
-        set_setting: SetSetting,
-        delete_setting: DeleteSetting,
-    }
-
-    impl Functions {
-        unsafe fn resolve(query: QueryInterface) -> Result<Self, DrsError> {
-            macro_rules! resolve {
-                ($id:expr, $name:literal, $ty:ty) => {{
-                    let pointer = unsafe { query($id) };
-                    if pointer.is_null() {
-                        return Err(error($name, "query interface returned null"));
-                    }
-                    unsafe { transmute::<*const c_void, $ty>(pointer) }
-                }};
-            }
-            Ok(Self {
-                initialize: resolve!(0x0150_e828, "NvAPI_Initialize", Initialize),
-                create_session: resolve!(0x0694_d52e, "DRS_CreateSession", CreateSession),
-                destroy_session: resolve!(0xdad9_cff8, "DRS_DestroySession", SessionCall),
-                load_settings: resolve!(0x375d_bd6b, "DRS_LoadSettings", SessionCall),
-                save_settings: resolve!(0xfcbc_7e14, "DRS_SaveSettings", SessionCall),
-                find_profile: resolve!(0x7e4a_9a0b, "DRS_FindProfileByName", FindProfile),
-                get_profile_info: resolve!(0x61cd_6fd6, "DRS_GetProfileInfo", ProfileInfo),
-                create_profile: resolve!(0xcc17_6068, "DRS_CreateProfile", CreateProfile),
-                delete_profile: resolve!(0x1709_3206, "DRS_DeleteProfile", ProfileCall),
-                create_application: resolve!(
-                    0x4347_a9de,
-                    "DRS_CreateApplication",
-                    CreateApplication
-                ),
-                // NvAPI_DRS_DeleteApplication: public NVIDIA SDK commit
-                // cd6918f60b3c9a0476fdfe7e89bb32330602049d, interface 0x2c694bc6.
-                delete_application: resolve!(
-                    0x2c69_4bc6,
-                    "DRS_DeleteApplication",
-                    DeleteApplication
-                ),
-                find_application: resolve!(
-                    0xeee5_66b2,
-                    "DRS_FindApplicationByName",
-                    FindApplication
-                ),
-                get_setting: resolve!(0x73bf_8338, "DRS_GetSetting", GetSetting),
-                set_setting: resolve!(0x577d_d202, "DRS_SetSetting", SetSetting),
-                delete_setting: resolve!(0xe4a2_6362, "DRS_DeleteProfileSetting", DeleteSetting),
-            })
-        }
-        fn into_host(self, module: HMODULE, module_sha256: String) -> NativeNvapiDrs {
-            NativeNvapiDrs {
-                module,
-                module_sha256,
-                initialize: self.initialize,
-                create_session: self.create_session,
-                destroy_session: self.destroy_session,
-                load_settings: self.load_settings,
-                save_settings: self.save_settings,
-                find_profile: self.find_profile,
-                get_profile_info: self.get_profile_info,
-                create_profile: self.create_profile,
-                delete_profile: self.delete_profile,
-                create_application: self.create_application,
-                delete_application: self.delete_application,
-                find_application: self.find_application,
-                get_setting: self.get_setting,
-                set_setting: self.set_setting,
-                delete_setting: self.delete_setting,
-            }
-        }
-    }
-
-    pub(crate) fn status(value: Status, operation: &'static str) -> Result<(), DrsError> {
-        if value == OK {
-            Ok(())
-        } else {
-            Err(error(operation, format!("status {value}")))
-        }
-    }
-    pub(crate) fn optional_handle(
-        value: Status,
-        missing: Status,
-        handle: Handle,
-        operation: &'static str,
-    ) -> Result<Option<Handle>, DrsError> {
-        if value == missing {
-            return Ok(None);
-        }
-        status(value, operation)?;
-        (!handle.is_null())
-            .then_some(Some(handle))
-            .ok_or_else(|| error(operation, "returned a null handle"))
-    }
-    pub(crate) fn error(operation: &'static str, reason: impl Into<String>) -> DrsError {
-        DrsError::new(operation, reason)
-    }
-
-    pub(crate) fn system32_nvapi_path() -> Result<PathBuf, String> {
-        let mut buffer = vec![0_u16; 32_768];
-        let copied = unsafe { GetSystemDirectoryW(Some(&mut buffer)) };
-        let copied = usize::try_from(copied).map_err(|_| "System32 path length overflows")?;
-        if copied == 0 || copied >= buffer.len() {
-            return Err("GetSystemDirectoryW failed or truncated".into());
-        }
-        buffer.truncate(copied);
-        let root = String::from_utf16(&buffer).map_err(|_| "System32 path is invalid UTF-16")?;
-        Ok(PathBuf::from(root).join("nvapi64.dll"))
-    }
-
-    pub(crate) fn verify_loaded_module_path(
-        module: HMODULE,
-        expected: &Path,
-    ) -> Result<(), String> {
-        let mut buffer = vec![0_u16; 32_768];
-        let copied = unsafe { GetModuleFileNameW(Some(module), &mut buffer) };
-        let copied = usize::try_from(copied).map_err(|_| "module path length overflows")?;
-        if copied == 0 || copied >= buffer.len() {
-            return Err("GetModuleFileNameW failed or truncated".into());
-        }
-        buffer.truncate(copied);
-        let actual = PathBuf::from(
-            String::from_utf16(&buffer).map_err(|_| "module path is invalid UTF-16")?,
-        );
-        if actual
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&expected.to_string_lossy())
-        {
-            Ok(())
-        } else {
-            Err("loaded NVAPI module is not the absolute System32 nvapi64.dll".into())
-        }
-    }
-
-    pub(crate) fn wide_path(path: &std::path::Path) -> Vec<u16> {
-        use std::os::windows::ffi::OsStrExt;
-        path.as_os_str().encode_wide().chain(Some(0)).collect()
-    }
-
-    pub(crate) fn sha256_file(path: &Path) -> Result<String, String> {
-        let mut file = File::open(path).map_err(|error| error.to_string())?;
-        let mut hasher = Sha256::new();
-        let mut bytes = [0_u8; 64 * 1024];
-        loop {
-            let read = file.read(&mut bytes).map_err(|error| error.to_string())?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&bytes[..read]);
-        }
-        Ok(format!("{:x}", hasher.finalize()))
     }
 }
 

@@ -286,13 +286,7 @@ impl<B: Backend> Engine<B> {
                     {
                         self.run_evidence_operation(operation, key, report)?;
                     } else {
-                        self.backend
-                            .verify(operation)
-                            .map_err(|message| EngineError::Verify {
-                                key: key.into(),
-                                message,
-                            })?;
-                        report.events.push(Event::Verify(key.into()));
+                        self.verify_operation(operation, key, report)?;
                     }
                 } else {
                     match self.backend.recovery_requirement(operation) {
@@ -321,13 +315,7 @@ impl<B: Backend> Engine<B> {
     ) -> Result<(), EngineError> {
         let mut progress = self.progress.clone();
         progress.acknowledge_step_advisory(step.id, reason.into());
-        self.backend
-            .persist_progress(&progress)
-            .map_err(|message| EngineError::Progress {
-                key: key.into(),
-                message,
-            })?;
-        self.progress = progress;
+        self.persist_progress(key, progress)?;
         report.events.push(Event::Advisory {
             key: key.into(),
             reason: reason.into(),
@@ -367,13 +355,7 @@ impl<B: Backend> Engine<B> {
     ) -> Result<(), EngineError> {
         let mut progress = self.progress.clone();
         progress.complete_step(step.id, self.backend.timestamp());
-        self.backend
-            .persist_progress(&progress)
-            .map_err(|message| EngineError::Progress {
-                key: key.into(),
-                message,
-            })?;
-        self.progress = progress;
+        self.persist_progress(key, progress)?;
         report.events.push(Event::Complete(key.into()));
         report.completed += 1;
         Ok(())
@@ -453,13 +435,7 @@ impl<B: Backend> Engine<B> {
                 message,
             })?;
         report.events.push(Event::VerifyEvidence(key.into()));
-        self.backend
-            .verify(operation)
-            .map_err(|message| EngineError::Verify {
-                key: key.into(),
-                message,
-            })?;
-        report.events.push(Event::Verify(key.into()));
+        self.verify_operation(operation, key, report)?;
         Ok(())
     }
 
@@ -489,7 +465,7 @@ impl<B: Backend> Engine<B> {
                 key: key.into(),
                 message,
             })?;
-        report.events.push(Event::PersistAudit(key.into()));
+        report.events.push(Event::PersistAudit(String::from(key)));
         self.apply_and_verify(operation, key, report)?;
         let finalized = audit.finalized(self.backend.timestamp());
         self.backend
@@ -555,11 +531,12 @@ impl<B: Backend> Engine<B> {
             return Err(error);
         }
         let finalized = audit.finalized(self.backend.timestamp());
-        self.backend
+        let backend = &mut self.backend;
+        backend
             .finalize_irreversible_audit(&finalized)
             .map_err(|message| EngineError::AuditFinalize {
-                key: key.into(),
                 message,
+                key: key.to_owned(),
             })?;
         report.events.push(Event::FinalizeAudit(key.into()));
         Ok(())
@@ -578,6 +555,26 @@ impl<B: Backend> Engine<B> {
                 message,
             })?;
         report.events.push(Event::Apply(key.into()));
+        self.verify_operation(operation, key, report)
+    }
+
+    fn persist_progress(&mut self, key: &str, progress: Progress) -> Result<(), EngineError> {
+        self.backend
+            .persist_progress(&progress)
+            .map_err(|message| EngineError::Progress {
+                key: key.into(),
+                message,
+            })?;
+        self.progress = progress;
+        Ok(())
+    }
+
+    fn verify_operation(
+        &mut self,
+        operation: Operation,
+        key: &str,
+        report: &mut RunReport,
+    ) -> Result<(), EngineError> {
         self.backend
             .verify(operation)
             .map_err(|message| EngineError::Verify {

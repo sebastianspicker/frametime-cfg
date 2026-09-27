@@ -3,6 +3,7 @@ use frametime_app::{
     DryRunSummary, FpsCapOutcome, FpsCapStrategyLabel, HardwareDiagnosticOutcome, RunSummary,
     VerificationSummary,
 };
+use frametime_domain::fps::BenchmarkRunEvidence;
 
 pub(crate) fn dry_run(summary: DryRunSummary) {
     render_lines(&summary.lines);
@@ -20,6 +21,9 @@ pub(crate) fn fps_cap(outcome: FpsCapOutcome) {
             FpsCapStrategyLabel::VrrCeiling => "VRR ceiling",
         }
     );
+    if let Some(evidence) = &outcome.run_evidence {
+        render_run_evidence(evidence, Some(outcome.cap));
+    }
     println!(
         "Average FPS: {:.1}; P1 FPS: {:.1}; P1 ratio: {}; Runs: {}",
         outcome.capture.average_fps,
@@ -44,16 +48,45 @@ pub(crate) fn fps_cap(outcome: FpsCapOutcome) {
     }
 }
 pub(crate) fn benchmark(outcome: BenchmarkOutcome, baseline: bool) {
+    let evidence = outcome.run_evidence.as_ref();
     if let Some(receipt) = outcome.receipt {
         println!(
             "Persisted After all optimizations: Avg {:.1}; P1 {:.1}; Runs: {}; fps_max {}.",
             receipt.avg_fps, receipt.p1_fps, receipt.runs, receipt.fps_cap
         );
         println!("Final benchmark receipt: {}.", receipt.receipt_id);
+        if let Some(evidence) = evidence {
+            render_run_evidence(evidence, Some(receipt.fps_cap));
+        }
     } else if baseline {
         println!(
             "Persisted Baseline (before optimizations): Avg {:.1}; P1 {:.1}; Runs: {}.",
             outcome.capture.average_fps, outcome.capture.p1_fps, outcome.capture.runs
+        );
+        if let Some(evidence) = evidence {
+            render_run_evidence(evidence, None);
+        }
+    }
+}
+
+fn render_run_evidence(evidence: &BenchmarkRunEvidence, cap: Option<u32>) {
+    for (index, observation) in evidence.observations.iter().enumerate() {
+        println!(
+            "Run {}: Avg {}; P1 {}.",
+            index + 1,
+            observation.average_fps,
+            observation.p1_fps
+        );
+    }
+    let (minimum, maximum) = evidence.p1_range();
+    println!("P1 range: {minimum}..{maximum}.");
+    if let Some(cap) = cap {
+        println!(
+            "Runs supporting fps_max {cap}: {}/{}; failing: {}; invalid P1-above-Avg: {}.",
+            evidence.supporting_runs(cap),
+            evidence.observations.len(),
+            evidence.failing_runs(cap),
+            evidence.invalid_ordered_runs()
         );
     }
 }

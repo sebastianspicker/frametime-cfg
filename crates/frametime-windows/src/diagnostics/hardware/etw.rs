@@ -107,7 +107,7 @@ impl TraceSession {
                 self.handle,
                 &DXGKRNL_PROVIDER,
                 EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
-                TRACE_LEVEL_VERBOSE as u8,
+                u8::try_from(TRACE_LEVEL_VERBOSE).expect("TRACE_LEVEL_VERBOSE fits in u8"),
                 0,
                 0,
                 0,
@@ -186,7 +186,8 @@ impl TraceProperties {
             (*properties).MaximumBuffers = 8;
             (*properties).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
             (*properties).EnableFlags = EVENT_TRACE_FLAG(0);
-            (*properties).LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
+            (*properties).LoggerNameOffset = u32::try_from(size_of::<EVENT_TRACE_PROPERTIES>())
+                .expect("EVENT_TRACE_PROPERTIES size fits in u32");
             let destination = storage
                 .as_mut_ptr()
                 .cast::<u8>()
@@ -266,7 +267,7 @@ unsafe extern "system" fn on_event_record(record: *mut EVENT_RECORD) {
     if state.samples.len() >= MAX_SAMPLES {
         return;
     }
-    let timestamp = header.TimeStamp as u64;
+    let timestamp = header.TimeStamp.cast_unsigned();
     let previous = state.previous_present.insert(header.ProcessId, timestamp);
     let Some(previous) = previous else {
         return;

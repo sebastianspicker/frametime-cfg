@@ -124,6 +124,23 @@ pub(crate) fn validate_bounded_nvidia_authorization(
     artifact: &SignedArtifactDescriptor,
     now_utc: &str,
 ) -> Result<(), AdapterFailure> {
+    validate_nvidia_authorization_structure(authorization, artifact)?;
+    let authorized = parse_utc_seconds(&authorization.authorized_at_utc)?;
+    let expires = parse_utc_seconds(&authorization.expires_at_utc)?;
+    let now = parse_utc_seconds(now_utc)?;
+    if authorized > now || expires < now {
+        return Err(adapter(
+            "authorize NVIDIA artifact",
+            "authorization is expired or not yet valid",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_nvidia_authorization_structure(
+    authorization: &ArtifactAcquisitionAuthorization,
+    artifact: &SignedArtifactDescriptor,
+) -> Result<(), AdapterFailure> {
     if authorization.schema_version != frametime_domain::driver::SCHEMA_VERSION {
         return Err(adapter(
             "authorize NVIDIA artifact",
@@ -136,15 +153,10 @@ pub(crate) fn validate_bounded_nvidia_authorization(
         .map_err(|error| adapter("authorize NVIDIA artifact", error.to_string()))?;
     let authorized = parse_utc_seconds(&authorization.authorized_at_utc)?;
     let expires = parse_utc_seconds(&authorization.expires_at_utc)?;
-    let now = parse_utc_seconds(now_utc)?;
-    if authorized > now
-        || expires < now
-        || expires <= authorized
-        || expires - authorized > MAX_NVIDIA_AUTHORIZATION_SECONDS
-    {
+    if expires <= authorized || expires - authorized > MAX_NVIDIA_AUTHORIZATION_SECONDS {
         return Err(adapter(
             "authorize NVIDIA artifact",
-            "authorization is expired, not yet valid, or exceeds the 24-hour limit",
+            "authorization interval is invalid or exceeds the 24-hour limit",
         ));
     }
     Ok(())
@@ -191,60 +203,93 @@ pub(super) fn verify_nvidia_signature_against_policy<V: NvidiaSignatureVerifier>
 }
 
 fn parse_utc_seconds(value: &str) -> Result<i64, AdapterFailure> {
+    utc_parts_to_seconds(parse_utc_parts(value)?)
+}
+
+#[derive(Clone, Copy)]
+struct UtcParts {
+    year: i64,
+    month: i64,
+    day: i64,
+    hour: i64,
+    minute: i64,
+    second: i64,
+}
+
+fn parse_utc_parts(value: &str) -> Result<UtcParts, AdapterFailure> {
     let bytes = value.as_bytes();
-    if bytes.len() != 20
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-        || bytes[19] != b'Z'
-    {
+    if !has_utc_rfc3339_layout(bytes) {
         return Err(adapter(
             "authorize NVIDIA artifact",
             "timestamp must be UTC RFC3339",
         ));
     }
-    let number = |start: usize, end: usize| {
-        bytes[start..end]
-            .iter()
-            .try_fold(0_i64, |number, byte| match byte {
-                b'0'..=b'9' => Ok(number * 10 + i64::from(byte - b'0')),
-                _ => Err(adapter(
-                    "authorize NVIDIA artifact",
-                    "timestamp contains non-digits",
-                )),
-            })
-    };
-    let year = number(0, 4)?;
-    let month = number(5, 7)?;
-    let day = number(8, 10)?;
-    let hour = number(11, 13)?;
-    let minute = number(14, 16)?;
-    let second = number(17, 19)?;
-    let days_in_month = days_in_month(year, month).ok_or_else(|| {
+    Ok(UtcParts {
+        year: decimal_field(bytes, 0, 4)?,
+        month: decimal_field(bytes, 5, 7)?,
+        day: decimal_field(bytes, 8, 10)?,
+        hour: decimal_field(bytes, 11, 13)?,
+        minute: decimal_field(bytes, 14, 16)?,
+        second: decimal_field(bytes, 17, 19)?,
+    })
+}
+
+fn has_utc_rfc3339_layout(bytes: &[u8]) -> bool {
+    bytes.len() == 20
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes[10] == b'T'
+        && bytes[13] == b':'
+        && bytes[16] == b':'
+        && bytes[19] == b'Z'
+}
+
+fn decimal_field(bytes: &[u8], start: usize, end: usize) -> Result<i64, AdapterFailure> {
+    bytes[start..end]
+        .iter()
+        .try_fold(0_i64, |number, byte| match byte {
+            b'0'..=b'9' => Ok(number * 10 + i64::from(byte - b'0')),
+            _ => Err(adapter(
+                "authorize NVIDIA artifact",
+                "timestamp contains non-digits",
+            )),
+        })
+}
+
+fn utc_parts_to_seconds(parts: UtcParts) -> Result<i64, AdapterFailure> {
+    let month_length = days_in_month(parts.year, parts.month).ok_or_else(|| {
         adapter(
             "authorize NVIDIA artifact",
             "timestamp has an invalid calendar date",
         )
     })?;
-    if day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
+    if parts.day == 0
+        || parts.day > month_length
+        || parts.hour > 23
+        || parts.minute > 59
+        || parts.second > 59
+    {
         return Err(adapter(
             "authorize NVIDIA artifact",
             "timestamp has an invalid time",
         ));
     }
-    let completed_years = year - 1;
+    let completed_years = parts.year - 1;
     let month_days = [0_i64, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     let mut days = completed_years * 365 + completed_years / 4 - completed_years / 100
         + completed_years / 400
-        + month_days[(month - 1) as usize]
-        + day
+        + month_days[usize::try_from(parts.month - 1).map_err(|_| {
+            adapter(
+                "authorize NVIDIA artifact",
+                "timestamp month is outside the supported calendar",
+            )
+        })?]
+        + parts.day
         - 1;
-    if month > 2 && is_leap_year(year) {
+    if parts.month > 2 && is_leap_year(parts.year) {
         days += 1;
     }
-    Ok(days * 86_400 + hour * 3_600 + minute * 60 + second)
+    Ok(days * 86_400 + parts.hour * 3_600 + parts.minute * 60 + parts.second)
 }
 
 #[cfg(windows)]
@@ -303,7 +348,7 @@ fn is_leap_year(year: i64) -> bool {
 }
 
 #[cfg(windows)]
-pub(super) fn trusted_utc_timestamp() -> String {
+pub(crate) fn trusted_utc_timestamp() -> String {
     use windows::Win32::System::SystemInformation::GetSystemTime;
 
     let now = unsafe { GetSystemTime() };
@@ -314,7 +359,7 @@ pub(super) fn trusted_utc_timestamp() -> String {
 }
 
 #[cfg(not(windows))]
-pub(super) fn trusted_utc_timestamp() -> String {
+pub(crate) fn trusted_utc_timestamp() -> String {
     crate::timestamp()
 }
 

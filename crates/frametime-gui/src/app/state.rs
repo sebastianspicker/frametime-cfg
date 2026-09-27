@@ -8,16 +8,25 @@ pub(super) enum NativeOperation {
     Recovery,
     NetworkApply,
     Diagnostic,
+    FpsRead,
+    FpsSave,
 }
 
 pub(super) enum NativeWorkerResult {
     Transaction(Result<String, String>),
     Diagnostic(DiagnosticPresentation),
+    FpsRead(Result<frametime_domain::fps::ValidatedBenchmarkCapture, String>),
+    FpsSaved(Result<frametime_app::FpsCapOutcome, String>),
 }
 
 pub(super) struct AppState {
     pub(super) area: Area,
-    pub(super) nav: [HWND; 8],
+    pub(super) fps: benchmark::FpsControls,
+    pub(super) retro: retro::RetroResources,
+    pub(super) fps_session: model::fps_session::FpsSession,
+    pub(super) fps_history: bool,
+    pub(super) fps_source: String,
+    pub(super) nav: [HWND; 9],
     pub(super) heading: HWND,
     pub(super) description: HWND,
     pub(super) status: HWND,
@@ -43,13 +52,15 @@ pub(super) struct AppState {
     pub(super) video_tier: HWND,
     pub(super) cs2_cfg_asset_label: HWND,
     pub(super) cs2_cfg_asset: HWND,
-    pub(super) video_preview: model::VideoPreview,
+    pub(super) reads: model::snapshots::SnapshotWorker,
     pub(super) package: model::PackageAuthentication<frametime_app::AuthenticatedPackage>,
     pub(super) child: Option<RetainedChild>,
     pub(super) elevation_watchdog: Option<ElevationWatchdog>,
     pub(super) native_result: Option<Receiver<NativeWorkerResult>>,
     pub(super) native_operation: Option<NativeOperation>,
     pub(super) critical_operation: bool,
+    pub(super) vprof_input_state: model::VprofInputState,
+    pub(super) benchmark_preview: model::snapshots::Rows,
     pub(super) diagnostics: DiagnosticPresentation,
     pub(super) operation: OperationState,
     pub(super) last_focus: HWND,

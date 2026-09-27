@@ -9,9 +9,13 @@ pub(crate) const NVAPI_UNICODE_UNITS: usize = 2_048;
 pub(crate) const NVDRS_SETTING_BYTES: usize = 12_328;
 pub(crate) const SETTING_ID_OFFSET: usize = 4_100;
 pub(crate) const SETTING_TYPE_OFFSET: usize = 4_104;
+pub(crate) const SETTING_CURRENT_PREDEFINED_OFFSET: usize = 4_112;
 pub(crate) const SETTING_CURRENT_VALUE_OFFSET: usize = 8_224;
 
 pub(super) const NVDRS_DWORD_TYPE: u32 = 0;
+pub(super) const NVDRS_BINARY_TYPE: u32 = 1;
+pub(super) const NVDRS_WSTRING_TYPE: u32 = 3;
+pub(super) const NVDRS_QWORD_TYPE: u32 = 4;
 
 #[repr(C, align(4))]
 pub(super) struct NvDrsProfile {
@@ -73,6 +77,14 @@ impl NvDrsApplicationV4 {
         write_unicode(&mut value.application_name, name)?;
         Ok(value)
     }
+
+    pub(super) fn name(&self) -> Result<String, String> {
+        read_unicode(&self.application_name)
+    }
+
+    pub(super) const fn is_predefined(&self) -> bool {
+        self.is_predefined != 0
+    }
 }
 
 #[repr(C, align(4))]
@@ -103,6 +115,103 @@ impl NvDrsSetting {
 
     pub(super) fn current_dword(&self) -> u32 {
         self.read_u32(SETTING_CURRENT_VALUE_OFFSET)
+    }
+
+    pub(super) fn setting_id(&self) -> u32 {
+        self.read_u32(SETTING_ID_OFFSET)
+    }
+
+    pub(super) fn current_is_predefined(&self) -> bool {
+        self.read_u32(SETTING_CURRENT_PREDEFINED_OFFSET) != 0
+    }
+
+    pub(super) fn current_qword(&self) -> u64 {
+        u64::from_le_bytes(
+            self.bytes[SETTING_CURRENT_VALUE_OFFSET..SETTING_CURRENT_VALUE_OFFSET + 8]
+                .try_into()
+                .expect("eight bytes"),
+        )
+    }
+
+    pub(super) fn current_binary(&self) -> Result<Vec<u8>, String> {
+        let length = self.read_u32(SETTING_CURRENT_VALUE_OFFSET) as usize;
+        if length > 4_096 {
+            return Err("NVAPI binary setting exceeds 4 KiB".into());
+        }
+        Ok(
+            self.bytes[SETTING_CURRENT_VALUE_OFFSET + 4..SETTING_CURRENT_VALUE_OFFSET + 4 + length]
+                .to_vec(),
+        )
+    }
+
+    pub(super) fn current_wstring(&self) -> Result<String, String> {
+        let mut units = [0_u16; NVAPI_UNICODE_UNITS];
+        for (index, unit) in units.iter_mut().enumerate() {
+            let offset = SETTING_CURRENT_VALUE_OFFSET + index * 2;
+            *unit = u16::from_le_bytes([self.bytes[offset], self.bytes[offset + 1]]);
+        }
+        read_unicode(&units)
+    }
+
+    pub(super) fn typed(
+        id: u32,
+        value: &frametime_domain::driver::DrsValue,
+    ) -> Result<Self, String> {
+        let mut setting = Self::query()?;
+        setting.write_u32(SETTING_ID_OFFSET, id);
+        match value {
+            frametime_domain::driver::DrsValue::Dword(value) => {
+                setting.write_u32(SETTING_TYPE_OFFSET, NVDRS_DWORD_TYPE);
+                setting.write_u32(SETTING_CURRENT_VALUE_OFFSET, *value);
+            }
+            frametime_domain::driver::DrsValue::Qword(value) => {
+                setting.write_u32(SETTING_TYPE_OFFSET, NVDRS_QWORD_TYPE);
+                setting.bytes[SETTING_CURRENT_VALUE_OFFSET..SETTING_CURRENT_VALUE_OFFSET + 8]
+                    .copy_from_slice(&value.to_le_bytes());
+            }
+            frametime_domain::driver::DrsValue::Binary(value) => {
+                if value.len() > 4_096 {
+                    return Err("NVAPI binary setting exceeds 4 KiB".into());
+                }
+                let value_len = u32::try_from(value.len())
+                    .map_err(|_| "NVAPI binary setting length exceeds uint32")?;
+                setting.write_u32(SETTING_TYPE_OFFSET, NVDRS_BINARY_TYPE);
+                setting.write_u32(SETTING_CURRENT_VALUE_OFFSET, value_len);
+                setting.bytes[SETTING_CURRENT_VALUE_OFFSET + 4
+                    ..SETTING_CURRENT_VALUE_OFFSET + 4 + value.len()]
+                    .copy_from_slice(value);
+            }
+            frametime_domain::driver::DrsValue::String(value) => {
+                setting.write_u32(SETTING_TYPE_OFFSET, NVDRS_WSTRING_TYPE);
+                let units = value.encode_utf16().collect::<Vec<_>>();
+                if units.is_empty() || units.len() >= NVAPI_UNICODE_UNITS || units.contains(&0) {
+                    return Err("NVAPI Unicode setting is empty, embedded-NUL, or too long".into());
+                }
+                for (index, unit) in units.into_iter().enumerate() {
+                    let offset = SETTING_CURRENT_VALUE_OFFSET + index * 2;
+                    setting.bytes[offset..offset + 2].copy_from_slice(&unit.to_le_bytes());
+                }
+            }
+        }
+        Ok(setting)
+    }
+
+    pub(super) fn current_value(&self) -> Result<frametime_domain::driver::DrsValue, String> {
+        match self.setting_type() {
+            NVDRS_DWORD_TYPE => Ok(frametime_domain::driver::DrsValue::Dword(
+                self.current_dword(),
+            )),
+            NVDRS_QWORD_TYPE => Ok(frametime_domain::driver::DrsValue::Qword(
+                self.current_qword(),
+            )),
+            NVDRS_BINARY_TYPE => self
+                .current_binary()
+                .map(frametime_domain::driver::DrsValue::Binary),
+            NVDRS_WSTRING_TYPE => self
+                .current_wstring()
+                .map(frametime_domain::driver::DrsValue::String),
+            _ => Err("NVAPI returned an unsupported public DRS setting type".into()),
+        }
     }
 
     pub(crate) fn write_u32(&mut self, offset: usize, value: u32) {
@@ -180,5 +289,25 @@ mod tests {
         assert_eq!(value.read_u32(SETTING_ID_OFFSET), 0x10ab_cdef);
         assert_eq!(value.setting_type(), NVDRS_DWORD_TYPE);
         assert_eq!(value.current_dword(), 77);
+    }
+
+    #[test]
+    fn public_typed_values_round_trip_within_snapshot_bounds() {
+        use frametime_domain::driver::DrsValue;
+
+        for value in [
+            DrsValue::Dword(7),
+            DrsValue::Qword(0x0102_0304_0506_0708),
+            DrsValue::Binary(vec![1, 2, 3]),
+            DrsValue::String("latency".into()),
+        ] {
+            let setting = NvDrsSetting::typed(9, &value).unwrap();
+            assert_eq!(setting.setting_id(), 9);
+            assert_eq!(setting.current_value().unwrap(), value);
+            assert!(!setting.current_is_predefined());
+        }
+        let application = NvDrsApplicationV4::named("cs2.exe").unwrap();
+        assert_eq!(application.name().unwrap(), "cs2.exe");
+        assert!(!application.is_predefined());
     }
 }

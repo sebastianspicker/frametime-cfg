@@ -64,14 +64,7 @@ pub(crate) fn interactive_menu() -> Result<Command, AppError> {
     println!(
         "frametime.cfg\n1 Optimize\n2 Cleanup\n3 FPS cap\n4 Show log\n5 Reset progress\n6 Verify\n7 Restore\n8 Backup summary\nA Hardware assessment\nC Install packaged CS2 CFG\nS Boot Safe Mode\nP Phase 3\nD Full dry-run\n9 Exit"
     );
-    print!("Choice: ");
-    io::stdout()
-        .flush()
-        .map_err(|error| AppError::failed(error.to_string()))?;
-    let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|error| AppError::failed(error.to_string()))?;
+    let value = read_console_line("Choice: ")?;
     match value.trim().to_ascii_uppercase().as_str() {
         "1" => Ok(Command::Optimize { yes: false }),
         "2" => interactive_cleanup(),
@@ -112,14 +105,7 @@ fn interactive_cs2_cfg() -> Result<Command, AppError> {
     for (index, asset) in OptionalCfgAsset::ALL.iter().enumerate() {
         println!("{} {}", index + 1, asset.file_name());
     }
-    print!("Asset number, or 0 to cancel: ");
-    io::stdout()
-        .flush()
-        .map_err(|error| AppError::failed(error.to_string()))?;
-    let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|error| AppError::failed(error.to_string()))?;
+    let value = read_console_line("Asset number, or 0 to cancel: ")?;
     let Some(asset) = cfg_asset_menu_value(value.trim()) else {
         return if value.trim() == "0" {
             Ok(Command::Exit)
@@ -145,14 +131,7 @@ fn cfg_asset_menu_value(value: &str) -> Option<OptionalCfgAsset> {
 }
 
 fn interactive_cleanup() -> Result<Command, AppError> {
-    print!("Cleanup mode: 1 Quick, 2 Full, 3 Driver, 4 Cancel: ");
-    io::stdout()
-        .flush()
-        .map_err(|error| AppError::failed(error.to_string()))?;
-    let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|error| AppError::failed(error.to_string()))?;
+    let value = read_console_line("Cleanup mode: 1 Quick, 2 Full, 3 Driver, 4 Cancel: ")?;
     let mode = match value.trim() {
         "1" => CleanupMode::Quick,
         "2" => CleanupMode::Full,
@@ -178,14 +157,7 @@ fn interactive_cleanup() -> Result<Command, AppError> {
 }
 
 fn interactive_fps_cap() -> Result<Command, AppError> {
-    print!("Measured average FPS: ");
-    io::stdout()
-        .flush()
-        .map_err(|error| AppError::failed(error.to_string()))?;
-    let mut value = String::new();
-    io::stdin()
-        .read_line(&mut value)
-        .map_err(|error| AppError::failed(error.to_string()))?;
+    let value = read_console_line("Measured average FPS: ")?;
     let average_fps = value
         .trim()
         .parse::<f64>()
@@ -206,6 +178,14 @@ fn interactive_fps_cap() -> Result<Command, AppError> {
 }
 
 fn confirm(prompt: &str) -> Result<bool, AppError> {
+    let value = read_console_line(prompt)?;
+    Ok(matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "j" | "ja"
+    ))
+}
+
+fn read_console_line(prompt: &str) -> Result<String, AppError> {
     print!("{prompt}");
     io::stdout()
         .flush()
@@ -214,10 +194,7 @@ fn confirm(prompt: &str) -> Result<bool, AppError> {
     io::stdin()
         .read_line(&mut value)
         .map_err(|error| AppError::failed(error.to_string()))?;
-    Ok(matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes" | "j" | "ja"
-    ))
+    Ok(value)
 }
 
 #[cfg(test)]

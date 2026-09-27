@@ -174,15 +174,7 @@ impl<'a> VdfLexer<'a> {
             match byte {
                 b'"' => return Ok(result),
                 b'\\' => {
-                    let Some(escaped) = self.source.get(self.offset) else {
-                        break;
-                    };
-                    self.offset += 1;
-                    match escaped {
-                        b'"' => result.push('"'),
-                        b'\\' => result.push('\\'),
-                        _ => return Err(SteamError::InvalidVdf("unsupported VDF escape".into())),
-                    }
+                    result.push(self.escaped_char()?);
                 }
                 0 => return Err(SteamError::InvalidVdf("NUL in VDF".into())),
                 value if value.is_ascii() => result.push(char::from(value)),
@@ -194,6 +186,19 @@ impl<'a> VdfLexer<'a> {
             }
         }
         Err(SteamError::InvalidVdf("unclosed VDF string".into()))
+    }
+
+    fn escaped_char(&mut self) -> Result<char, SteamError> {
+        let escaped = self
+            .source
+            .get(self.offset)
+            .ok_or_else(|| SteamError::InvalidVdf("unclosed VDF string".into()))?;
+        self.offset += 1;
+        match escaped {
+            b'"' => Ok('"'),
+            b'\\' => Ok('\\'),
+            _ => Err(SteamError::InvalidVdf("unsupported VDF escape".into())),
+        }
     }
 }
 

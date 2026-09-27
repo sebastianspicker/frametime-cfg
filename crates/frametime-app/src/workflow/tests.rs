@@ -1,20 +1,7 @@
 use super::*;
 
 fn final_receipt() -> FinalBenchmarkReceipt {
-    FinalBenchmarkReceipt {
-        schema_version: 1,
-        receipt_id: frametime_domain::TransactionId::parse("fedcba9876543210fedcba9876543210")
-            .expect("receipt id"),
-        transaction_id: frametime_domain::TransactionId::parse("0123456789abcdef0123456789abcdef")
-            .expect("transaction id"),
-        captured_utc: "2026-08-10 12:34:56".into(),
-        avg_fps: 300.0,
-        p1_fps: 180.0,
-        runs: 3,
-        fps_cap: 270,
-        label: "After all optimizations".into(),
-        unknown: std::collections::BTreeMap::new(),
-    }
+    crate::test_support::final_benchmark_receipt()
 }
 
 fn native() -> RebootHandoffState {

@@ -113,12 +113,12 @@ pub(crate) enum Command {
         #[arg(long, required_unless_present_any = ["vprof_text", "vprof_file"], conflicts_with_all = ["vprof_text", "vprof_file"])]
         clipboard: bool,
     },
-    /// Inspect Driver Foundry domain evidence without acquiring or mutating drivers.
+    /// Inspect and operate the consolidated NVIDIA driver lifecycle.
     Driver {
         #[command(subcommand)]
         command: DriverCommand,
     },
-    /// Run bounded, native Northclock-derived hardware diagnostics.
+    /// Run bounded, native hardware diagnostics.
     Hardware {
         #[command(subcommand)]
         command: HardwareCommand,
@@ -156,20 +156,77 @@ pub(crate) enum DriverCommand {
         #[arg(long)]
         input: PathBuf,
     },
+    /// Inspect device, package, component, transaction, and profile-backup status read-only.
+    Inspect,
     /// Acquire one NVIDIA artifact from the compiled NVIDIA host policy,
     /// verify its retained file capability, and persist P1:18/P1:19 evidence.
     PrepareNvidia {
+        /// Installer on Frametime's fixed NVIDIA HTTPS authority.
+        #[arg(long, conflicts_with = "local_installer")]
+        official_url: Option<String>,
+        /// Local installer copied into the fixed trusted work root before use.
+        #[arg(long, conflicts_with = "official_url")]
+        local_installer: Option<PathBuf>,
+        #[arg(long, value_enum, default_value = "recommended")]
+        preset: NvidiaPresetValue,
+        #[arg(long, action = ArgAction::Append)]
+        select: Vec<String>,
+        #[arg(long, action = ArgAction::Append)]
+        deselect: Vec<String>,
         /// Stable label used only to identify this prepared transaction.
-        #[arg(long)]
-        artifact_id: String,
+        #[arg(long, hide = true, requires = "server_path")]
+        artifact_id: Option<String>,
         /// One safe installer leaf. It is retained only below the protected
         /// driver-artifacts directory.
-        #[arg(long)]
-        artifact_file_name: String,
+        #[arg(long, hide = true, requires = "server_path")]
+        artifact_file_name: Option<String>,
         /// Opaque slash-normalized server path below the fixed NVIDIA CDN.
-        #[arg(long)]
-        server_path: String,
+        #[arg(long, hide = true, conflicts_with_all = ["official_url", "local_installer"])]
+        server_path: Option<String>,
     },
+    /// Print the durable NVIDIA transaction status.
+    Status,
+    /// Audit and accept only the profile items rejected by the new driver.
+    ReconcileProfiles {
+        #[arg(long)]
+        accept_driver_incompatible_profile_items: bool,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Build an unqualified, export-only package using authenticated WDK tools.
+    BuildNvidiaLab {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        deep_inf: bool,
+        #[arg(long)]
+        test_certificate_sha256: String,
+        #[arg(long)]
+        acknowledge_unqualified_driver: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub(crate) enum NvidiaPresetValue {
+    Minimal,
+    Clean,
+    Recommended,
+    Notebook,
+    Gaming,
+    Full,
+}
+
+impl From<NvidiaPresetValue> for frametime_domain::driver::NvidiaComponentPreset {
+    fn from(value: NvidiaPresetValue) -> Self {
+        match value {
+            NvidiaPresetValue::Minimal => Self::Minimal,
+            NvidiaPresetValue::Clean => Self::Clean,
+            NvidiaPresetValue::Recommended => Self::Recommended,
+            NvidiaPresetValue::Notebook => Self::Notebook,
+            NvidiaPresetValue::Gaming => Self::Gaming,
+            NvidiaPresetValue::Full => Self::Full,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -310,5 +367,58 @@ mod tests {
             ]
         );
         assert!(yes);
+    }
+
+    #[test]
+    fn driver_prepare_accepts_one_source_and_repeatable_component_changes() {
+        let cli = Cli::try_parse_from([
+            "frametime",
+            "driver",
+            "prepare-nvidia",
+            "--official-url",
+            "https://international.download.nvidia.com/driver.exe",
+            "--preset",
+            "gaming",
+            "--select",
+            "Display.Optimus",
+            "--deselect",
+            "NvCpl",
+        ])
+        .expect("NVIDIA preparation command");
+        let Some(Command::Driver {
+            command:
+                DriverCommand::PrepareNvidia {
+                    official_url,
+                    local_installer,
+                    select,
+                    deselect,
+                    ..
+                },
+        }) = cli.command
+        else {
+            panic!("expected prepare-nvidia command");
+        };
+        assert!(official_url.is_some());
+        assert!(local_installer.is_none());
+        assert_eq!(select, ["Display.Optimus"]);
+        assert_eq!(deselect, ["NvCpl"]);
+    }
+
+    #[test]
+    fn lab_builder_requires_its_isolated_surface_arguments() {
+        assert!(
+            Cli::try_parse_from([
+                "frametime",
+                "driver",
+                "build-nvidia-lab",
+                "--output",
+                "lab",
+                "--deep-inf",
+                "--test-certificate-sha256",
+                &"ab".repeat(32),
+                "--acknowledge-unqualified-driver",
+            ])
+            .is_ok()
+        );
     }
 }

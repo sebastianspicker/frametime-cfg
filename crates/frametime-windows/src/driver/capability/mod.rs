@@ -12,9 +12,8 @@ use std::{
 use frametime_domain::driver::SafeModeState;
 use frametime_domain::driver::{
     AdapterFailure, ArtifactAcquisitionAuthorization, ArtifactIdentity, ArtifactLocator,
-    AuthenticodeEvidence, AuthenticodeStatus, ExactGpuIdentity, GpuVendor, InspectionAdapter,
-    InstalledArtifactObservation, OemPublishedName, PackageExecutionAdapter,
-    PackageRemovalDisposition, PackageRemovalOutcome, PublishedDriverPackage,
+    AuthenticodeEvidence, ExactGpuIdentity, GpuVendor, InspectionAdapter,
+    InstalledArtifactObservation, OemPublishedName, PublishedDriverPackage,
     SafeModeInspectionAdapter, SafeModeObservation, Sha256Digest, SignedArtifactDescriptor,
 };
 
@@ -23,8 +22,10 @@ use crate::WindowsSetupApiEnumerator;
 use crate::{PciDeviceClass, PciDeviceEnumerator, enumerate_present_status_ok_pci};
 
 const NVIDIA_SUBJECT: &str = "CN=NVIDIA Corporation";
-const MAX_NVIDIA_ARTIFACT_BYTES: usize = 2 * 1024 * 1024 * 1024;
-const DRIVER_ARTIFACTS_LEAF: &str = "driver-artifacts";
+pub(super) const MAX_NVIDIA_ARTIFACT_BYTES: usize = 2 * 1024 * 1024 * 1024;
+pub(super) const DRIVER_ARTIFACTS_LEAF: &str = "driver-artifacts";
+const NVIDIA_SIGNER_SHA256: &[&str] =
+    &["28af76241322f210da473d9569eff6f27124c4ca9f43933da547e8d068b0a95d"];
 
 #[cfg(windows)]
 mod native;
@@ -34,6 +35,43 @@ fn adapter(operation: &'static str, reason: impl Into<String>) -> AdapterFailure
         operation,
         reason: reason.into(),
     }
+}
+
+#[cfg(windows)]
+pub(crate) fn verify_microsoft_signed_tool(path: &Path) -> Result<(), AdapterFailure> {
+    native::verify_microsoft_signed_path(path)
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreparedNvidiaLaunchEvidence {
+    pub outcome: ProcessOutcome,
+    pub artifact: ArtifactIdentity,
+    pub authenticode: AuthenticodeEvidence,
+}
+
+#[cfg(windows)]
+pub(crate) fn launch_prepared_nvidia_package(
+    expected: &SignedArtifactDescriptor,
+    expected_package_sha256: &Sha256Digest,
+    observed_at_utc: &str,
+) -> Result<PreparedNvidiaLaunchEvidence, AdapterFailure> {
+    native::launch_prepared_nvidia_package(expected, expected_package_sha256, observed_at_utc)
+}
+
+#[cfg(windows)]
+pub(crate) fn verify_basic_display_fallback() -> Result<(), AdapterFailure> {
+    let path = NativeSystem32ToolRunner
+        .system32()?
+        .join("drivers")
+        .join("BasicDisplay.sys");
+    if !path.is_file() {
+        return Err(adapter(
+            "verify basic display fallback",
+            "System32 drivers contains no BasicDisplay.sys",
+        ));
+    }
+    native::verify_microsoft_signed_path(&path)
 }
 
 fn exact_gpu(
@@ -84,6 +122,7 @@ fn packages_for(
             original_inf_name: published_name.as_str().to_owned(),
             provider_name: binding.driver_provider,
             driver_version: binding.driver_version,
+            driver_store_package_sha256: None,
             extensions: BTreeMap::new(),
         };
         package
@@ -178,7 +217,11 @@ impl<E: PciDeviceEnumerator> InspectionAdapter for WindowsDriverInspection<E> {
         &self,
         target: &ExactGpuIdentity,
     ) -> Result<Vec<PublishedDriverPackage>, AdapterFailure> {
-        packages_for(self.bindings()?, target)
+        let packages = packages_for(self.bindings()?, target)?;
+        #[cfg(windows)]
+        return native::bind_driver_store_identities(packages);
+        #[cfg(not(windows))]
+        Ok(packages)
     }
 }
 /// Native Safe Mode observation with a boot-session token.  The token is not
@@ -237,26 +280,14 @@ impl System32ToolRunner for NativeSystem32ToolRunner {
     fn system32(&self) -> Result<PathBuf, AdapterFailure> {
         #[cfg(windows)]
         {
-            use std::{ffi::OsString, os::windows::ffi::OsStringExt};
-            use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
-            let mut buffer = vec![0_u16; 260];
-            loop {
-                let copied = unsafe { GetSystemDirectoryW(Some(&mut buffer)) };
-                if copied == 0 {
-                    return Err(adapter("resolve PnPUtil", "GetSystemDirectoryW failed"));
+            crate::system::platform::system_directory_with(|failure| match failure {
+                crate::system::platform::SystemDirectoryFailure::Read => {
+                    adapter("resolve PnPUtil", "GetSystemDirectoryW failed")
                 }
-                let copied = usize::try_from(copied)
-                    .map_err(|_| adapter("resolve PnPUtil", "System32 path is too large"))?;
-                if copied < buffer.len() {
-                    return Ok(PathBuf::from(OsString::from_wide(&buffer[..copied])));
+                crate::system::platform::SystemDirectoryFailure::TooLarge => {
+                    adapter("resolve PnPUtil", "System32 path is too large")
                 }
-                buffer.resize(
-                    copied
-                        .checked_add(1)
-                        .ok_or_else(|| adapter("resolve PnPUtil", "System32 path is too large"))?,
-                    0,
-                );
-            }
+            })
         }
         #[cfg(not(windows))]
         {
@@ -267,13 +298,7 @@ impl System32ToolRunner for NativeSystem32ToolRunner {
     fn run(&self, executable: &Path, argv: &[String]) -> Result<ProcessOutcome, AdapterFailure> {
         #[cfg(windows)]
         {
-            let status = std::process::Command::new(executable)
-                .args(argv)
-                .status()
-                .map_err(|e| adapter("run PnPUtil", e.to_string()))?;
-            Ok(ProcessOutcome {
-                exit_code: status.code(),
-            })
+            native::run_microsoft_signed_system_tool(executable, argv)
         }
         #[cfg(not(windows))]
         {
@@ -283,68 +308,8 @@ impl System32ToolRunner for NativeSystem32ToolRunner {
     }
 }
 
-fn pnputil_path(system32: &Path) -> Result<PathBuf, AdapterFailure> {
-    if !system32.is_absolute()
-        || system32
-            .file_name()
-            .is_none_or(|n| !n.eq_ignore_ascii_case("System32"))
-    {
-        return Err(adapter(
-            "resolve PnPUtil",
-            "trusted System32 path is not absolute",
-        ));
-    }
-    Ok(system32.join("pnputil.exe"))
-}
-
-/// Typed PnPUtil removal with the only accepted argv vector.
-pub struct PnpUtilDriverRemoval<R, E> {
-    runner: R,
-    inspection: WindowsDriverInspection<E>,
-}
-
-impl<R, E> PnpUtilDriverRemoval<R, E> {
-    #[must_use]
-    pub fn new(runner: R, inspection: WindowsDriverInspection<E>) -> Self {
-        Self { runner, inspection }
-    }
-}
-
-impl<R: System32ToolRunner, E: PciDeviceEnumerator> PackageExecutionAdapter
-    for PnpUtilDriverRemoval<R, E>
-{
-    fn remove_published_package(
-        &self,
-        _target: &ExactGpuIdentity,
-        name: &OemPublishedName,
-    ) -> Result<PackageRemovalOutcome, AdapterFailure> {
-        let executable = pnputil_path(&self.runner.system32()?)?;
-        let argv = vec![
-            "/delete-driver".into(),
-            name.as_str().into(),
-            "/uninstall".into(),
-            "/force".into(),
-        ];
-        let result = self.runner.run(&executable, &argv)?;
-        Ok(PackageRemovalOutcome {
-            published_name: name.clone(),
-            disposition: match result.exit_code {
-                Some(0) => PackageRemovalDisposition::Removed,
-                Some(_) | None => PackageRemovalDisposition::Failed {
-                    reason: "PnPUtil returned a nonzero or unavailable exit status".into(),
-                },
-            },
-            observed_at_utc: crate::timestamp(),
-        })
-    }
-
-    fn inspect_published_packages(
-        &self,
-        target: &ExactGpuIdentity,
-    ) -> Result<Vec<PublishedDriverPackage>, AdapterFailure> {
-        self.inspection.inspect_published_packages(target)
-    }
-}
+mod removal;
+pub use removal::PnpUtilDriverRemoval;
 
 /// Only NVIDIA's HTTPS download CDN is admitted.  A path is an opaque,
 /// slash-normalized server path, never a caller-provided generic URL.
@@ -395,12 +360,19 @@ impl NvidiaArtifactLocation {
 mod artifact;
 #[cfg(windows)]
 pub(crate) use artifact::authorization_expiry_after;
-pub(crate) use artifact::validate_bounded_nvidia_authorization;
+#[cfg(windows)]
+pub(crate) use artifact::trusted_utc_timestamp;
 pub use artifact::{
     DriverArtifactStore, NativeNvidiaArtifactStore, NativeNvidiaInstallerRunner,
     NativeNvidiaSignatureVerifier, NvidiaInstallerRunner, NvidiaSignatureVerifier,
     VerifiedDriverArtifact,
 };
+pub(crate) use artifact::{
+    validate_bounded_nvidia_authorization, validate_nvidia_authorization_structure,
+};
+
+mod download;
+pub use download::NvidiaArtifactAcquirer;
 
 /// Authenticated NVIDIA installer capability. It is intentionally not a
 /// generic executable launcher: the fixed argument vector is the complete
@@ -506,80 +478,5 @@ impl<R, E, V> NvidiaInstaller<R, E, V> {
             },
             fresh_authenticode,
         ))
-    }
-}
-
-const NVIDIA_SIGNER_SHA256: &[&str] =
-    &["28af76241322f210da473d9569eff6f27124c4ca9f43933da547e8d068b0a95d"];
-
-pub struct NvidiaArtifactAcquirer<S, V> {
-    store: S,
-    verifier: V,
-    location: NvidiaArtifactLocation,
-}
-impl<S, V> NvidiaArtifactAcquirer<S, V> {
-    #[must_use]
-    pub fn new(store: S, verifier: V, location: NvidiaArtifactLocation) -> Self {
-        Self {
-            store,
-            verifier,
-            location,
-        }
-    }
-}
-
-impl<S: DriverArtifactStore, V: NvidiaSignatureVerifier> NvidiaArtifactAcquirer<S, V> {
-    pub fn acquire_verified(
-        &self,
-        locator: &ArtifactLocator,
-        target: &ExactGpuIdentity,
-    ) -> Result<(VerifiedDriverArtifact, SignedArtifactDescriptor), AdapterFailure> {
-        locator
-            .validate()
-            .map_err(|e| adapter("acquire NVIDIA artifact", e.to_string()))?;
-        if target.vendor != GpuVendor::Nvidia {
-            return Err(adapter(
-                "acquire driver",
-                "AMD and Intel installation are unsupported without a signed artifact policy",
-            ));
-        }
-        self.location.validate(locator)?;
-        let protected_leaf = format!("{DRIVER_ARTIFACTS_LEAF}/{}", locator.artifact_file_name);
-        let artifact =
-            self.store
-                .acquire(&self.location, &protected_leaf, MAX_NVIDIA_ARTIFACT_BYTES)?;
-        if artifact.protected_leaf != protected_leaf
-            || artifact.length == 0
-            || artifact.length as usize > MAX_NVIDIA_ARTIFACT_BYTES
-        {
-            return Err(adapter(
-                "acquire NVIDIA artifact",
-                "artifact length is outside the bounded policy",
-            ));
-        }
-        let (subject, thumbprint) = self.verifier.verify_nvidia(&artifact)?;
-        if !artifact::accepts_compiled_nvidia_policy(&subject, &thumbprint) {
-            return Err(adapter(
-                "acquire NVIDIA artifact",
-                "WinVerifyTrust signer violates exact NVIDIA policy",
-            ));
-        }
-        let signer = Sha256Digest::parse(thumbprint.to_ascii_lowercase())
-            .map_err(|e| adapter("verify NVIDIA artifact", e.to_string()))?;
-        let descriptor = SignedArtifactDescriptor {
-            locator: locator.clone(),
-            target_gpu: target.clone(),
-            payload_sha256: artifact.payload_sha256.clone(),
-            authenticode: AuthenticodeEvidence {
-                status: AuthenticodeStatus::Valid,
-                signer_subject: subject,
-                signer_thumbprint_sha256: signer,
-                observed_at_utc: artifact::trusted_utc_timestamp(),
-                extensions: BTreeMap::new(),
-            },
-            extensions: BTreeMap::new(),
-        };
-        artifact.revalidate()?;
-        Ok((artifact, descriptor))
     }
 }

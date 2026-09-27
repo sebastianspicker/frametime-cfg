@@ -36,7 +36,7 @@ fn run_irreversible(
 fn manual_recovery_audit_is_durable_before_mutation_and_finalized_after_verify() {
     let (result, backend, progress) = run_irreversible(
         Mock {
-            manual: true,
+            recovery: MockRecovery::Manual,
             ..Mock::default()
         },
         1,
@@ -62,7 +62,7 @@ fn manual_recovery_audit_is_durable_before_mutation_and_finalized_after_verify()
 fn mixed_recovery_persists_lossless_backup_and_manual_audit_before_mutation() {
     let (result, backend, progress) = run_irreversible(
         Mock {
-            mixed: true,
+            recovery: MockRecovery::Mixed,
             ..Mock::default()
         },
         3,
@@ -93,18 +93,16 @@ fn manual_and_mixed_recovery_fault_prefixes_block_or_retain_audit_state() {
 }
 
 fn assert_pre_mutation_failures() {
-    for (manual, mixed, phase, number, failure, expected_calls) in [
+    for (recovery, phase, number, failure, expected_calls) in [
         (
-            true,
-            false,
+            MockRecovery::Manual,
             1,
             13,
             "irreversible_audit_capture",
             vec!["inspect", "irreversible_audit_capture"],
         ),
         (
-            true,
-            false,
+            MockRecovery::Manual,
             1,
             13,
             "irreversible_audit_persist",
@@ -114,26 +112,29 @@ fn assert_pre_mutation_failures() {
                 "irreversible_audit_persist",
             ],
         ),
-        (false, true, 3, 1, "backup", vec!["inspect", "backup"]),
         (
-            false,
-            true,
+            MockRecovery::Mixed,
+            3,
+            1,
+            "backup",
+            vec!["inspect", "backup"],
+        ),
+        (
+            MockRecovery::Mixed,
             3,
             1,
             "persist",
             vec!["inspect", "backup", "persist"],
         ),
         (
-            false,
-            true,
+            MockRecovery::Mixed,
             3,
             1,
             "irreversible_audit_capture",
             vec!["inspect", "backup", "persist", "irreversible_audit_capture"],
         ),
         (
-            false,
-            true,
+            MockRecovery::Mixed,
             3,
             1,
             "irreversible_audit_persist",
@@ -148,8 +149,7 @@ fn assert_pre_mutation_failures() {
     ] {
         let (result, backend, progress) = run_irreversible(
             Mock {
-                manual,
-                mixed,
+                recovery,
                 failure: Some(failure),
                 ..Mock::default()
             },
@@ -214,7 +214,7 @@ fn assert_post_mutation_failures() {
     ] {
         let (result, backend, progress) = run_irreversible(
             Mock {
-                manual: true,
+                recovery: MockRecovery::Manual,
                 fail_apply,
                 failure: Some(failure),
                 ..Mock::default()

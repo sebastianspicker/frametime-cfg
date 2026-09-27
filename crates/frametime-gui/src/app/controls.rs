@@ -7,6 +7,7 @@ pub(super) fn create_controls(
     instance: HINSTANCE,
     package: model::PackageAuthentication<frametime_app::AuthenticatedPackage>,
 ) -> windows::core::Result<()> {
+    let fps = benchmark::create(parent, instance)?;
     let nav = create_navigation(parent, instance)?;
     let standard = create_standard_controls(parent, instance)?;
     let benchmark = create_benchmark_controls(parent, instance)?;
@@ -18,6 +19,7 @@ pub(super) fn create_controls(
     install_state(
         parent,
         CreatedControls {
+            fps,
             nav,
             standard,
             benchmark,
@@ -28,7 +30,7 @@ pub(super) fn create_controls(
             table,
         },
         package,
-    );
+    )?;
     unsafe {
         SetTimer(Some(parent), POLL_TIMER, 250, None);
     }
@@ -79,7 +81,8 @@ struct Cs2CfgControls {
 }
 
 struct CreatedControls {
-    nav: [HWND; 8],
+    fps: benchmark::FpsControls,
+    nav: [HWND; 9],
     standard: StandardControls,
     benchmark: BenchmarkControls,
     preference: PreferenceControls,
@@ -89,8 +92,8 @@ struct CreatedControls {
     table: HWND,
 }
 
-fn create_navigation(parent: HWND, instance: HINSTANCE) -> windows::core::Result<[HWND; 8]> {
-    let mut nav = [HWND::default(); 8];
+fn create_navigation(parent: HWND, instance: HINSTANCE) -> windows::core::Result<[HWND; 9]> {
+    let mut nav = [HWND::default(); 9];
     for (index, area) in Area::ALL.iter().enumerate() {
         nav[index] = create_button(parent, instance, area.title(), NAV_BASE + index)?;
     }
@@ -143,7 +146,7 @@ fn create_benchmark_controls(
         parent,
         instance,
         "EDIT",
-        "Paste [VProf] FPS: Avg=…, P1=… output here",
+        "",
         WS_CHILD
             | WS_TABSTOP
             | WS_BORDER
@@ -152,6 +155,17 @@ fn create_benchmark_controls(
             | WS_VSCROLL,
         VPROF_INPUT,
     )?;
+    // Avoid EDIT's default 32,767-character truncation. The extra unit lets
+    // the application reject an over-limit value; EN_MAXTEXT rejects any
+    // paste the native control cannot retain completely.
+    unsafe {
+        SendMessageW(
+            vprof_input,
+            EM_LIMITTEXT,
+            Some(WPARAM(frametime_domain::fps::MAX_VPROF_INPUT_BYTES + 1)),
+            None,
+        );
+    }
     Ok(BenchmarkControls {
         fps_label,
         fps_input,
@@ -332,7 +346,14 @@ fn install_state(
     parent: HWND,
     controls: CreatedControls,
     package: model::PackageAuthentication<frametime_app::AuthenticatedPackage>,
-) {
+) -> windows::core::Result<()> {
+    let retro = retro::RetroResources::new(
+        parent,
+        controls.standard.heading,
+        controls.standard.status,
+        unsafe { GetDpiForWindow(parent) },
+        high_contrast_enabled(),
+    )?;
     let operation = if package.has_capability() {
         OperationState::ready(
             "Authenticated package retained. Setup, persistence, elevation, and native mutation controls are available.",
@@ -346,6 +367,11 @@ fn install_state(
     };
     let state = Box::new(CallbackState::new(AppState {
         area: Area::Overview,
+        fps: controls.fps,
+        retro,
+        fps_session: model::fps_session::FpsSession::default(),
+        fps_history: false,
+        fps_source: "Pasted text".into(),
         nav: controls.nav,
         heading: controls.standard.heading,
         description: controls.standard.description,
@@ -372,13 +398,15 @@ fn install_state(
         video_tier: controls.video.video_tier,
         cs2_cfg_asset_label: controls.cs2_cfg.cs2_cfg_asset_label,
         cs2_cfg_asset: controls.cs2_cfg.cs2_cfg_asset,
-        video_preview: model::VideoPreview::awaiting_discovery(),
+        reads: model::snapshots::SnapshotWorker::new(model::read_presentation),
         package,
         child: None,
         elevation_watchdog: None,
         native_result: None,
         native_operation: None,
         critical_operation: false,
+        benchmark_preview: Vec::new(),
+        vprof_input_state: model::VprofInputState::default(),
         diagnostics: DiagnosticPresentation::empty(),
         operation,
         last_focus: controls.standard.action,
@@ -388,9 +416,10 @@ fn install_state(
     unsafe {
         let _ = SetWindowLongPtrW(parent, GWLP_USERDATA, state as isize);
     }
+    Ok(())
 }
 
-fn create_button(
+pub(super) fn create_button(
     parent: HWND,
     instance: HINSTANCE,
     text: &str,
@@ -401,12 +430,12 @@ fn create_button(
         instance,
         "BUTTON",
         text,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_PUSHBUTTON as u32),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE((BS_PUSHBUTTON | BS_MULTILINE) as u32),
         id,
     )
 }
 
-fn create_static_text(
+pub(super) fn create_static_text(
     parent: HWND,
     instance: HINSTANCE,
     text: &str,
@@ -423,11 +452,21 @@ pub(super) fn create_text_control(
     style: WINDOW_STYLE,
     id: usize,
 ) -> windows::core::Result<HWND> {
+    let ex_style = if class == "EDIT" {
+        WS_EX_CLIENTEDGE
+    } else {
+        WINDOW_EX_STYLE::default()
+    };
+    let style = if class == "EDIT" {
+        style & !WS_BORDER
+    } else {
+        style
+    };
     let class = utf16(class);
     let text = utf16(text);
     unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
+            ex_style,
             PCWSTR(class.as_ptr()),
             PCWSTR(text.as_ptr()),
             style,
@@ -500,60 +539,5 @@ pub(super) fn set_text(handle: HWND, text: &str) {
     let text = utf16(text);
     unsafe {
         SetWindowTextW(handle, PCWSTR(text.as_ptr())).expect("standard control");
-    }
-}
-
-pub(super) fn insert_columns(table: HWND) {
-    for (index, (title, width)) in [("Item", 220), ("Value", 270), ("State", 250)]
-        .iter()
-        .enumerate()
-    {
-        let title = utf16(title);
-        let mut column = LVCOLUMNW {
-            mask: LVCF_TEXT | LVCF_WIDTH,
-            cx: *width,
-            pszText: windows::core::PWSTR(title.as_ptr().cast_mut()),
-            ..Default::default()
-        };
-        unsafe {
-            SendMessageW(
-                table,
-                LVM_INSERTCOLUMNW,
-                Some(WPARAM(index)),
-                Some(LPARAM(
-                    (&mut column as *mut LVCOLUMNW).cast::<c_void>() as isize
-                )),
-            );
-        }
-    }
-}
-pub(super) fn populate_table(table: HWND, rows: &[(&str, &str, &str)]) {
-    unsafe {
-        SendMessageW(table, LVM_DELETEALLITEMS, Some(WPARAM(0)), Some(LPARAM(0)));
-    }
-    for (row_index, row) in rows.iter().enumerate() {
-        for (column_index, value) in [row.0, row.1, row.2].iter().enumerate() {
-            let value = utf16(value);
-            let mut item = LVITEMW {
-                mask: LVIF_TEXT,
-                iItem: row_index as i32,
-                iSubItem: column_index as i32,
-                pszText: windows::core::PWSTR(value.as_ptr().cast_mut()),
-                ..Default::default()
-            };
-            let message = if column_index == 0 {
-                LVM_INSERTITEMW
-            } else {
-                LVM_SETITEMTEXTW
-            };
-            unsafe {
-                SendMessageW(
-                    table,
-                    message,
-                    Some(WPARAM(row_index)),
-                    Some(LPARAM((&mut item as *mut LVITEMW).cast::<c_void>() as isize)),
-                );
-            }
-        }
     }
 }

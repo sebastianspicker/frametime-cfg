@@ -49,6 +49,7 @@ fn record(value: usize) -> BenchmarkRecord {
         p1_fps: value as f64 / 2.0,
         label: "test".into(),
         runs: 1,
+        run_evidence: None,
         receipt_id: None,
         transaction_id: None,
         unknown: BTreeMap::new(),
@@ -82,6 +83,33 @@ fn singleton_object_is_normalized_to_history_array() {
 }
 
 #[test]
+fn checked_history_decode_rejects_malformed_or_incoherent_run_evidence() {
+    let malformed = serde_json::json!([{
+        "timestamp": "2026-08-10 12:34:56",
+        "avgFps": 300.0,
+        "p1Fps": 180.0,
+        "label": "test",
+        "runs": 1,
+        "runEvidence": "wrong type"
+    }]);
+    assert!(decode_benchmark_history_checked(malformed.clone()).is_err());
+    assert!(decode_benchmark_history(malformed).is_empty());
+
+    let incoherent = serde_json::json!([{
+        "timestamp": "2026-08-10 12:34:56",
+        "avgFps": 300.0,
+        "p1Fps": 180.0,
+        "label": "test",
+        "runs": 1,
+        "runEvidence": {
+            "schemaVersion": 1,
+            "observations": [{"averageFps": 300.0, "p1Fps": 179.0}]
+        }
+    }]);
+    assert!(decode_benchmark_history_checked(incoherent).is_err());
+}
+
+#[test]
 fn final_receipt_requires_a_complete_vprof_capture_and_fixed_identity() {
     let receipt_id = TransactionId::parse("fedcba9876543210fedcba9876543210").expect("receipt id");
     let transaction_id = TransactionId::parse(ID).expect("transaction id");
@@ -104,6 +132,7 @@ fn final_receipt_requires_a_complete_vprof_capture_and_fixed_identity() {
         p1_fps: receipt.p1_fps,
         label: receipt.label.clone(),
         runs: receipt.runs,
+        run_evidence: receipt.run_evidence.clone(),
         receipt_id: Some(receipt.receipt_id.clone()),
         transaction_id: Some(receipt.transaction_id.clone()),
         unknown: BTreeMap::new(),
@@ -212,6 +241,60 @@ fn baseline_retry_reconciles_only_an_exact_history_prefix() {
 }
 
 #[test]
+fn baseline_evidence_is_persisted_and_retried_in_exact_order() {
+    let evidence = BenchmarkRunEvidence::new(vec![
+        crate::fps::BenchmarkObservation {
+            average_fps: 240.01,
+            p1_fps: 120.01,
+        },
+        crate::fps::BenchmarkObservation {
+            average_fps: 239.99,
+            p1_fps: 119.99,
+        },
+    ])
+    .expect("run evidence");
+    let capture = ValidatedBenchmarkCapture::new(evidence).expect("validated capture");
+    let first = prepare_baseline_benchmark_commit_with_evidence(
+        &State::default(),
+        &Progress::default(),
+        &[],
+        "2026-08-10 12:34:56".into(),
+        &capture,
+    )
+    .expect("baseline commit");
+    assert_eq!(
+        first.history[0].run_evidence.as_ref(),
+        Some(capture.run_evidence())
+    );
+    let retry = prepare_baseline_benchmark_commit_with_evidence(
+        &State::default(),
+        &Progress::default(),
+        &first.history,
+        "2026-08-10 12:35:56".into(),
+        &capture,
+    )
+    .expect("exact retry");
+    assert_eq!(retry.history, first.history);
+
+    let mut reversed = capture.observations().to_vec();
+    reversed.reverse();
+    let reversed = ValidatedBenchmarkCapture::new(
+        BenchmarkRunEvidence::new(reversed).expect("reversed evidence"),
+    )
+    .expect("reversed capture");
+    assert!(
+        prepare_baseline_benchmark_commit_with_evidence(
+            &State::default(),
+            &Progress::default(),
+            &first.history,
+            "2026-08-10 12:35:56".into(),
+            &reversed,
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn baseline_rejects_skipped_or_incomplete_capture() {
     let mut skipped = Progress::default();
     skipped.skip(1, 17);
@@ -282,6 +365,73 @@ fn final_commit_is_transaction_bound_and_completes_one_coherent_bundle() {
     assert_eq!(
         validate_persisted_final_benchmark(&commit.state, &commit.progress, &commit.history),
         Ok(commit.receipt)
+    );
+}
+
+#[test]
+fn new_nonzero_final_cap_requires_every_unrounded_run() {
+    let mut config = checked_config();
+    config.fps_cap.measured_cap = 180;
+    let aggregate_only = BenchmarkCapture {
+        average_fps: 600.0,
+        p1_fps: 200.0,
+        runs: 5,
+    };
+    let error = prepare_final_benchmark_commit(
+        &armed_state(),
+        &progress_before_final_benchmark(),
+        &[],
+        &config,
+        TransactionId::parse(RECEIPT_ID).expect("receipt id"),
+        "2026-08-10 12:34:56".into(),
+        aggregate_only,
+    )
+    .expect_err("aggregate-only capture must not authorize a new cap");
+    assert!(error.contains("aggregate-only legacy benchmark data"));
+
+    let evidence = BenchmarkRunEvidence::new(
+        [100.0, 100.0, 100.0, 100.0, 600.0]
+            .into_iter()
+            .map(|p1_fps| crate::fps::BenchmarkObservation {
+                average_fps: 600.0,
+                p1_fps,
+            })
+            .collect(),
+    )
+    .expect("evidence");
+    let capture = ValidatedBenchmarkCapture::new(evidence).expect("validated capture");
+    let error = prepare_final_benchmark_commit_with_evidence(
+        &armed_state(),
+        &progress_before_final_benchmark(),
+        &[],
+        &config,
+        TransactionId::parse(RECEIPT_ID).expect("receipt id"),
+        "2026-08-10 12:34:56".into(),
+        &capture,
+    )
+    .expect_err("four failing runs must reject the cap");
+    assert!(error.contains("4 failing runs among 5 valid runs"));
+}
+
+#[test]
+fn legacy_retry_requires_an_actual_persisted_prefix() {
+    let mut config = checked_config();
+    config.fps_cap.measured_cap = 180;
+    let error = prepare_final_benchmark_legacy_retry(
+        &armed_state(),
+        &progress_before_final_benchmark(),
+        &[],
+        &config,
+        BenchmarkCapture {
+            average_fps: 300.0,
+            p1_fps: 200.0,
+            runs: 5,
+        },
+    )
+    .expect_err("fresh state is not a legacy retry");
+    assert_eq!(
+        error,
+        "legacy final benchmark retry requires an existing persisted prefix"
     );
 }
 

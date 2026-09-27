@@ -22,6 +22,7 @@ pub(crate) mod services;
 #[cfg(windows)]
 pub(crate) mod shader_cache;
 mod steam_discovery;
+mod trusted_path;
 pub(crate) mod wmi;
 
 pub(crate) use cs2::*;

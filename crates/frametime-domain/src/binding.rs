@@ -220,8 +220,20 @@ fn require_text(value: &str, field: &'static str) -> Result<(), BindingError> {
 }
 
 fn require_guid(value: &str, field: &'static str) -> Result<(), BindingError> {
+    if is_canonical_braced_guid(value) {
+        Ok(())
+    } else {
+        Err(BindingError::InvalidGuid(field))
+    }
+}
+
+/// Returns whether `value` is the canonical braced form used by Windows
+/// device and network binding identities.
+#[doc(hidden)]
+#[must_use]
+pub fn is_canonical_braced_guid(value: &str) -> bool {
     let bytes = value.as_bytes();
-    if bytes.len() == 38
+    bytes.len() == 38
         && bytes.first() == Some(&b'{')
         && bytes.last() == Some(&b'}')
         && [9, 14, 19, 24].iter().all(|index| bytes[*index] == b'-')
@@ -229,11 +241,6 @@ fn require_guid(value: &str, field: &'static str) -> Result<(), BindingError> {
             .iter()
             .enumerate()
             .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
-    {
-        Ok(())
-    } else {
-        Err(BindingError::InvalidGuid(field))
-    }
 }
 
 fn require_inf_leaf(value: &str, field: &'static str) -> Result<(), BindingError> {
@@ -381,5 +388,21 @@ mod tests {
         adapter.validate().expect("adapter binding");
         adapter.interface_guid = "{bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee}".into();
         assert_eq!(adapter.validate(), Err(BindingError::AdapterGuidMismatch));
+    }
+
+    #[test]
+    fn canonical_braced_guid_requires_exact_structure() {
+        assert!(is_canonical_braced_guid(
+            "{01234567-89ab-cdef-0123-456789abcdef}"
+        ));
+        assert!(is_canonical_braced_guid(
+            "{01234567-89AB-CDEF-0123-456789ABCDEF}"
+        ));
+        assert!(!is_canonical_braced_guid(
+            "01234567-89ab-cdef-0123-456789abcdef"
+        ));
+        assert!(!is_canonical_braced_guid(
+            "{01234567-89ab-cdef-0123-456789abcdeg}"
+        ));
     }
 }

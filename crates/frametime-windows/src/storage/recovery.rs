@@ -1,4 +1,9 @@
 use crate::*;
+mod power_plan;
+
+use power_plan::restore_power_plan;
+pub(crate) use power_plan::validate_power_plan_guid;
+
 pub(crate) struct RegistryRestore<'a> {
     pub(crate) step: &'a str,
     pub(crate) path: &'a str,
@@ -137,99 +142,148 @@ pub(crate) fn restore_service_entry(entry: &BackupEntry) -> Result<(), String> {
 }
 pub(crate) fn restore_registry(restore: RegistryRestore<'_>) -> Result<(), String> {
     let (hive, key) = parse_registry_path(restore.path)?;
+    let identity = RegistryIdentity {
+        hive,
+        key,
+        name: restore.name,
+    };
+    let autostart_restore = validate_registry_restore_request(&restore, identity)?;
+    if !restore.existed {
+        return delete_registry_restore_value(identity);
+    }
+    let change = registry_change(identity, registry_value_from_backup(&restore)?);
+    registry_write(&change)?;
+    verify_registry_restore_readback(&change, restore.step, autostart_restore)
+}
+
+#[derive(Clone, Copy)]
+struct RegistryIdentity<'a> {
+    hive: Hive,
+    key: &'a str,
+    name: &'a str,
+}
+
+fn validate_registry_restore_request(
+    restore: &RegistryRestore<'_>,
+    identity: RegistryIdentity<'_>,
+) -> Result<bool, String> {
     let autostart_restore = restore.step == "P1:14";
     if restore.step == "P1:25" {
-        if hive != Hive::LocalMachine {
+        if identity.hive != Hive::LocalMachine {
             return Err("Nagle restore hive is not allowlisted".into());
         }
-        validate_nagle_restore_binding(key, restore.name, restore.unknown)?;
+        validate_nagle_restore_binding(identity.key, identity.name, restore.unknown)?;
     } else if matches!(restore.step, "P1:4" | "P1:30") {
-        if hive != Hive::CurrentUser {
+        if identity.hive != Hive::CurrentUser {
             return Err("CS2 registry restore hive is not allowlisted".into());
         }
-        validate_cs2_restore_binding(restore.step, key, restore.name, restore.unknown)?;
+        validate_cs2_restore_binding(restore.step, identity.key, identity.name, restore.unknown)?;
     } else if restore.step == "P1:14" {
         if !restore.existed || !restore.unknown.is_empty() {
             return Err("P1:14 backup is not an exact captured Run value".into());
         }
-        validate_autostart_restore_binding(restore.config, hive, key, restore.name)?;
+        validate_autostart_restore_binding(
+            restore.config,
+            identity.hive,
+            identity.key,
+            identity.name,
+        )?;
     } else if restore.step == "P1:13" {
         if !restore.unknown.is_empty() {
             return Err("P1:13 registry backup has unrecognized fields".into());
         }
-        validate_debloat_policy_restore(hive, key, restore.name)?;
+        validate_debloat_policy_restore(identity.hive, identity.key, identity.name)?;
     } else if restore.step == "P3:10" {
         if !restore.unknown.is_empty() {
             return Err("P3:10 backup has unrecognized fields".into());
         }
-        validate_process_priority_restore_binding(hive, key, restore.name)?;
+        validate_process_priority_restore_binding(identity.hive, identity.key, identity.name)?;
     } else {
-        validate_registry_restore_binding(restore.step, hive, key, restore.name)?;
+        validate_registry_restore_binding(
+            restore.step,
+            identity.hive,
+            identity.key,
+            identity.name,
+        )?;
     }
-    if !restore.existed {
-        registry_delete(hive, key, restore.name)?;
-        let probe = RegistryChange {
-            hive,
-            key: Box::leak(key.to_owned().into_boxed_str()),
-            name: Box::leak(restore.name.to_owned().into_boxed_str()),
-            value: RegValue::Dword(0),
-        };
-        return if registry_read_exact(&probe)?.is_none() {
-            Ok(())
-        } else {
-            Err("registry value remains after restore deletion".into())
-        };
+    Ok(autostart_restore)
+}
+
+fn delete_registry_restore_value(identity: RegistryIdentity<'_>) -> Result<(), String> {
+    registry_delete(identity.hive, identity.key, identity.name)?;
+    if registry_read_exact(&registry_change(identity, RegValue::Dword(0)))?.is_none() {
+        Ok(())
+    } else {
+        Err("registry value remains after restore deletion".into())
     }
-    let value = match restore
-        .original_type
-        .as_deref()
-        .ok_or("existing registry backup has no value type")?
-    {
-        "DWord" | "DWORD" => RegValue::Dword(
-            u32::try_from(
+}
+
+fn registry_value_from_backup(restore: &RegistryRestore<'_>) -> Result<RegValue, String> {
+    Ok(
+        match restore
+            .original_type
+            .as_deref()
+            .ok_or("existing registry backup has no value type")?
+        {
+            "DWord" | "DWORD" => RegValue::Dword(
+                u32::try_from(
+                    restore
+                        .value
+                        .as_u64()
+                        .ok_or("invalid registry DWORD backup")?,
+                )
+                .map_err(|_| "registry DWORD exceeds u32")?,
+            ),
+            "String" | "REG_SZ" => RegValue::String(Box::leak(
                 restore
                     .value
-                    .as_u64()
-                    .ok_or("invalid registry DWORD backup")?,
-            )
-            .map_err(|_| "registry DWORD exceeds u32")?,
-        ),
-        "String" | "REG_SZ" => RegValue::String(Box::leak(
-            restore
-                .value
-                .as_str()
-                .ok_or("invalid registry string backup")?
-                .to_owned()
-                .into_boxed_str(),
-        )),
-        "Binary" | "REG_BINARY" => RegValue::Binary(Box::leak(
-            restore
-                .value
-                .as_array()
-                .ok_or("invalid registry binary backup")?
-                .iter()
-                .map(|item| {
-                    u8::try_from(item.as_u64().ok_or("invalid registry binary byte")?)
-                        .map_err(|_| "registry binary byte exceeds u8")
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_boxed_slice(),
-        )),
-        _ => return Err("unsupported registry value type retained".into()),
-    };
-    let change = RegistryChange {
-        hive,
-        key: Box::leak(key.to_owned().into_boxed_str()),
-        name: Box::leak(restore.name.to_owned().into_boxed_str()),
+                    .as_str()
+                    .ok_or("invalid registry string backup")?
+                    .to_owned()
+                    .into_boxed_str(),
+            )),
+            "Binary" | "REG_BINARY" => RegValue::Binary(Box::leak(
+                restore
+                    .value
+                    .as_array()
+                    .ok_or("invalid registry binary backup")?
+                    .iter()
+                    .map(|item| {
+                        u8::try_from(item.as_u64().ok_or("invalid registry binary byte")?)
+                            .map_err(|_| "registry binary byte exceeds u8")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_boxed_slice(),
+            )),
+            _ => return Err("unsupported registry value type retained".into()),
+        },
+    )
+}
+
+fn registry_change(identity: RegistryIdentity<'_>, value: RegValue) -> RegistryChange {
+    RegistryChange {
+        hive: identity.hive,
+        key: Box::leak(identity.key.to_owned().into_boxed_str()),
+        name: Box::leak(identity.name.to_owned().into_boxed_str()),
         value,
-    };
-    registry_write(&change)?;
-    if (autostart_restore || matches!(restore.step, "P1:13" | "P3:7" | "P3:10"))
-        && registry_read_exact(&change)?.as_ref() != Some(&change.value)
+    }
+}
+
+fn verify_registry_restore_readback(
+    change: &RegistryChange,
+    step: &str,
+    autostart_restore: bool,
+) -> Result<(), String> {
+    if requires_registry_restore_readback(step, autostart_restore)
+        && registry_read_exact(change)?.as_ref() != Some(&change.value)
     {
         return Err("registry restore readback did not match the captured value".into());
     }
     Ok(())
+}
+
+fn requires_registry_restore_readback(step: &str, autostart_restore: bool) -> bool {
+    autostart_restore || matches!(step, "P1:13" | "P3:7" | "P3:10")
 }
 pub(crate) fn restore_boot(
     step: &str,
@@ -449,131 +503,49 @@ pub(crate) fn restore_debloat_task(
     script_path: &Option<String>,
     unknown: &BTreeMap<String, Value>,
 ) -> Result<(), String> {
-    if step != "P1:13"
-        || !unknown.is_empty()
-        || script_path.is_some()
-        || !matches!(
-            path,
-            r"\Microsoft\Windows\Application Experience\"
-                | r"\Microsoft\Windows\Customer Experience Improvement Program\"
-        )
-        || name.is_empty()
-        || name.contains(['\\', '/', '\0'])
+    let restore = DebloatTaskRestore {
+        step,
+        name,
+        path,
+        existed,
+        enabled,
+        script_path,
+        unknown,
+    };
+    validate_debloat_task_restore(&restore)?;
+    native_task_scheduler::restore(restore.name, restore.path, restore.existed, restore.enabled)
+}
+
+struct DebloatTaskRestore<'a> {
+    step: &'a str,
+    name: &'a str,
+    path: &'a str,
+    existed: bool,
+    enabled: bool,
+    script_path: &'a Option<String>,
+    unknown: &'a BTreeMap<String, Value>,
+}
+
+fn validate_debloat_task_restore(restore: &DebloatTaskRestore<'_>) -> Result<(), String> {
+    if restore.step != "P1:13"
+        || !restore.unknown.is_empty()
+        || restore.script_path.is_some()
+        || !is_debloat_task_path(restore.path)
+        || !is_debloat_task_name(restore.name)
     {
         return Err("P1:13 scheduled-task restore is not an exact captured identity".into());
-    }
-    native_task_scheduler::restore(name, path, existed, enabled)
-}
-pub(crate) fn validate_power_plan_guid(value: &str) -> Result<(), String> {
-    if value.len() == 36
-        && value.chars().enumerate().all(|(index, character)| {
-            matches!(index, 8 | 13 | 18 | 23) && character == '-' || character.is_ascii_hexdigit()
-        })
-    {
-        Ok(())
-    } else {
-        Err("power-plan GUID is not allowlisted".into())
-    }
-}
-
-const SUITE_POWER_PLAN_NAME: &str = "frametime.cfg";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ActivePowerPlan {
-    guid: String,
-    name: String,
-}
-
-fn parse_power_plan_line(line: &str) -> Option<ActivePowerPlan> {
-    let raw_guid = line
-        .split(|character: char| !character.is_ascii_hexdigit() && character != '-')
-        .find(|candidate| validate_power_plan_guid(candidate).is_ok())?;
-    let guid = raw_guid.to_ascii_lowercase();
-    let tail = line
-        .get(line.find(raw_guid)? + raw_guid.len()..)?
-        .trim()
-        .trim_end_matches('*')
-        .trim();
-    let name = tail.strip_prefix('(')?.strip_suffix(')')?.trim();
-    (!name.is_empty()).then(|| ActivePowerPlan {
-        guid,
-        name: name.into(),
-    })
-}
-
-fn find_power_guid(text: &str) -> Option<String> {
-    text.split(|character: char| !character.is_ascii_hexdigit() && character != '-')
-        .find(|candidate| validate_power_plan_guid(candidate).is_ok())
-        .map(|value| value.to_ascii_lowercase())
-}
-
-fn parse_active_power_plan(text: &str) -> Result<ActivePowerPlan, String> {
-    let plans = text
-        .lines()
-        .filter_map(parse_power_plan_line)
-        .collect::<Vec<_>>();
-    match plans.as_slice() {
-        [plan] => Ok(plan.clone()),
-        [] => Err("powercfg active-plan output has no exact GUID/name pair".into()),
-        _ => Err("powercfg active-plan output has ambiguous GUID/name pairs".into()),
-    }
-}
-
-fn restore_power_plan(
-    step: &str,
-    original_guid: &str,
-    suite_owned_guids: &[String],
-    unknown: &BTreeMap<String, Value>,
-) -> Result<(), String> {
-    if step != "P1:6" || !unknown.is_empty() || validate_power_plan_guid(original_guid).is_err() {
-        return Err("power-plan restore binding is not exact".into());
-    }
-    if suite_owned_guids.is_empty()
-        || suite_owned_guids.iter().any(|guid| {
-            validate_power_plan_guid(guid).is_err() || guid.eq_ignore_ascii_case(original_guid)
-        })
-        || suite_owned_guids.iter().enumerate().any(|(index, guid)| {
-            suite_owned_guids[..index]
-                .iter()
-                .any(|previous| previous.eq_ignore_ascii_case(guid))
-        })
-    {
-        return Err("power-plan recovery identities are not exact".into());
-    }
-    powercfg(&["/setactive", original_guid])?;
-    if parse_active_power_plan(&powercfg(&["/getactivescheme"])?)?.guid != original_guid {
-        return Err("original power-plan readback did not match".into());
-    }
-    for suite_guid in suite_owned_guids {
-        let plans = powercfg(&["/list"])?;
-        let known = plans
-            .lines()
-            .filter_map(parse_power_plan_line)
-            .find(|plan| plan.guid == *suite_guid);
-        let Some(plan) = known else {
-            continue;
-        };
-        if plan.name != SUITE_POWER_PLAN_NAME {
-            return Err("suite power-plan provenance is no longer exact".into());
-        }
-        powercfg(&["/delete", suite_guid])?;
-        if powercfg(&["/list"])?
-            .lines()
-            .filter_map(find_power_guid)
-            .any(|guid| guid == *suite_guid)
-        {
-            return Err("suite power-plan remains after deletion".into());
-        }
     }
     Ok(())
 }
 
-#[cfg(windows)]
-fn powercfg(arguments: &[&str]) -> Result<String, String> {
-    CommandVector::new(CommandName::Powercfg, arguments)?.run()
+fn is_debloat_task_path(path: &str) -> bool {
+    matches!(
+        path,
+        r"\Microsoft\Windows\Application Experience\"
+            | r"\Microsoft\Windows\Customer Experience Improvement Program\"
+    )
 }
 
-#[cfg(not(windows))]
-fn powercfg(_: &[&str]) -> Result<String, String> {
-    Err("the live backend is supported only on Windows".into())
+fn is_debloat_task_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['\\', '/', '\0'])
 }

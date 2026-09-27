@@ -137,96 +137,144 @@ pub fn authorize(
     facts: PhaseFacts,
 ) -> Result<Transition, GuardError> {
     match request {
-        PhaseRequest::Optimize => {
-            require_boot(request, BootEnvironment::Normal, facts.boot)?;
-            require_clean_reboot_state(facts.handoff)?;
-            if has_phase(progress, Phase::Two) || has_phase(progress, Phase::Three) {
-                return Err(GuardError::PhaseOneCannotResumeLaterPhase);
-            }
-            Ok(Transition::RunPhaseOne)
-        }
-        PhaseRequest::ArmSafeMode => {
-            require_boot(request, BootEnvironment::Normal, facts.boot)?;
-            require_resolved_phase_one(progress)?;
-            require_runtime(facts.runtime)?;
-            if state.active_reboot_transaction.is_some() {
-                return Err(GuardError::ActiveRebootTransactionPresent);
-            }
-            // A stale state flag is not sufficient: the adapter must establish
-            // this transition together with the selected runtime handoff.
-            Ok(Transition::ArmSafeMode {
-                requires_readiness_transition: true,
-            })
-        }
-        PhaseRequest::PhaseTwo => {
-            require_boot(request, BootEnvironment::SafeMode, facts.boot)?;
-            require_runtime(facts.runtime)?;
-            if !state.phase1_safe_mode_ready || !facts.phase_one_safe_mode_ready {
-                return Err(GuardError::SafeModeReadinessNotPersisted);
-            }
-            require_phase_two_handoff(facts.handoff.phase_two_run_once)?;
-            require_completed(progress, PHASE_ONE_SAFE_MODE_HANDOFF)
-                .map_err(|_| GuardError::MissingPhaseOneHandoffCompletion)?;
-            if progress.is_skipped(PHASE_TWO_SAFE_BOOT_CLEAR) {
-                return Err(GuardError::PhaseTwoSafeBootClearWasSkipped);
-            }
-            if progress.is_completed(PHASE_TWO_SAFE_BOOT_CLEAR) {
-                require_transaction_stage(state, RebootStage::PhaseTwoSafeMode)?;
-                require_safe_boot_absent(facts.handoff.safe_boot)?;
-                Ok(Transition::RunRemainingPhaseTwo)
-            } else if has_phase_two_later_step(progress) {
-                Err(GuardError::PhaseTwoSafeBootClearNotCompleted)
-            } else {
-                require_transaction_stage(state, RebootStage::PhaseOneSafeModeArmed)?;
-                require_safe_boot_present(facts.handoff.safe_boot)?;
-                Ok(Transition::RunPhaseTwoStepOne)
-            }
-        }
-        PhaseRequest::PhaseThree => {
-            require_boot(request, BootEnvironment::Normal, facts.boot)?;
-            require_runtime(facts.runtime)?;
-            require_transaction_stage(state, RebootStage::PhaseThreeArmed)?;
-            require_phase_three_handoff(facts.handoff.phase_three_run)?;
-            require_same_user(facts.handoff.phase_three_same_user)?;
-            for step in step_catalog()
-                .iter()
-                .filter(|step| step.id.phase == Phase::Two)
-            {
-                require_completed(progress, step.id)
-                    .map_err(|_| GuardError::MissingCompletedPhaseTwoStep(step.id.number))?;
-            }
-            Ok(Transition::RunPhaseThree)
-        }
-        PhaseRequest::FinalBenchmark => {
-            require_boot(request, BootEnvironment::Normal, facts.boot)?;
-            require_runtime(facts.runtime)?;
-            require_final_benchmark_transaction(state)?;
-            require_phase_three_handoff(facts.handoff.phase_three_run)?;
-            require_same_user(facts.handoff.phase_three_same_user)?;
-            for step in step_catalog()
-                .iter()
-                .filter(|step| step.id.phase == Phase::Two)
-            {
-                require_completed(progress, step.id)
-                    .map_err(|_| GuardError::MissingCompletedPhaseTwoStep(step.id.number))?;
-            }
-            Ok(Transition::PersistFinalBenchmark)
-        }
+        PhaseRequest::Optimize => authorize_optimize(progress, facts),
+        PhaseRequest::ArmSafeMode => authorize_safe_mode_arm(state, progress, facts),
+        PhaseRequest::PhaseTwo => authorize_phase_two(state, progress, facts),
+        PhaseRequest::PhaseThree => authorize_phase_three(state, progress, facts),
+        PhaseRequest::FinalBenchmark => authorize_final_benchmark(state, progress, facts),
         PhaseRequest::ClearPhaseThreeHandoff => {
-            require_transaction_stage(state, RebootStage::PhaseThreeComplete)?;
-            require_phase_three_handoff(facts.handoff.phase_three_run)?;
-            require_same_user(facts.handoff.phase_three_same_user)?;
-            require_completed(progress, PHASE_THREE_DRIVER_INSTALL)
-                .map_err(|_| GuardError::PhaseThreeHandoffMustRemain)?;
-            require_completed(progress, PHASE_THREE_FINAL_BENCHMARK)
-                .map_err(|_| GuardError::PhaseThreeHandoffMustRemain)?;
-            match facts.final_benchmark_persisted {
-                Evidence::Verified => Ok(Transition::ClearPhaseThreeHandoff),
-                Evidence::Absent => Err(GuardError::FinalBenchmarkNotPersisted),
-                Evidence::Unavailable => Err(GuardError::FinalBenchmarkPersistenceUnavailable),
-            }
+            authorize_phase_three_handoff_clear(state, progress, facts)
         }
     }
+}
+
+fn authorize_optimize(progress: &Progress, facts: PhaseFacts) -> Result<Transition, GuardError> {
+    require_boot(PhaseRequest::Optimize, BootEnvironment::Normal, facts.boot)?;
+    require_clean_reboot_state(facts.handoff)?;
+    if has_phase(progress, Phase::Two) || has_phase(progress, Phase::Three) {
+        return Err(GuardError::PhaseOneCannotResumeLaterPhase);
+    }
+    Ok(Transition::RunPhaseOne)
+}
+
+fn authorize_safe_mode_arm(
+    state: &State,
+    progress: &Progress,
+    facts: PhaseFacts,
+) -> Result<Transition, GuardError> {
+    require_boot(
+        PhaseRequest::ArmSafeMode,
+        BootEnvironment::Normal,
+        facts.boot,
+    )?;
+    require_resolved_phase_one(progress)?;
+    require_runtime(facts.runtime)?;
+    if state.active_reboot_transaction.is_some() {
+        return Err(GuardError::ActiveRebootTransactionPresent);
+    }
+    Ok(Transition::ArmSafeMode {
+        requires_readiness_transition: true,
+    })
+}
+
+fn authorize_phase_two(
+    state: &State,
+    progress: &Progress,
+    facts: PhaseFacts,
+) -> Result<Transition, GuardError> {
+    require_boot(
+        PhaseRequest::PhaseTwo,
+        BootEnvironment::SafeMode,
+        facts.boot,
+    )?;
+    require_runtime(facts.runtime)?;
+    if !state.phase1_safe_mode_ready || !facts.phase_one_safe_mode_ready {
+        return Err(GuardError::SafeModeReadinessNotPersisted);
+    }
+    require_phase_two_handoff(facts.handoff.phase_two_run_once)?;
+    require_completed(progress, PHASE_ONE_SAFE_MODE_HANDOFF)
+        .map_err(|_| GuardError::MissingPhaseOneHandoffCompletion)?;
+    if progress.is_skipped(PHASE_TWO_SAFE_BOOT_CLEAR) {
+        return Err(GuardError::PhaseTwoSafeBootClearWasSkipped);
+    }
+    if progress.is_completed(PHASE_TWO_SAFE_BOOT_CLEAR) {
+        require_transaction_stage(state, RebootStage::PhaseTwoSafeMode)?;
+        require_safe_boot_absent(facts.handoff.safe_boot)?;
+        return Ok(Transition::RunRemainingPhaseTwo);
+    }
+    if has_phase_two_later_step(progress) {
+        return Err(GuardError::PhaseTwoSafeBootClearNotCompleted);
+    }
+    require_transaction_stage(state, RebootStage::PhaseOneSafeModeArmed)?;
+    require_safe_boot_present(facts.handoff.safe_boot)?;
+    Ok(Transition::RunPhaseTwoStepOne)
+}
+
+fn authorize_phase_three(
+    state: &State,
+    progress: &Progress,
+    facts: PhaseFacts,
+) -> Result<Transition, GuardError> {
+    require_boot(
+        PhaseRequest::PhaseThree,
+        BootEnvironment::Normal,
+        facts.boot,
+    )?;
+    require_runtime(facts.runtime)?;
+    require_transaction_stage(state, RebootStage::PhaseThreeArmed)?;
+    require_completed_phase_two_for_phase_three(progress, facts.handoff)?;
+    Ok(Transition::RunPhaseThree)
+}
+
+fn authorize_final_benchmark(
+    state: &State,
+    progress: &Progress,
+    facts: PhaseFacts,
+) -> Result<Transition, GuardError> {
+    require_boot(
+        PhaseRequest::FinalBenchmark,
+        BootEnvironment::Normal,
+        facts.boot,
+    )?;
+    require_runtime(facts.runtime)?;
+    require_final_benchmark_transaction(state)?;
+    require_completed_phase_two_for_phase_three(progress, facts.handoff)?;
+    Ok(Transition::PersistFinalBenchmark)
+}
+
+fn authorize_phase_three_handoff_clear(
+    state: &State,
+    progress: &Progress,
+    facts: PhaseFacts,
+) -> Result<Transition, GuardError> {
+    require_transaction_stage(state, RebootStage::PhaseThreeComplete)?;
+    require_phase_three_handoff(facts.handoff.phase_three_run)?;
+    require_same_user(facts.handoff.phase_three_same_user)?;
+    require_completed(progress, PHASE_THREE_DRIVER_INSTALL)
+        .map_err(|_| GuardError::PhaseThreeHandoffMustRemain)?;
+    require_completed(progress, PHASE_THREE_FINAL_BENCHMARK)
+        .map_err(|_| GuardError::PhaseThreeHandoffMustRemain)?;
+    match facts.final_benchmark_persisted {
+        Evidence::Verified => Ok(Transition::ClearPhaseThreeHandoff),
+        Evidence::Absent => Err(GuardError::FinalBenchmarkNotPersisted),
+        Evidence::Unavailable => Err(GuardError::FinalBenchmarkPersistenceUnavailable),
+    }
+}
+
+fn require_completed_phase_two_for_phase_three(
+    progress: &Progress,
+    handoff: HandoffEvidence,
+) -> Result<(), GuardError> {
+    require_phase_three_handoff(handoff.phase_three_run)?;
+    require_same_user(handoff.phase_three_same_user)?;
+    for step in step_catalog()
+        .iter()
+        .filter(|step| step.id.phase == Phase::Two)
+    {
+        require_completed(progress, step.id)
+            .map_err(|_| GuardError::MissingCompletedPhaseTwoStep(step.id.number))?;
+    }
+    Ok(())
 }
 
 /// Prove that every Phase 1 action preceding the reboot handoff is durably
