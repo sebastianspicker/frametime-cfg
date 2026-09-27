@@ -1,5 +1,8 @@
 # Compatibility and qualification
 
+No source test qualifies a release. This table records what the repository can
+prove on a host, and what still needs a Windows VM or hardware.
+
 | Surface | Local evidence | Windows qualification still required |
 | --- | --- | --- |
 | Five-crate architecture and policy | formatting, Clippy, unit and integration tests | N/A |
@@ -9,6 +12,7 @@
 | Three reboot phases | transition and handoff contract tests | UAC, Safe Mode, Run or RunOnce, same-user, reboot interruption |
 | Windows adapters | typed contract and target checks | registry, BCD, WMI, SetupAPI, network, NVAPI, filesystem, driver, and hardware behavior |
 | CLI and GUI | host build and focused tests | x64 Windows execution, accessibility, scaling, elevation, and lifecycle |
-| Independent tools | each workspace's own checks | their Windows or hardware features |
+| Archived reference workspaces | historical reproducibility checks only | no active qualification program |
 
-Source tests alone do not qualify a release. Record the host, Windows version, architecture, privilege level, test conditions, result, and recovery evidence for each live validation run.
+Record the host, Windows version, architecture, privilege level, test
+conditions, result, and recovery evidence for every live validation run.
