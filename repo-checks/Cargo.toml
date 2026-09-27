@@ -10,9 +10,12 @@ publish.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+frametime-app = { path = "../crates/frametime-app" }
+frametime-domain = { path = "../crates/frametime-domain" }
 proc-macro2.workspace = true
 quote.workspace = true
 regex.workspace = true
+serde_json.workspace = true
 syn.workspace = true
 
 [lints]

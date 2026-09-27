@@ -42,14 +42,11 @@ impl Backend for Mock {
     }
 
     fn recovery_requirement(&self, _: Operation) -> RecoveryRequirement {
-        if self.rebuildable {
-            RecoveryRequirement::RebuildableAudit
-        } else if self.manual {
-            RecoveryRequirement::ManualRecoveryAudit
-        } else if self.mixed {
-            RecoveryRequirement::Mixed
-        } else {
-            RecoveryRequirement::LosslessBackup
+        match self.recovery {
+            MockRecovery::Lossless => RecoveryRequirement::LosslessBackup,
+            MockRecovery::Rebuildable => RecoveryRequirement::RebuildableAudit,
+            MockRecovery::Manual => RecoveryRequirement::ManualRecoveryAudit,
+            MockRecovery::Mixed => RecoveryRequirement::Mixed,
         }
     }
 
@@ -85,7 +82,7 @@ impl Backend for Mock {
         self.call("irreversible_audit_capture")?;
         let step = operation.step.id.progress_key();
         let target = irreversible_target(&step);
-        Ok(if self.mixed {
+        Ok(if matches!(self.recovery, MockRecovery::Mixed) {
             IrreversibleAudit::Mixed(MixedRecoveryAudit::pending(step, "captured", target))
         } else {
             IrreversibleAudit::Manual(ManualRecoveryAudit::pending(step, "captured", target))

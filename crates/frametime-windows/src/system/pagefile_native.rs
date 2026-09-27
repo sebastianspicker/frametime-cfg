@@ -66,6 +66,8 @@ mod native_pagefile_store {
                     Attributes: SE_PRIVILEGE_ENABLED,
                 }],
             };
+            let privileges_size = u32::try_from(size_of::<TOKEN_PRIVILEGES>())
+                .map_err(|_| "TOKEN_PRIVILEGES size exceeds u32")?;
             let mut previous = TOKEN_PRIVILEGES::default();
             let mut returned = 0;
             unsafe {
@@ -73,7 +75,7 @@ mod native_pagefile_store {
                     token,
                     false,
                     Some(&requested),
-                    size_of::<TOKEN_PRIVILEGES>() as u32,
+                    privileges_size,
                     Some(&mut previous),
                     Some(&mut returned),
                 )
@@ -86,7 +88,7 @@ mod native_pagefile_store {
                     "SeCreatePagefilePrivilege is not assigned to the elevated token".into(),
                 );
             }
-            if returned != size_of::<TOKEN_PRIVILEGES>() as u32 {
+            if returned != privileges_size {
                 close_token(token);
                 return Err(
                     "SeCreatePagefilePrivilege did not return a complete prior token state".into(),

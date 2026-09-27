@@ -136,32 +136,65 @@ impl DiagnosticPresentation {
 }
 
 fn payload_rows(payload: DiagnosticPayload, version: &str) -> Vec<DiagnosticRow> {
-    let mut rows = vec![DiagnosticRow {
-        item: "Schema".into(),
-        value: version.into(),
-        state: "Versioned typed diagnostic envelope".into(),
-    }];
+    let mut rows = vec![schema_row(version)];
+    rows.extend(payload_detail_rows(payload));
+    rows
+}
+
+fn schema_row(version: &str) -> DiagnosticRow {
+    row("Schema", version, "Versioned typed diagnostic envelope")
+}
+
+fn payload_detail_rows(payload: DiagnosticPayload) -> Vec<DiagnosticRow> {
     match payload {
-        DiagnosticPayload::Doctor(report) => rows.extend(report.capabilities.into_iter().map(|item| {
-            DiagnosticRow {
-                item: item.name,
-                value: capability_state(item.state).into(),
-                state: format!(
-                    "{}; {}; hardware validation not claimed",
-                    item.backend, item.detail
-                ),
-            }
-        })),
-        DiagnosticPayload::CpuIdentity(cpu) => rows.extend([
-            row("CPU", cpu.display_name, cpu.source),
-            row("Vendor", cpu.vendor.unwrap_or_else(|| "Unavailable".into()), "CPUID value"),
-            row(
-                "Topology",
-                format!("{} logical / {:?} physical cores", cpu.logical_processors, cpu.physical_cores),
-                format!("family {:?}, model {:?}", cpu.family, cpu.model),
+        DiagnosticPayload::Doctor(report) => doctor_rows(report.capabilities),
+        DiagnosticPayload::CpuIdentity(cpu) => cpu_rows(cpu),
+        DiagnosticPayload::GpuInventory(inventory) => gpu_rows(inventory.adapters),
+        DiagnosticPayload::SystemStatus(system) => system_rows(system),
+        DiagnosticPayload::WheaEvents(events) => whea_rows(events),
+        DiagnosticPayload::EtwFrameCapture(samples) => etw_rows(samples),
+    }
+}
+
+fn doctor_rows(
+    capabilities: Vec<frametime_domain::hardware::DiagnosticCapability>,
+) -> Vec<DiagnosticRow> {
+    capabilities
+        .into_iter()
+        .map(|item| DiagnosticRow {
+            item: item.name,
+            value: capability_state(item.state).into(),
+            state: format!(
+                "{}; {}; hardware validation not claimed",
+                item.backend, item.detail
             ),
-        ]),
-        DiagnosticPayload::GpuInventory(inventory) => rows.extend(inventory.adapters.into_iter().map(|gpu| {
+        })
+        .collect()
+}
+
+fn cpu_rows(cpu: frametime_domain::hardware::CpuIdentity) -> Vec<DiagnosticRow> {
+    vec![
+        row("CPU", cpu.display_name, cpu.source),
+        row(
+            "Vendor",
+            cpu.vendor.unwrap_or_else(|| "Unavailable".into()),
+            "CPUID value",
+        ),
+        row(
+            "Topology",
+            format!(
+                "{} logical / {:?} physical cores",
+                cpu.logical_processors, cpu.physical_cores
+            ),
+            format!("family {:?}, model {:?}", cpu.family, cpu.model),
+        ),
+    ]
+}
+
+fn gpu_rows(adapters: Vec<frametime_domain::hardware::GpuAdapter>) -> Vec<DiagnosticRow> {
+    adapters
+        .into_iter()
+        .map(|gpu| {
             row(
                 "GPU",
                 gpu.display_name,
@@ -169,57 +202,85 @@ fn payload_rows(payload: DiagnosticPayload, version: &str) -> Vec<DiagnosticRow>
                     "{}; {}; {}",
                     gpu.stable_id,
                     gpu.source,
-                    if gpu.is_software { "software adapter" } else { "hardware adapter" }
+                    if gpu.is_software {
+                        "software adapter"
+                    } else {
+                        "hardware adapter"
+                    }
                 ),
             )
-        })),
-        DiagnosticPayload::SystemStatus(system) => rows.extend([
-            row("Architecture", system.architecture, system.source),
-            row("Logical processors", system.logical_processors.to_string(), "Windows system information"),
-            row(
-                "Physical memory",
-                format!(
-                    "{} total / {} available",
-                    bytes(system.total_physical_memory_bytes),
-                    bytes(system.available_physical_memory_bytes)
-                ),
-                format!("uptime {} ms", system.uptime_ms),
+        })
+        .collect()
+}
+
+fn system_rows(system: frametime_domain::hardware::SystemStatus) -> Vec<DiagnosticRow> {
+    vec![
+        row("Architecture", system.architecture, system.source),
+        row(
+            "Logical processors",
+            system.logical_processors.to_string(),
+            "Windows system information",
+        ),
+        row(
+            "Physical memory",
+            format!(
+                "{} total / {} available",
+                bytes(system.total_physical_memory_bytes),
+                bytes(system.available_physical_memory_bytes)
             ),
-        ]),
-        DiagnosticPayload::WheaEvents(events) if events.is_empty() => rows.push(row(
+            format!("uptime {} ms", system.uptime_ms),
+        ),
+    ]
+}
+
+fn whea_rows(events: Vec<frametime_domain::hardware::WheaEvent>) -> Vec<DiagnosticRow> {
+    if events.is_empty() {
+        return vec![row(
             "WHEA events",
             "0 records",
             "No matching bounded Event Log records were returned.",
-        )),
-        DiagnosticPayload::WheaEvents(events) => rows.extend(events.into_iter().map(|event| {
+        )];
+    }
+    events
+        .into_iter()
+        .map(|event| {
             row(
                 format!("WHEA event {}", event.event_id),
-                event.timestamp_utc.unwrap_or_else(|| "Timestamp unavailable".into()),
+                event
+                    .timestamp_utc
+                    .unwrap_or_else(|| "Timestamp unavailable".into()),
                 format!("{}; XML retained by the typed adapter", event.provider),
             )
-        })),
-        DiagnosticPayload::EtwFrameCapture(samples) if samples.is_empty() => rows.push(row(
+        })
+        .collect()
+}
+
+fn etw_rows(samples: Vec<frametime_domain::hardware::FrameSample>) -> Vec<DiagnosticRow> {
+    if samples.is_empty() {
+        return vec![row(
             "ETW frame samples",
             "0 intervals",
             "No Present_Start intervals were observed during the bounded capture; no benchmark was claimed.",
-        )),
-        DiagnosticPayload::EtwFrameCapture(samples) => {
-            let count = samples.len();
-            let average = samples.iter().map(|sample| sample.frame_time_us).sum::<u64>() / count as u64;
-            rows.push(row(
-                "ETW Present_Start intervals",
-                format!("{count} samples; avg {average} us"),
-                "Bounded DxgKrnl observation, not presentation-completion or benchmark proof.",
-            ));
-            rows.extend(samples.into_iter().take(12).map(|sample| {
-                row(
-                    format!("PID {}", sample.process_id),
-                    format!("{} us", sample.frame_time_us),
-                    format!("{}; {} ms", sample.source, sample.present_start_unix_ms),
-                )
-            }));
-        }
+        )];
     }
+    let count = samples.len();
+    let average = samples
+        .iter()
+        .map(|sample| sample.frame_time_us)
+        .sum::<u64>()
+        / count as u64;
+    let mut rows = vec![row(
+        "ETW Present_Start intervals",
+        format!("{count} samples; avg {average} us"),
+        "Bounded DxgKrnl observation, not presentation-completion or benchmark proof.",
+    )];
+    rows.extend(samples.into_iter().take(12).map(|sample| {
+        row(
+            format!("PID {}", sample.process_id),
+            format!("{} us", sample.frame_time_us),
+            format!("{}; {} ms", sample.source, sample.present_start_unix_ms),
+        )
+    }));
     rows
 }
 

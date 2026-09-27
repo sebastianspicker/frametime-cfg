@@ -50,8 +50,10 @@ pub(crate) fn parse_directory_buffer(
             .checked_add(name_bytes.len())
             .ok_or("P1:3 directory name length overflow")?;
         let name: Vec<u16> = name_bytes
-            .chunks_exact(size_of::<u16>())
-            .map(|unit| u16::from_ne_bytes([unit[0], unit[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|unit| u16::from_ne_bytes(*unit))
             .collect();
         if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
             validate_shader_cache_entry_name(&name)?;
@@ -270,7 +272,9 @@ mod tests {
             0x0123_4567_89AB_CDEF,
         );
         for (bytes, unit) in record[header_size()..]
-            .chunks_exact_mut(size_of::<u16>())
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
             .zip(name)
         {
             bytes.copy_from_slice(&unit.to_ne_bytes());
@@ -310,7 +314,7 @@ mod tests {
         write_u32(
             &mut buffer,
             offset_of!(FILE_ID_BOTH_DIR_INFO, FileNameLength),
-            size_of::<u16>() as u32,
+            u32::try_from(size_of::<u16>()).expect("u16 size fits in u32"),
         );
 
         let error = parse_directory_buffer(&buffer, &mut entries)

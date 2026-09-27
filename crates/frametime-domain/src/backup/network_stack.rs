@@ -126,26 +126,42 @@ pub struct NetworkStackPolicySnapshot {
 
 impl NetworkStackPolicySnapshot {
     pub fn validate(&self) -> Result<(), NetworkStackBackupError> {
-        if self.precedence > 255
-            || self.template_match_condition != 0
-            || !matches!(self.ip_protocol, 0..=3)
-            || !(-1..=7).contains(&self.priority_value_8021_action)
-            || !(-1..=63).contains(&self.dscp_action)
-            || self.min_bandwidth_weight_action > 100
-            || [
-                &self.user_match_condition,
-                &self.source_prefix_match_condition,
-                &self.destination_prefix_match_condition,
-                &self.app_path_match_condition,
-                &self.uri_match_condition,
-            ]
-            .into_iter()
-            .any(|value| value.len() > 1024 || value.chars().any(char::is_control))
-        {
+        if !policy_scalar_fields_are_valid(self) || !policy_text_fields_are_valid(self) {
             return Err(NetworkStackBackupError::InvalidPolicySnapshot);
         }
         Ok(())
     }
+}
+
+fn policy_scalar_fields_are_valid(policy: &NetworkStackPolicySnapshot) -> bool {
+    let precedence_is_valid = policy.precedence <= 255;
+    let template_is_default = policy.template_match_condition == 0;
+    let protocol_is_valid = matches!(policy.ip_protocol, 0..=3);
+    let priority_is_valid = (-1..=7).contains(&policy.priority_value_8021_action);
+    let dscp_is_valid = (-1..=63).contains(&policy.dscp_action);
+    let bandwidth_is_valid = policy.min_bandwidth_weight_action <= 100;
+    [
+        precedence_is_valid,
+        template_is_default,
+        protocol_is_valid,
+        priority_is_valid,
+        dscp_is_valid,
+        bandwidth_is_valid,
+    ]
+    .into_iter()
+    .all(|is_valid| is_valid)
+}
+
+fn policy_text_fields_are_valid(policy: &NetworkStackPolicySnapshot) -> bool {
+    [
+        &policy.user_match_condition,
+        &policy.source_prefix_match_condition,
+        &policy.destination_prefix_match_condition,
+        &policy.app_path_match_condition,
+        &policy.uri_match_condition,
+    ]
+    .into_iter()
+    .all(|value| value.len() <= 1024 && !value.chars().any(char::is_control))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,10 +218,7 @@ impl NetworkStackTransaction {
         if self.step != NETWORK_STACK_TRANSACTION_STEP {
             return Err(NetworkStackBackupError::WrongStep);
         }
-        if self.timestamp.trim().is_empty()
-            || self.timestamp.len() > 64
-            || self.timestamp.chars().any(char::is_control)
-        {
+        if !valid_transaction_timestamp(&self.timestamp) {
             return Err(NetworkStackBackupError::InvalidTimestamp);
         }
         if !self.unknown.is_empty() {
@@ -214,13 +227,24 @@ impl NetworkStackTransaction {
         self.adapter
             .validate()
             .map_err(|error| NetworkStackBackupError::InvalidAdapter(error.to_string()))?;
+        self.validate_inventory()?;
+        for item in &self.settings {
+            Self::validate_setting_backup(item)?;
+        }
+        for item in &self.policies {
+            Self::validate_policy_backup(item)?;
+        }
+        Ok(())
+    }
+
+    fn validate_inventory(&self) -> Result<(), NetworkStackBackupError> {
         let mut settings = self
             .settings
             .iter()
             .map(|item| item.setting)
             .collect::<Vec<_>>();
         settings.sort_unstable();
-        if settings.windows(2).any(|pair| pair[0] == pair[1]) {
+        if has_duplicate_identities(&settings) {
             return Err(NetworkStackBackupError::DuplicateIdentity);
         }
         let mut policies = self
@@ -229,69 +253,113 @@ impl NetworkStackTransaction {
             .map(|item| item.policy)
             .collect::<Vec<_>>();
         policies.sort_unstable();
-        if policies.windows(2).any(|pair| pair[0] == pair[1]) {
+        if has_duplicate_identities(&policies) {
             return Err(NetworkStackBackupError::DuplicateIdentity);
         }
-        if settings != NetworkStackSetting::P1_16_INVENTORY
-            || policies != NetworkStackPolicy::P1_16_INVENTORY
-        {
+        let settings_are_complete = settings == NetworkStackSetting::P1_16_INVENTORY;
+        let policies_are_complete = policies == NetworkStackPolicy::P1_16_INVENTORY;
+        if !settings_are_complete || !policies_are_complete {
             return Err(NetworkStackBackupError::IncompleteInventory);
-        }
-        for item in &self.settings {
-            if !item.unknown.is_empty() {
-                return Err(NetworkStackBackupError::UnknownFields);
-            }
-            if item.existed != item.original_value.is_some()
-                && item.setting != NetworkStackSetting::QosNlaBypass
-            {
-                return Err(NetworkStackBackupError::ExistenceMismatch);
-            }
-            if item.setting == NetworkStackSetting::QosNlaBypass {
-                let Some(nla) = &item.nla else {
-                    return Err(NetworkStackBackupError::ValueTypeMismatch);
-                };
-                if item.original_value.is_some() || item.existed != nla.value_existed {
-                    return Err(NetworkStackBackupError::ExistenceMismatch);
-                }
-                if nla.value_existed != nla.original_value.is_some() {
-                    return Err(NetworkStackBackupError::ExistenceMismatch);
-                }
-                if !nla.key_existed && nla.value_existed {
-                    return Err(NetworkStackBackupError::ExistenceMismatch);
-                }
-                if nla
-                    .original_value
-                    .as_ref()
-                    .is_some_and(|value| value.bytes.len() > 64)
-                {
-                    return Err(NetworkStackBackupError::InvalidNlaValue);
-                }
-                continue;
-            }
-            if item.nla.is_some() {
-                return Err(NetworkStackBackupError::ValueTypeMismatch);
-            }
-            if let Some(value) = &item.original_value {
-                let expected_string =
-                    matches!(item.setting, NetworkStackSetting::InterruptModeration);
-                if expected_string != matches!(value, NetworkStackValue::String(_)) {
-                    return Err(NetworkStackBackupError::ValueTypeMismatch);
-                }
-            }
-        }
-        for item in &self.policies {
-            if !item.unknown.is_empty() {
-                return Err(NetworkStackBackupError::UnknownFields);
-            }
-            if item.existed != item.original_policy.is_some() {
-                return Err(NetworkStackBackupError::ExistenceMismatch);
-            }
-            if let Some(policy) = &item.original_policy {
-                policy.validate()?;
-            }
         }
         Ok(())
     }
+
+    fn validate_setting_backup(
+        item: &NetworkStackSettingBackup,
+    ) -> Result<(), NetworkStackBackupError> {
+        if !item.unknown.is_empty() {
+            return Err(NetworkStackBackupError::UnknownFields);
+        }
+        if setting_existence_mismatch(item) {
+            return Err(NetworkStackBackupError::ExistenceMismatch);
+        }
+        if item.setting == NetworkStackSetting::QosNlaBypass {
+            return Self::validate_nla_backup(item);
+        }
+        if item.nla.is_some() {
+            return Err(NetworkStackBackupError::ValueTypeMismatch);
+        }
+        if !setting_value_type_matches(item) {
+            return Err(NetworkStackBackupError::ValueTypeMismatch);
+        }
+        Ok(())
+    }
+
+    fn validate_nla_backup(
+        item: &NetworkStackSettingBackup,
+    ) -> Result<(), NetworkStackBackupError> {
+        let Some(nla) = &item.nla else {
+            return Err(NetworkStackBackupError::ValueTypeMismatch);
+        };
+        if !nla_existence_facts_are_coherent(item, nla) {
+            return Err(NetworkStackBackupError::ExistenceMismatch);
+        }
+        if nla_value_is_too_large(nla) {
+            return Err(NetworkStackBackupError::InvalidNlaValue);
+        }
+        Ok(())
+    }
+
+    fn validate_policy_backup(
+        item: &NetworkStackPolicyBackup,
+    ) -> Result<(), NetworkStackBackupError> {
+        if !item.unknown.is_empty() {
+            return Err(NetworkStackBackupError::UnknownFields);
+        }
+        if item.existed != item.original_policy.is_some() {
+            return Err(NetworkStackBackupError::ExistenceMismatch);
+        }
+        if let Some(policy) = &item.original_policy {
+            policy.validate()?;
+        }
+        Ok(())
+    }
+}
+
+fn valid_transaction_timestamp(timestamp: &str) -> bool {
+    let is_present = !timestamp.trim().is_empty();
+    let is_bounded = timestamp.len() <= 64;
+    let has_no_control_characters = !timestamp.chars().any(char::is_control);
+    is_present && is_bounded && has_no_control_characters
+}
+
+fn has_duplicate_identities<T: Ord>(identities: &[T]) -> bool {
+    identities.windows(2).any(|pair| pair[0] == pair[1])
+}
+
+fn setting_existence_mismatch(item: &NetworkStackSettingBackup) -> bool {
+    let is_non_nla_setting = item.setting != NetworkStackSetting::QosNlaBypass;
+    let presence_mismatches_existence = item.existed != item.original_value.is_some();
+    is_non_nla_setting && presence_mismatches_existence
+}
+
+fn setting_value_type_matches(item: &NetworkStackSettingBackup) -> bool {
+    let Some(value) = &item.original_value else {
+        return true;
+    };
+    let expects_string = matches!(item.setting, NetworkStackSetting::InterruptModeration);
+    let is_string = matches!(value, NetworkStackValue::String(_));
+    expects_string == is_string
+}
+
+fn nla_existence_facts_are_coherent(
+    item: &NetworkStackSettingBackup,
+    nla: &NetworkStackNlaBackup,
+) -> bool {
+    let setting_has_no_regular_value = item.original_value.is_none();
+    let setting_matches_nla_value = item.existed == nla.value_existed;
+    let snapshot_matches_nla_value = nla.value_existed == nla.original_value.is_some();
+    let key_can_contain_value = nla.key_existed || !nla.value_existed;
+    setting_has_no_regular_value
+        && setting_matches_nla_value
+        && snapshot_matches_nla_value
+        && key_can_contain_value
+}
+
+fn nla_value_is_too_large(nla: &NetworkStackNlaBackup) -> bool {
+    nla.original_value
+        .as_ref()
+        .is_some_and(|value| value.bytes.len() > 64)
 }
 
 #[cfg(test)]

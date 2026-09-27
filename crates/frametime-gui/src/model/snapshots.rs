@@ -76,7 +76,7 @@ impl Snapshot {
     }
     pub fn filtered(&self, filter: &str) -> Rows {
         let (label, detail) = match &self.state {
-            SnapshotState::Loading => ("Loading", "Refreshing presentation data"),
+            SnapshotState::Loading => ("Loading", "Reading current state"),
             SnapshotState::Ready => ("Ready", "Last successful read"),
             SnapshotState::Empty => ("Empty", "No saved data"),
             SnapshotState::Stale(error) => ("Stale", error.as_str()),

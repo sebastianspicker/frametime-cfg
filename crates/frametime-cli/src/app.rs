@@ -97,22 +97,7 @@ fn run(mut cli: Cli) -> Result<(), AppError> {
             })),
             |outcome| render::benchmark(outcome, false),
         ),
-        Command::Driver {
-            command: DriverCommand::Plan { input },
-        } => present(frametime_app::run_driver_plan(&input), |outcome| {
-            render::driver_json(outcome.json)
-        }),
-        Command::Driver {
-            command:
-                DriverCommand::PrepareNvidia {
-                    artifact_id,
-                    artifact_file_name,
-                    server_path,
-                },
-        } => present(
-            frametime_app::run_prepare_nvidia(&artifact_id, &artifact_file_name, &server_path),
-            |outcome| render::driver_json(outcome.json),
-        ),
+        Command::Driver { command } => run_driver(command),
         Command::Hardware { command } => present(
             frametime_app::run_hardware_diagnostic(map_hardware(command)),
             |outcome| render::hardware(outcome).expect("serialize diagnostic"),
@@ -120,6 +105,131 @@ fn run(mut cli: Cli) -> Result<(), AppError> {
         command => present(
             frametime_app::run_live(map_live_command(command)),
             |outcome| render::command(outcome).expect("serialize verification"),
+        ),
+    }
+}
+
+fn run_driver(command: DriverCommand) -> Result<(), AppError> {
+    match command {
+        DriverCommand::Plan { input } => {
+            present(frametime_app::run_driver_plan(&input), |outcome| {
+                render::driver_json(outcome.json)
+            })
+        }
+        DriverCommand::Inspect | DriverCommand::Status => {
+            present(frametime_app::run_driver_inspect(), |outcome| {
+                render::driver_json(outcome.json)
+            })
+        }
+        DriverCommand::PrepareNvidia {
+            official_url,
+            local_installer,
+            preset,
+            select,
+            deselect,
+            artifact_id,
+            artifact_file_name,
+            server_path,
+        } => run_prepare_nvidia(PrepareNvidiaArgs {
+            official_url,
+            local_installer,
+            preset,
+            select,
+            deselect,
+            artifact_id,
+            artifact_file_name,
+            server_path,
+        }),
+        DriverCommand::ReconcileProfiles {
+            accept_driver_incompatible_profile_items,
+            yes,
+        } => present(
+            frametime_app::run_reconcile_nvidia_profiles(
+                accept_driver_incompatible_profile_items,
+                yes,
+            ),
+            |outcome| render::driver_json(outcome.json),
+        ),
+        DriverCommand::BuildNvidiaLab {
+            output,
+            deep_inf,
+            test_certificate_sha256,
+            acknowledge_unqualified_driver,
+        } => present(
+            frametime_app::run_build_nvidia_lab(frametime_app::BuildNvidiaLabRequest {
+                output,
+                deep_inf,
+                test_certificate_sha256,
+                acknowledge_unqualified_driver,
+            }),
+            |outcome| render::driver_json(outcome.json),
+        ),
+    }
+}
+
+struct PrepareNvidiaArgs {
+    official_url: Option<String>,
+    local_installer: Option<std::path::PathBuf>,
+    preset: crate::cli::NvidiaPresetValue,
+    select: Vec<String>,
+    deselect: Vec<String>,
+    artifact_id: Option<String>,
+    artifact_file_name: Option<String>,
+    server_path: Option<String>,
+}
+
+enum NvidiaSourceResolution {
+    Current(frametime_app::NvidiaInstallerSource),
+    Deprecated {
+        artifact_id: String,
+        artifact_file_name: String,
+        server_path: String,
+    },
+}
+
+fn resolve_nvidia_source(args: &PrepareNvidiaArgs) -> Result<NvidiaSourceResolution, AppError> {
+    match (&args.official_url, &args.local_installer, &args.server_path) {
+        (Some(url), None, None) => Ok(NvidiaSourceResolution::Current(
+            frametime_app::NvidiaInstallerSource::OfficialUrl(url.clone()),
+        )),
+        (None, Some(path), None) => Ok(NvidiaSourceResolution::Current(
+            frametime_app::NvidiaInstallerSource::LocalInstaller(path.clone()),
+        )),
+        (None, None, Some(server_path)) => Ok(NvidiaSourceResolution::Deprecated {
+            artifact_id: args.artifact_id.clone().ok_or_else(|| {
+                AppError::Invalid("deprecated --server-path requires --artifact-id".into())
+            })?,
+            artifact_file_name: args.artifact_file_name.clone().ok_or_else(|| {
+                AppError::Invalid("deprecated --server-path requires --artifact-file-name".into())
+            })?,
+            server_path: server_path.clone(),
+        }),
+        _ => Err(AppError::Invalid(
+            "prepare-nvidia requires exactly one of --official-url or --local-installer".into(),
+        )),
+    }
+}
+
+fn run_prepare_nvidia(args: PrepareNvidiaArgs) -> Result<(), AppError> {
+    match resolve_nvidia_source(&args)? {
+        NvidiaSourceResolution::Deprecated {
+            artifact_id,
+            artifact_file_name,
+            server_path,
+        } => present(
+            frametime_app::run_prepare_nvidia(&artifact_id, &artifact_file_name, &server_path),
+            |outcome| render::driver_json(outcome.json),
+        ),
+        NvidiaSourceResolution::Current(source) => present(
+            frametime_app::run_prepare_nvidia_request(frametime_app::PrepareNvidiaRequest {
+                source,
+                preset: args.preset.into(),
+                select: args.select,
+                deselect: args.deselect,
+                deprecated_artifact_id: args.artifact_id,
+                deprecated_artifact_file_name: args.artifact_file_name,
+            }),
+            |outcome| render::driver_json(outcome.json),
         ),
     }
 }

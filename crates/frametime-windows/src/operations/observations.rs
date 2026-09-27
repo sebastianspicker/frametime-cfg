@@ -76,7 +76,17 @@ pub(crate) fn inspect_fps_cap_info(
             runs: receipt.runs,
         },
     );
-    let expected = frametime_domain::fps::measured_fps_cap(config.fps_cap.strategy(), capture);
+    let expected = state
+        .final_benchmark
+        .as_ref()
+        .and_then(|receipt| receipt.run_evidence.clone())
+        .and_then(|evidence| frametime_domain::fps::ValidatedBenchmarkCapture::new(evidence).ok())
+        .map_or_else(
+            || frametime_domain::fps::legacy_aggregate_fps_cap(config.fps_cap.strategy(), capture),
+            |validated| {
+                frametime_domain::fps::measured_fps_cap(config.fps_cap.strategy(), &validated)
+            },
+        );
     Ok(if expected == Some(state.fps_cap) {
         Inspection::Satisfied
     } else {

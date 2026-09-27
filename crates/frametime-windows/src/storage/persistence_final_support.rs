@@ -76,8 +76,10 @@ pub(crate) fn read_history_for_final(
     if !work_dir.join("benchmark_history.json").exists() {
         return Ok(Vec::new());
     }
-    read_json_trusted(trusted, "benchmark_history.json")
-        .map_err(|error| format!("read final benchmark history: {error}"))
+    let history: Vec<BenchmarkRecord> = read_json_trusted(trusted, "benchmark_history.json")
+        .map_err(|error| format!("read final benchmark history: {error}"))?;
+    validate_benchmark_run_evidence(&history)?;
+    Ok(history)
 }
 
 /// Read-only result of checking the three independently persisted P3:13

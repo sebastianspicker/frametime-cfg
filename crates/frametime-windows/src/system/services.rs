@@ -77,7 +77,12 @@ pub(crate) mod native_services {
     pub(crate) fn query_config(service: SC_HANDLE) -> Result<(SERVICE_START_TYPE, bool), String> {
         let mut needed = 0;
         let _ = unsafe { QueryServiceConfigW(service, None, 0, &mut needed) };
-        if needed < size_of::<windows::Win32::System::Services::QUERY_SERVICE_CONFIGW>() as u32 {
+        if needed
+            < u32::try_from(size_of::<
+                windows::Win32::System::Services::QUERY_SERVICE_CONFIGW,
+            >())
+            .expect("QUERY_SERVICE_CONFIGW size fits in u32")
+        {
             return Err("query service configuration did not return a complete buffer size".into());
         }
         let mut bytes = vec![0_u8; needed as usize];
@@ -106,7 +111,10 @@ pub(crate) mod native_services {
                 &mut delayed_needed,
             )
         };
-        if delayed_needed < size_of::<SERVICE_DELAYED_AUTO_START_INFO>() as u32 {
+        if delayed_needed
+            < u32::try_from(size_of::<SERVICE_DELAYED_AUTO_START_INFO>())
+                .expect("SERVICE_DELAYED_AUTO_START_INFO size fits in u32")
+        {
             return Err("query delayed auto-start did not return a complete buffer size".into());
         }
         let mut delayed_bytes = vec![0_u8; delayed_needed as usize];
@@ -142,7 +150,10 @@ pub(crate) mod native_services {
             )
         }
         .map_err(|error| format!("query service status: {error}"))?;
-        if needed < size_of::<SERVICE_STATUS_PROCESS>() as u32 {
+        if needed
+            < u32::try_from(size_of::<SERVICE_STATUS_PROCESS>())
+                .expect("SERVICE_STATUS_PROCESS size fits in u32")
+        {
             return Err("query service status did not return a complete buffer".into());
         }
         Ok(unsafe {

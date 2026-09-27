@@ -309,14 +309,17 @@ mod system_cache {
                     token,
                     false,
                     Some(&requested),
-                    size_of::<TOKEN_PRIVILEGES>() as u32,
+                    u32::try_from(size_of::<TOKEN_PRIVILEGES>())
+                        .expect("TOKEN_PRIVILEGES size fits in u32"),
                     Some(&mut previous),
                     Some(&mut returned),
                 )
             }
             .map_err(|error| format!("enable SeIncreaseQuotaPrivilege: {error}"))?;
             if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED
-                || returned != size_of::<TOKEN_PRIVILEGES>() as u32
+                || returned
+                    != u32::try_from(size_of::<TOKEN_PRIVILEGES>())
+                        .expect("TOKEN_PRIVILEGES size fits in u32")
             {
                 unsafe {
                     let _ = CloseHandle(token);

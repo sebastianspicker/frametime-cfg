@@ -86,19 +86,7 @@ impl ObservationSubject {
             Self::DriverCleanupPreparation {
                 target_gpu,
                 installed_packages,
-            } => {
-                validate_device(target_gpu)?;
-                validate_device_set(installed_packages)?;
-                if installed_packages.iter().any(|package| {
-                    package.vendor_id != target_gpu.vendor_id
-                        || package.device_id != target_gpu.device_id
-                        || package.subsystem_vendor_id != target_gpu.subsystem_vendor_id
-                        || package.subsystem_device_id != target_gpu.subsystem_device_id
-                }) {
-                    return Err(EvidenceError::InvalidSubjectSet);
-                }
-                Ok(())
-            }
+            } => validate_cleanup_subject(target_gpu, installed_packages),
             Self::NvidiaDrsPreparation {
                 target_gpu,
                 driver_version,
@@ -106,23 +94,14 @@ impl ObservationSubject {
                 nvapi_interface_version,
                 profile_name,
                 application_name,
-            } => {
-                validate_device(target_gpu)?;
-                if target_gpu.vendor_id != 0x10de {
-                    return Err(EvidenceError::InvalidField("targetGpu.vendorId"));
-                }
-                require_text(driver_version, "driverVersion")?;
-                require_sha256(nvapi_module_sha256, "nvapiModuleSha256")?;
-                require_text(nvapi_interface_version, "nvapiInterfaceVersion")?;
-                if !matches!(
-                    profile_name.as_str(),
-                    "Counter-Strike 2" | "Counter-strike 2"
-                ) || application_name != "cs2.exe"
-                {
-                    return Err(EvidenceError::InvalidField("drsProfileIdentity"));
-                }
-                Ok(())
-            }
+            } => validate_drs_subject(
+                target_gpu,
+                driver_version,
+                nvapi_module_sha256,
+                nvapi_interface_version,
+                profile_name,
+                application_name,
+            ),
             Self::MsiDeviceSet { devices } => validate_device_set(devices),
             Self::NicAffinityProposal {
                 adapter,
@@ -130,23 +109,79 @@ impl ObservationSubject {
                 logical_processor_count,
                 target_processor,
                 assignment_mask,
-            } => {
-                adapter
-                    .validate()
-                    .map_err(|error| EvidenceError::InvalidBinding(error.to_string()))?;
-                if *logical_processor_count == 0
-                    || *logical_processor_count > 64
-                    || *processor_group != 0
-                    || *target_processor >= *logical_processor_count
-                    || *assignment_mask
-                        != 1_u64.checked_shl(u32::from(*target_processor)).unwrap_or(0)
-                {
-                    return Err(EvidenceError::InvalidField("processorTopology"));
-                }
-                Ok(())
-            }
+            } => validate_nic_affinity_subject(
+                adapter,
+                *processor_group,
+                *logical_processor_count,
+                *target_processor,
+                *assignment_mask,
+            ),
         }
     }
+}
+
+fn validate_cleanup_subject(
+    target_gpu: &PciDeviceBinding,
+    installed_packages: &[PciDeviceBinding],
+) -> Result<(), EvidenceError> {
+    validate_device(target_gpu)?;
+    validate_device_set(installed_packages)?;
+    let includes_foreign_identity = installed_packages.iter().any(|package| {
+        package.vendor_id != target_gpu.vendor_id
+            || package.device_id != target_gpu.device_id
+            || package.subsystem_vendor_id != target_gpu.subsystem_vendor_id
+            || package.subsystem_device_id != target_gpu.subsystem_device_id
+    });
+    if includes_foreign_identity {
+        Err(EvidenceError::InvalidSubjectSet)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_drs_subject(
+    target_gpu: &PciDeviceBinding,
+    driver_version: &str,
+    nvapi_module_sha256: &str,
+    nvapi_interface_version: &str,
+    profile_name: &str,
+    application_name: &str,
+) -> Result<(), EvidenceError> {
+    validate_device(target_gpu)?;
+    if target_gpu.vendor_id != 0x10de {
+        return Err(EvidenceError::InvalidField("targetGpu.vendorId"));
+    }
+    require_text(driver_version, "driverVersion")?;
+    require_sha256(nvapi_module_sha256, "nvapiModuleSha256")?;
+    require_text(nvapi_interface_version, "nvapiInterfaceVersion")?;
+    let recognized_profile = matches!(profile_name, "Counter-Strike 2" | "Counter-strike 2");
+    if !recognized_profile || application_name != "cs2.exe" {
+        return Err(EvidenceError::InvalidField("drsProfileIdentity"));
+    }
+    Ok(())
+}
+
+fn validate_nic_affinity_subject(
+    adapter: &NetworkAdapterBinding,
+    processor_group: u16,
+    logical_processor_count: u16,
+    target_processor: u16,
+    assignment_mask: u64,
+) -> Result<(), EvidenceError> {
+    adapter
+        .validate()
+        .map_err(|error| EvidenceError::InvalidBinding(error.to_string()))?;
+    let processor_count_is_valid = (1..=64).contains(&logical_processor_count);
+    let processor_is_in_group = target_processor < logical_processor_count;
+    let expected_mask = 1_u64.checked_shl(u32::from(target_processor)).unwrap_or(0);
+    if !processor_count_is_valid
+        || processor_group != 0
+        || !processor_is_in_group
+        || assignment_mask != expected_mask
+    {
+        return Err(EvidenceError::InvalidField("processorTopology"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

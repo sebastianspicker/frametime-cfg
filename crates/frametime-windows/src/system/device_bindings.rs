@@ -170,51 +170,23 @@ pub(crate) mod windows_setupapi {
 
     pub(crate) fn enumerate_network_pci_links()
     -> Result<Vec<(CorePciDeviceBinding, String)>, DeviceBindingError> {
-        let class = PciDeviceClass::Network;
-        let guid = GUID::try_from(&class.class_guid()[1..37])
-            .map_err(|reason| error(format!("invalid compiled class GUID: {reason}")))?;
-        let set = unsafe {
-            SetupDiGetClassDevsW(Some(&guid), PCWSTR::null(), None, DIGCF_PRESENT)
-                .map_err(|value| error(format!("SetupDiGetClassDevsW: {value}")))?
-        };
-        let result = network_links_set(set);
-        let destroyed = unsafe { SetupDiDestroyDeviceInfoList(set) };
-        match (result, destroyed) {
-            (Ok(records), Ok(())) => Ok(records),
-            (Err(reason), _) => Err(reason),
-            (_, Err(reason)) => Err(error(format!("SetupDiDestroyDeviceInfoList: {reason}"))),
-        }
+        with_present_class_set(PciDeviceClass::Network, network_links_set)
     }
 
     pub(crate) fn network_links_set(
         set: windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
     ) -> Result<Vec<(CorePciDeviceBinding, String)>, DeviceBindingError> {
-        let mut links = Vec::new();
-        for index in 0..u32::MAX {
-            let mut data = SP_DEVINFO_DATA {
-                cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
-                ..Default::default()
-            };
-            if unsafe { SetupDiEnumDeviceInfo(set, index, &mut data) }.is_err() {
-                if unsafe { GetLastError() } == ERROR_NO_MORE_ITEMS {
-                    return Ok(links);
-                }
-                return Err(error(format!(
-                    "SetupDiEnumDeviceInfo at index {index} failed"
-                )));
-            }
-            let (status, problem) = status(&data)?;
-            if problem != 0 || status & DN_STARTED.0 == 0 {
-                continue;
-            }
-            links.push((
-                binding(set, &data, PciDeviceClass::Network)?,
-                driver_net_cfg_instance_id(set, &data)?,
-            ));
-        }
-        Err(error(
+        status_ok_records(
+            set,
+            |index| format!("SetupDiEnumDeviceInfo at index {index} failed"),
             "SetupAPI network enumeration exceeded u32::MAX entries",
-        ))
+            |data| {
+                Ok((
+                    binding(set, data, PciDeviceClass::Network)?,
+                    driver_net_cfg_instance_id(set, data)?,
+                ))
+            },
+        )
     }
 
     pub(crate) fn driver_net_cfg_instance_id(
@@ -280,8 +252,10 @@ pub(crate) mod windows_setupapi {
             ));
         }
         let units = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect::<Vec<_>>();
         let raw = utf16_text(&units, "NetCfgInstanceId")?;
         let guid = GUID::try_from(raw.trim_matches(['{', '}']))
@@ -292,13 +266,22 @@ pub(crate) mod windows_setupapi {
     pub(crate) fn enumerate_class(
         class: PciDeviceClass,
     ) -> Result<Vec<PciDeviceObservation>, DeviceBindingError> {
+        with_present_class_set(class, |set| enumerate_set(set, class))
+    }
+
+    fn with_present_class_set<T>(
+        class: PciDeviceClass,
+        operation: impl FnOnce(
+            windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
+        ) -> Result<T, DeviceBindingError>,
+    ) -> Result<T, DeviceBindingError> {
         let guid = GUID::try_from(&class.class_guid()[1..37])
             .map_err(|reason| error(format!("invalid compiled class GUID: {reason}")))?;
         let set = unsafe {
             SetupDiGetClassDevsW(Some(&guid), PCWSTR::null(), None, DIGCF_PRESENT)
                 .map_err(|value| error(format!("SetupDiGetClassDevsW: {value}")))?
         };
-        let result = enumerate_set(set, class);
+        let result = operation(set);
         let destroyed = unsafe { SetupDiDestroyDeviceInfoList(set) };
         match (result, destroyed) {
             (Ok(records), Ok(())) => Ok(records),
@@ -311,37 +294,52 @@ pub(crate) mod windows_setupapi {
         set: windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
         expected_class: PciDeviceClass,
     ) -> Result<Vec<PciDeviceObservation>, DeviceBindingError> {
+        status_ok_records(
+            set,
+            |index| {
+                format!(
+                    "SetupDiEnumDeviceInfo at index {index}: {}",
+                    unsafe { GetLastError() }.0
+                )
+            },
+            "SetupAPI device enumeration exceeded u32::MAX entries",
+            |data| {
+                let binding = binding(set, data, expected_class)?;
+                Ok(PciDeviceObservation {
+                    binding,
+                    present: true,
+                    status_ok: true,
+                })
+            },
+        )
+    }
+
+    fn status_ok_records<T>(
+        set: windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
+        enumeration_error: impl Fn(u32) -> String,
+        exhausted_error: &'static str,
+        mut record: impl FnMut(&SP_DEVINFO_DATA) -> Result<T, DeviceBindingError>,
+    ) -> Result<Vec<T>, DeviceBindingError> {
         let mut records = Vec::new();
         for index in 0..u32::MAX {
             let mut data = SP_DEVINFO_DATA {
-                cbSize: std::mem::size_of::<SP_DEVINFO_DATA>() as u32,
+                cbSize: u32::try_from(std::mem::size_of::<SP_DEVINFO_DATA>())
+                    .expect("SP_DEVINFO_DATA size fits in u32"),
                 ..Default::default()
             };
             if unsafe { SetupDiEnumDeviceInfo(set, index, &mut data) }.is_err() {
                 if unsafe { GetLastError() } == ERROR_NO_MORE_ITEMS {
                     return Ok(records);
                 }
-                return Err(error(format!(
-                    "SetupDiEnumDeviceInfo at index {index}: {}",
-                    unsafe { GetLastError() }.0
-                )));
+                return Err(error(enumeration_error(index)));
             }
             let (status, problem) = status(&data)?;
-            // DIGCF_PRESENT is necessary but insufficient: only an active,
-            // problem-free devnode is treated as Status-OK mutation evidence.
             if problem != 0 || status & DN_STARTED.0 == 0 {
                 continue;
             }
-            let binding = binding(set, &data, expected_class)?;
-            records.push(PciDeviceObservation {
-                binding,
-                present: true,
-                status_ok: true,
-            });
+            records.push(record(&data)?);
         }
-        Err(error(
-            "SetupAPI device enumeration exceeded u32::MAX entries",
-        ))
+        Err(error(exhausted_error))
     }
 
     pub(crate) fn status(data: &SP_DEVINFO_DATA) -> Result<(u32, u32), DeviceBindingError> {
@@ -458,11 +456,17 @@ pub(crate) mod windows_setupapi {
                 "{label} has an unexpected SetupAPI property type or size"
             )));
         }
-        let units = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
+        let units = utf16_units(&bytes);
         utf16_text(&units, label)
+    }
+
+    pub(crate) fn utf16_units(bytes: &[u8]) -> Vec<u16> {
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
+            .collect()
     }
 
     pub(crate) fn property(
@@ -543,11 +547,16 @@ pub(crate) mod windows_setupapi {
         let subsystem =
             subsystem.ok_or_else(|| error("PCI instance has no canonical subsystem ID"))?;
         Ok((
-            vendor.ok_or_else(|| error("PCI instance has no canonical vendor ID"))? as u16,
-            device.ok_or_else(|| error("PCI instance has no canonical device ID"))? as u16,
-            (subsystem & 0xffff) as u16,
-            (subsystem >> 16) as u16,
-            revision.ok_or_else(|| error("PCI instance has no canonical revision ID"))? as u8,
+            u16::try_from(vendor.ok_or_else(|| error("PCI instance has no canonical vendor ID"))?)
+                .expect("a four-digit hexadecimal PCI vendor ID fits u16"),
+            u16::try_from(device.ok_or_else(|| error("PCI instance has no canonical device ID"))?)
+                .expect("a four-digit hexadecimal PCI device ID fits u16"),
+            u16::try_from(subsystem & 0xffff).expect("lower subsystem half fits u16"),
+            u16::try_from(subsystem >> 16).expect("upper subsystem half fits u16"),
+            u8::try_from(
+                revision.ok_or_else(|| error("PCI instance has no canonical revision ID"))?,
+            )
+            .expect("a two-digit hexadecimal PCI revision ID fits u8"),
         ))
     }
 

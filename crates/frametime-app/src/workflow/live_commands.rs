@@ -13,15 +13,8 @@ use super::{
 };
 
 pub fn run_live(command: Command) -> Result<CommandOutcome, ApplicationError> {
-    if matches!(command, Command::Verify) && !platform_is_supported() {
-        return Ok(CommandOutcome::Verification(Box::new(
-            read_only_host_verification(),
-        )));
-    }
-    if !platform_is_supported() {
-        return Err(ApplicationError::failed(
-            "live commands require x64 Windows 10 or 11; use `frametime dry-run all` on this host",
-        ));
+    if let Some(host_outcome) = require_live_platform(&command)? {
+        return Ok(host_outcome);
     }
     match command {
         Command::Optimize { yes } => {
@@ -80,16 +73,22 @@ pub fn run_live(command: Command) -> Result<CommandOutcome, ApplicationError> {
             Ok(CommandOutcome::Run(RunSummary::default()))
         }
         Command::ShowLog => crate::read_log().map(CommandOutcome::Log),
-        Command::DryRun { .. }
-        | Command::FpsCap { .. }
-        | Command::BaselineBenchmark { .. }
-        | Command::FinalBenchmark { .. }
-        | Command::Driver { .. }
-        | Command::Hardware { .. }
-        | Command::SmokeTest
-        | Command::PackageAuthSmoke
-        | Command::Exit => unreachable!(),
+        command => unreachable!("{command:?} is routed outside the live workflow"),
     }
+}
+
+fn require_live_platform(command: &Command) -> Result<Option<CommandOutcome>, ApplicationError> {
+    if platform_is_supported() {
+        return Ok(None);
+    }
+    if matches!(command, Command::Verify) {
+        return Ok(Some(CommandOutcome::Verification(Box::new(
+            read_only_host_verification(),
+        ))));
+    }
+    Err(ApplicationError::failed(
+        "live commands require x64 Windows 10 or 11; use `frametime dry-run all` on this host",
+    ))
 }
 
 fn read_only_host_verification() -> VerificationSummary {

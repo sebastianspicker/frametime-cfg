@@ -488,7 +488,7 @@ fn enumerate_directory(handle: HANDLE) -> Result<Vec<DirectoryEntry>, String> {
                 handle,
                 class,
                 buffer.as_mut_ptr().cast(),
-                DIRECTORY_BUFFER as u32,
+                u32::try_from(DIRECTORY_BUFFER).expect("directory buffer fits in u32"),
             )
         } {
             Ok(()) => {

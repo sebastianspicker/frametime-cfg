@@ -1,16 +1,10 @@
 use std::{ffi::c_void, mem::size_of};
 
+use frametime_domain::driver::Sha256Digest;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
         Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, HWND},
-        Networking::WinHttp::{
-            INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            WINHTTP_DISABLE_REDIRECTS, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen,
-            WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
-            WinHttpSendRequest, WinHttpSetOption,
-        },
         Security::{
             Cryptography::{
                 CALG_SHA_256, CERT_CONTEXT, CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
@@ -37,8 +31,15 @@ use windows::{
 
 use super::{
     AdapterFailure, DRIVER_ARTIFACTS_LEAF, NvidiaArtifactLocation, NvidiaDownloadHost,
-    Sha256Digest, VerifiedDriverArtifact, adapter,
+    VerifiedDriverArtifact, adapter,
 };
+
+mod certificates;
+use certificates::signer_from_verified_state;
+mod http;
+use http::download_to_handle;
+mod driver_store;
+pub(super) use driver_store::{bind_driver_store_identities, published_inf_is_present};
 
 #[derive(Debug)]
 pub(super) struct RetainedArtifact {
@@ -82,13 +83,15 @@ impl RetainedArtifact {
     pub(super) fn verify_signature(&self) -> Result<(String, String), AdapterFailure> {
         let path = wide(&self.path);
         let mut file = WINTRUST_FILE_INFO {
-            cbStruct: size_of::<WINTRUST_FILE_INFO>() as u32,
+            cbStruct: u32::try_from(size_of::<WINTRUST_FILE_INFO>())
+                .map_err(|_| adapter("verify NVIDIA artifact", "file info size exceeds u32"))?,
             pcwszFilePath: PCWSTR(path.as_ptr()),
             hFile: self.handle,
             pgKnownSubject: std::ptr::null_mut(),
         };
         let mut trust = WINTRUST_DATA {
-            cbStruct: size_of::<WINTRUST_DATA>() as u32,
+            cbStruct: u32::try_from(size_of::<WINTRUST_DATA>())
+                .map_err(|_| adapter("verify NVIDIA artifact", "trust data size exceeds u32"))?,
             dwUIChoice: WTD_UI_NONE,
             // Revocation retrieval is deliberately fail-closed: a revoked,
             // offline, or otherwise indeterminate intermediate must make
@@ -100,14 +103,7 @@ impl RetainedArtifact {
             dwStateAction: WTD_STATEACTION_VERIFY,
             ..Default::default()
         };
-        let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let status = unsafe {
-            WinVerifyTrust(
-                HWND(std::ptr::null_mut()),
-                &mut action,
-                (&mut trust as *mut WINTRUST_DATA).cast(),
-            )
-        };
+        let (mut action, status) = verify_trust_state(&mut trust);
         if status != 0 {
             return Err(adapter(
                 "verify NVIDIA artifact",
@@ -116,19 +112,184 @@ impl RetainedArtifact {
         }
         let result = signer_from_verified_state(trust.hWVTStateData);
         trust.dwStateAction = WTD_STATEACTION_CLOSE;
-        let _ = unsafe {
-            WinVerifyTrust(
-                HWND(std::ptr::null_mut()),
-                &mut action,
-                (&mut trust as *mut WINTRUST_DATA).cast(),
-            )
-        };
+        close_trust_state(&mut trust, &mut action);
         result
     }
 
     pub(super) fn path(&self) -> &str {
         &self.path
     }
+}
+
+fn verify_trust_state(trust: &mut WINTRUST_DATA) -> (windows::core::GUID, i32) {
+    let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    let status = unsafe {
+        WinVerifyTrust(
+            HWND(std::ptr::null_mut()),
+            &mut action,
+            (trust as *mut WINTRUST_DATA).cast(),
+        )
+    };
+    (action, status)
+}
+
+fn close_trust_state(trust: &mut WINTRUST_DATA, action: &mut windows::core::GUID) {
+    let _ = unsafe {
+        WinVerifyTrust(
+            HWND(std::ptr::null_mut()),
+            action,
+            (trust as *mut WINTRUST_DATA).cast(),
+        )
+    };
+}
+
+fn retain_path(rendered: String) -> Result<RetainedArtifact, AdapterFailure> {
+    let handle = open_retained(&rendered)?;
+    let mut retained = RetainedArtifact {
+        handle,
+        path: rendered,
+        id: FILE_ID_INFO::default(),
+    };
+    retained.id = file_id(retained.handle)?;
+    Ok(retained)
+}
+
+pub(super) fn verify_microsoft_signed_path(path: &std::path::Path) -> Result<(), AdapterFailure> {
+    let rendered = path.to_string_lossy().into_owned();
+    let retained = retain_path(rendered)?;
+    let (subject, _) = retained.verify_signature()?;
+    if !subject.to_ascii_lowercase().contains("microsoft") {
+        return Err(adapter(
+            "verify WDK tool",
+            "authenticated tool signer is not Microsoft",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn run_microsoft_signed_system_tool(
+    path: &std::path::Path,
+    argv: &[String],
+) -> Result<super::ProcessOutcome, AdapterFailure> {
+    let rendered = path.to_string_lossy().into_owned();
+    let retained = retain_path(rendered)?;
+    let length = file_length(retained.handle)?;
+    let digest = digest_handle(retained.handle)?;
+    let (subject, _) = retained.verify_signature()?;
+    if !subject.to_ascii_lowercase().contains("microsoft") {
+        return Err(adapter(
+            "verify Windows system tool",
+            "authenticated system-tool signer is not Microsoft",
+        ));
+    }
+    let status = std::process::Command::new(path)
+        .args(argv)
+        .status()
+        .map_err(|error| adapter("launch Windows system tool", error.to_string()))?;
+    if file_id(retained.handle)? != retained.id
+        || file_length(retained.handle)? != length
+        || digest_handle(retained.handle)? != digest
+    {
+        return Err(adapter(
+            "revalidate Windows system tool",
+            "system-tool identity, size, or digest changed across launch",
+        ));
+    }
+    Ok(super::ProcessOutcome {
+        exit_code: status.code(),
+    })
+}
+
+pub(super) fn launch_prepared_nvidia_package(
+    expected: &frametime_domain::driver::SignedArtifactDescriptor,
+    expected_package_sha256: &Sha256Digest,
+    observed_at_utc: &str,
+) -> Result<super::PreparedNvidiaLaunchEvidence, AdapterFailure> {
+    let package = std::path::Path::new(crate::WINDOWS_WORK_DIR).join("driver-package");
+    let manifest = super::super::package_builder::verify_prepared_nvidia_package(&package)
+        .map_err(|reason| adapter("verify prepared NVIDIA package", reason))?;
+    let package_sha256 = super::super::package_builder::prepared_nvidia_package_digest(&manifest)
+        .map_err(|reason| adapter("verify prepared NVIDIA package", reason))?;
+    if &package_sha256 != expected_package_sha256 {
+        return Err(adapter(
+            "verify prepared NVIDIA package",
+            "package manifest does not match the durable transaction",
+        ));
+    }
+    let manifest_setup = manifest
+        .files
+        .iter()
+        .find(|file| file.path.eq_ignore_ascii_case("setup.exe"))
+        .ok_or_else(|| {
+            adapter(
+                "verify prepared NVIDIA package",
+                "package manifest lacks setup.exe identity",
+            )
+        })?;
+    let setup = package.join("setup.exe");
+    let rendered = setup.to_string_lossy().into_owned();
+    let retained = retain_path(rendered)?;
+    let length = file_length(retained.handle)?;
+    let digest = digest_handle(retained.handle)?;
+    let manifest_digest = Sha256Digest::parse(&manifest_setup.sha256)
+        .map_err(|error| adapter("verify prepared NVIDIA installer", error.to_string()))?;
+    if manifest_setup.bytes != length || manifest_digest != digest {
+        return Err(adapter(
+            "verify prepared NVIDIA installer",
+            "setup.exe does not match its authenticated package manifest",
+        ));
+    }
+    crate::trusted_work_dir::validate_descendant_handle(
+        retained.handle,
+        "driver-package\\setup.exe",
+        false,
+    )
+    .map_err(|reason| adapter("verify prepared NVIDIA installer", reason))?;
+    let (subject, thumbprint) = retained.verify_signature()?;
+    if subject != expected.authenticode.signer_subject
+        || thumbprint.to_ascii_lowercase()
+            != expected.authenticode.signer_thumbprint_sha256.as_str()
+        || !super::artifact::accepts_compiled_nvidia_policy(&subject, &thumbprint)
+    {
+        return Err(adapter(
+            "verify prepared NVIDIA installer",
+            "prepared setup.exe does not match the exact NVIDIA signer policy",
+        ));
+    }
+    let status = std::process::Command::new(&setup)
+        .current_dir(&package)
+        .args(["-s", "-noreboot"])
+        .status()
+        .map_err(|error| adapter("launch prepared NVIDIA installer", error.to_string()))?;
+    if file_id(retained.handle)? != retained.id
+        || file_length(retained.handle)? != length
+        || digest_handle(retained.handle)? != digest
+    {
+        return Err(adapter(
+            "revalidate prepared NVIDIA installer",
+            "setup.exe identity, size, or digest changed across launch",
+        ));
+    }
+    let thumbprint = Sha256Digest::parse(thumbprint.to_ascii_lowercase())
+        .map_err(|error| adapter("record prepared NVIDIA installer", error.to_string()))?;
+    Ok(super::PreparedNvidiaLaunchEvidence {
+        outcome: super::ProcessOutcome {
+            exit_code: status.code(),
+        },
+        artifact: frametime_domain::driver::ArtifactIdentity {
+            artifact_id: expected.locator.artifact_id.clone(),
+            artifact_file_name: "setup.exe".into(),
+            payload_sha256: digest,
+            signer_thumbprint_sha256: thumbprint.clone(),
+        },
+        authenticode: frametime_domain::driver::AuthenticodeEvidence {
+            status: frametime_domain::driver::AuthenticodeStatus::Valid,
+            signer_subject: subject,
+            signer_thumbprint_sha256: thumbprint,
+            observed_at_utc: observed_at_utc.into(),
+            extensions: Default::default(),
+        },
+    })
 }
 
 pub(super) fn acquire(
@@ -184,7 +345,9 @@ pub(super) fn acquire(
     )
     .map_err(|e| adapter("open artifact", e))?;
     let length = file_length(handle)?;
-    if length == 0 || length > maximum as u64 {
+    let maximum = u64::try_from(maximum)
+        .map_err(|_| adapter("acquire artifact", "maximum artifact size exceeds u64"))?;
+    if length == 0 || length > maximum {
         unsafe {
             let _ = CloseHandle(handle);
         }
@@ -271,7 +434,9 @@ fn delete_if_present(path: &str) -> Result<(), AdapterFailure> {
 }
 fn verify_download(handle: HANDLE, maximum: usize) -> Result<(), AdapterFailure> {
     let length = file_length(handle)?;
-    if length == 0 || length > maximum as u64 {
+    let maximum = u64::try_from(maximum)
+        .map_err(|_| adapter("publish artifact", "maximum artifact size exceeds u64"))?;
+    if length == 0 || length > maximum {
         return Err(adapter(
             "publish artifact",
             "download length is outside bounded policy",
@@ -312,16 +477,22 @@ fn flush(handle: HANDLE) -> Result<(), AdapterFailure> {
 }
 fn file_id(handle: HANDLE) -> Result<FILE_ID_INFO, AdapterFailure> {
     let mut id = FILE_ID_INFO::default();
+    let byte_count = file_id_info_byte_count()?;
     unsafe {
         GetFileInformationByHandleEx(
             handle,
             FileIdInfo,
             (&mut id as *mut FILE_ID_INFO).cast::<c_void>(),
-            size_of::<FILE_ID_INFO>() as u32,
+            byte_count,
         )
     }
     .map_err(|e| adapter("inspect artifact", e.to_string()))?;
     Ok(id)
+}
+
+fn file_id_info_byte_count() -> Result<u32, AdapterFailure> {
+    u32::try_from(size_of::<FILE_ID_INFO>())
+        .map_err(|_| adapter("inspect artifact", "file ID size exceeds u32"))
 }
 fn file_length(handle: HANDLE) -> Result<u64, AdapterFailure> {
     let mut size = 0_i64;
@@ -341,326 +512,10 @@ fn digest_handle(handle: HANDLE) -> Result<Sha256Digest, AdapterFailure> {
         if read == 0 {
             break;
         }
-        hash.update(&buffer[..read as usize]);
+        let count = usize::try_from(read)
+            .map_err(|_| adapter("hash artifact", "read count exceeds address space"))?;
+        hash.update(&buffer[..count]);
     }
     Sha256Digest::parse(format!("{:x}", hash.finalize()))
         .map_err(|e| adapter("hash artifact", e.to_string()))
-}
-fn download_to_handle(
-    host: &NvidiaDownloadHost,
-    path: &str,
-    file: HANDLE,
-    maximum: usize,
-) -> Result<(), AdapterFailure> {
-    let session = http_open()?;
-    let authority = wide(host.authority());
-    let connection = Http(unsafe {
-        WinHttpConnect(
-            session.0,
-            PCWSTR(authority.as_ptr()),
-            INTERNET_DEFAULT_HTTPS_PORT,
-            0,
-        )
-    });
-    if connection.0.is_null() {
-        return Err(adapter("download NVIDIA artifact", "WinHttpConnect failed"));
-    }
-    let get = wide("GET");
-    let resource = wide(path);
-    let request = Http(unsafe {
-        WinHttpOpenRequest(
-            connection.0,
-            PCWSTR(get.as_ptr()),
-            PCWSTR(resource.as_ptr()),
-            None,
-            None,
-            std::ptr::null(),
-            WINHTTP_FLAG_SECURE,
-        )
-    });
-    if request.0.is_null() {
-        return Err(adapter(
-            "download NVIDIA artifact",
-            "WinHttpOpenRequest failed",
-        ));
-    }
-    unsafe {
-        WinHttpSetOption(
-            Some(request.0),
-            WINHTTP_DISABLE_REDIRECTS,
-            Some(&[1, 0, 0, 0]),
-        )
-    }
-    .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;
-    unsafe { WinHttpSendRequest(request.0, None, None, 0, 0, 0) }
-        .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;
-    unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }
-        .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;
-    let mut status = 0_u32;
-    let mut length = size_of::<u32>() as u32;
-    let mut index = 0;
-    unsafe {
-        WinHttpQueryHeaders(
-            request.0,
-            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            None,
-            Some((&mut status as *mut u32).cast()),
-            &mut length,
-            &mut index,
-        )
-    }
-    .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;
-    if status != 200 {
-        return Err(adapter(
-            "download NVIDIA artifact",
-            format!("HTTPS response status {status} is not permitted"),
-        ));
-    }
-    let mut total = 0_usize;
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let mut read = 0;
-        unsafe {
-            WinHttpReadData(
-                request.0,
-                buffer.as_mut_ptr().cast(),
-                buffer.len() as u32,
-                &mut read,
-            )
-        }
-        .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;
-        if read == 0 {
-            return Ok(());
-        }
-        let count = read as usize;
-        total = total
-            .checked_add(count)
-            .ok_or_else(|| adapter("download NVIDIA artifact", "response length overflow"))?;
-        if total > maximum {
-            return Err(adapter(
-                "download NVIDIA artifact",
-                "response exceeds bounded policy",
-            ));
-        }
-        let mut written = 0;
-        unsafe { WriteFile(file, Some(&buffer[..count]), Some(&mut written), None) }
-            .map_err(|e| adapter("publish artifact", e.to_string()))?;
-        if written as usize != count {
-            return Err(adapter(
-                "publish artifact",
-                "short write of artifact stream",
-            ));
-        }
-    }
-}
-struct Http(*mut c_void);
-impl Drop for Http {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe {
-                let _ = WinHttpCloseHandle(self.0);
-            }
-        }
-    }
-}
-fn http_open() -> Result<Http, AdapterFailure> {
-    let agent = wide("frametime-cfg/3");
-    let session = Http(unsafe {
-        WinHttpOpen(
-            PCWSTR(agent.as_ptr()),
-            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            None,
-            None,
-            0,
-        )
-    });
-    if session.0.is_null() {
-        Err(adapter("download NVIDIA artifact", "WinHttpOpen failed"))
-    } else {
-        Ok(session)
-    }
-}
-fn signer_from_verified_state(state: HANDLE) -> Result<(String, String), AdapterFailure> {
-    let provider = unsafe { WTHelperProvDataFromStateData(state) };
-    if provider.is_null() {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "WinVerifyTrust returned no provider state",
-        ));
-    }
-    let signer = unsafe { WTHelperGetProvSignerFromChain(provider, 0, false, 0) };
-    if signer.is_null() {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "WinVerifyTrust returned no leaf signer",
-        ));
-    }
-    let certificate = unsafe { WTHelperGetProvCertFromChain(signer, 0) };
-    if certificate.is_null() || unsafe { (*certificate).pCert.is_null() } {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "WinVerifyTrust returned no leaf certificate",
-        ));
-    }
-    let context = unsafe { (*certificate).pCert };
-    let subject = certificate_subject(context)?;
-    let thumbprint = certificate_sha256(context)?;
-    Ok((format!("CN={subject}"), thumbprint))
-}
-fn certificate_subject(context: *const CERT_CONTEXT) -> Result<String, AdapterFailure> {
-    certificate_subject_from_getter(|buffer| unsafe {
-        CertGetNameStringW(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, None, buffer)
-    })
-}
-
-fn certificate_subject_from_getter(
-    mut get_name: impl FnMut(Option<&mut [u16]>) -> u32,
-) -> Result<String, AdapterFailure> {
-    let needed = get_name(None);
-    if needed <= 1 {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf signer subject is absent",
-        ));
-    }
-    let mut units = vec![0_u16; needed as usize];
-    let written = get_name(Some(&mut units));
-    if written != needed || written <= 1 {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf signer subject length changed while being read",
-        ));
-    }
-    if units.last() != Some(&0) {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf signer subject is not NUL-terminated",
-        ));
-    }
-    String::from_utf16(&units[..units.len() - 1])
-        .map_err(|e| adapter("verify NVIDIA artifact", e.to_string()))
-}
-fn certificate_sha256(context: *const CERT_CONTEXT) -> Result<String, AdapterFailure> {
-    let certificate = unsafe { &*context };
-    let encoded = certificate_encoded_bytes(certificate)?;
-    let mut length = 32;
-    let mut bytes = [0_u8; 32];
-    unsafe {
-        CryptHashCertificate(
-            None,
-            CALG_SHA_256,
-            0,
-            encoded,
-            Some(bytes.as_mut_ptr()),
-            &mut length,
-        )
-    }
-    .map_err(|e| adapter("verify NVIDIA artifact", e.to_string()))?;
-    if length != 32 {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf certificate SHA-256 length is invalid",
-        ));
-    }
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-fn certificate_encoded_bytes(certificate: &CERT_CONTEXT) -> Result<&[u8], AdapterFailure> {
-    if certificate.cbCertEncoded == 0 {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf certificate has no encoded bytes",
-        ));
-    }
-    if certificate.pbCertEncoded.is_null() {
-        return Err(adapter(
-            "verify NVIDIA artifact",
-            "leaf certificate encoded bytes are null",
-        ));
-    }
-    let length = usize::try_from(certificate.cbCertEncoded)
-        .map_err(|_| adapter("verify NVIDIA artifact", "leaf certificate length overflow"))?;
-    Ok(unsafe { std::slice::from_raw_parts(certificate.pbCertEncoded, length) })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn certificate_bytes_reject_zero_length_contexts_before_reading_the_pointer() {
-        let mut byte = 0_u8;
-        let certificate = CERT_CONTEXT {
-            pbCertEncoded: &raw mut byte,
-            ..Default::default()
-        };
-
-        let error = certificate_encoded_bytes(&certificate)
-            .expect_err("zero-length certificate contexts are invalid");
-
-        assert_eq!(error.reason, "leaf certificate has no encoded bytes");
-    }
-
-    #[test]
-    fn certificate_bytes_reject_null_pointers_before_constructing_a_slice() {
-        let certificate = CERT_CONTEXT {
-            cbCertEncoded: 1,
-            ..Default::default()
-        };
-
-        let error = certificate_encoded_bytes(&certificate)
-            .expect_err("certificate bytes must have a non-null pointer");
-
-        assert_eq!(error.reason, "leaf certificate encoded bytes are null");
-    }
-
-    #[test]
-    fn certificate_bytes_preserve_the_encoded_input() {
-        let mut bytes = [1_u8, 2, 3, 4];
-        let certificate = CERT_CONTEXT {
-            pbCertEncoded: bytes.as_mut_ptr(),
-            cbCertEncoded: u32::try_from(bytes.len()).expect("test bytes fit in u32"),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            certificate_encoded_bytes(&certificate).expect("valid bytes"),
-            bytes
-        );
-    }
-
-    #[test]
-    fn certificate_subject_rejects_a_second_length_that_does_not_match_the_first() {
-        let mut call_count = 0;
-
-        let error = certificate_subject_from_getter(|buffer| {
-            call_count += 1;
-            if let Some(units) = buffer {
-                units.copy_from_slice(&[u16::from(b'A'), 0, 0]);
-                2
-            } else {
-                3
-            }
-        })
-        .expect_err("the two CertGetNameStringW lengths must agree");
-
-        assert_eq!(call_count, 2);
-        assert_eq!(
-            error.reason,
-            "leaf signer subject length changed while being read"
-        );
-    }
-
-    #[test]
-    fn certificate_subject_rejects_a_non_terminated_second_result() {
-        let error = certificate_subject_from_getter(|buffer| {
-            if let Some(units) = buffer {
-                units.copy_from_slice(&[u16::from(b'A'), u16::from(b'B'), u16::from(b'C')]);
-            }
-            3
-        })
-        .expect_err("CertGetNameStringW output must end in a UTF-16 NUL");
-
-        assert_eq!(error.reason, "leaf signer subject is not NUL-terminated");
-    }
 }

@@ -251,8 +251,12 @@ mod native {
                         && observed.status_ok
                         && observed.binding.vendor_id == adapter.vendor
                         && observed.binding.device_id == adapter.device
-                        && observed.binding.subsystem_vendor_id == (adapter.subsystem >> 16) as u16
-                        && observed.binding.subsystem_device_id == adapter.subsystem as u16
+                        && observed.binding.subsystem_vendor_id
+                            == u16::try_from(adapter.subsystem >> 16)
+                                .expect("upper subsystem half fits u16")
+                        && observed.binding.subsystem_device_id
+                            == u16::try_from(adapter.subsystem & 0xffff)
+                                .expect("lower subsystem half fits u16")
                         && observed.binding.revision_id == adapter.revision
                 })
                 .collect::<Vec<_>>();
@@ -292,10 +296,14 @@ mod native {
             if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 == 0 {
                 adapters.push(NumericAdapter {
                     luid: desc.AdapterLuid,
-                    vendor: desc.VendorId as u16,
-                    device: desc.DeviceId as u16,
+                    vendor: u16::try_from(desc.VendorId)
+                        .map_err(|_| "DXGI returned a vendor ID outside the canonical PCI width")?,
+                    device: u16::try_from(desc.DeviceId)
+                        .map_err(|_| "DXGI returned a device ID outside the canonical PCI width")?,
                     subsystem: desc.SubSysId,
-                    revision: desc.Revision as u8,
+                    revision: u8::try_from(desc.Revision).map_err(
+                        |_| "DXGI returned a revision ID outside the canonical PCI width",
+                    )?,
                 });
             }
         }

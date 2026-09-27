@@ -10,13 +10,20 @@ use crate::{
     operations::{GpuBranch, plan_for_step},
 };
 
+#[derive(Debug, Clone, Copy, Default)]
+enum MockRecovery {
+    #[default]
+    Lossless,
+    Rebuildable,
+    Manual,
+    Mixed,
+}
+
 #[derive(Default)]
 struct Mock {
     calls: Vec<&'static str>,
     dry: bool,
-    rebuildable: bool,
-    manual: bool,
-    mixed: bool,
+    recovery: MockRecovery,
     fail_apply: bool,
     evidence: bool,
     failure: Option<&'static str>,
@@ -62,7 +69,7 @@ const REBUILDABLE_TEST_STEP: Step = Step {
 #[test]
 fn rebuildable_audit_must_be_pending_and_bound_to_the_current_step() {
     let (result, backend, progress) = run(Mock {
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         audit_step: Some("P1:4"),
         ..Mock::default()
     });
@@ -74,7 +81,7 @@ fn rebuildable_audit_must_be_pending_and_bound_to_the_current_step() {
 #[test]
 fn p1_3_rejects_an_incomplete_audit_target_set_before_persistence_or_mutation() {
     let (result, backend, progress) = run(Mock {
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         audit_targets: Some(vec![RebuildableTarget::Cs2ShaderCache]),
         ..Mock::default()
     });
@@ -173,7 +180,7 @@ fn lossless_backup_order_is_unchanged_by_default() {
 #[test]
 fn rebuildable_audit_is_durable_before_mutation_and_finalized_before_progress() {
     let (result, backend, progress) = run(Mock {
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         ..Mock::default()
     });
     result.expect("run");
@@ -196,7 +203,7 @@ fn rebuildable_audit_is_durable_before_mutation_and_finalized_before_progress() 
 fn dry_run_inspects_and_plans_without_recovery_persistence_or_mutation() {
     let (result, backend, progress) = run(Mock {
         dry: true,
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         ..Mock::default()
     });
     result.expect("preview");
@@ -258,7 +265,7 @@ fn every_rebuildable_audit_failure_blocks_later_stages_and_progress() {
         ),
     ] {
         let (result, backend, progress) = run(Mock {
-            rebuildable: true,
+            recovery: MockRecovery::Rebuildable,
             failure: Some(failure),
             ..Mock::default()
         });
@@ -278,7 +285,7 @@ fn every_rebuildable_audit_failure_blocks_later_stages_and_progress() {
 fn cancellation_at_the_step_boundary_prevents_rebuildable_audit_and_mutation() {
     let mut engine = Engine::new(
         Mock {
-            rebuildable: true,
+            recovery: MockRecovery::Rebuildable,
             ..Mock::default()
         },
         Progress::default(),
@@ -418,7 +425,7 @@ fn completion_progress_persistence_failure_does_not_record_the_step_before_retry
 fn unsupported_and_inapplicable_steps_do_not_capture_recovery_records() {
     let (unsupported, backend, progress) = run(Mock {
         inspection: Some(Inspection::Unsupported),
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         ..Mock::default()
     });
     assert!(matches!(unsupported, Err(EngineError::Unsupported { .. })));
@@ -427,7 +434,7 @@ fn unsupported_and_inapplicable_steps_do_not_capture_recovery_records() {
 
     let (inapplicable, backend, progress) = run(Mock {
         inspection: Some(Inspection::Inapplicable),
-        rebuildable: true,
+        recovery: MockRecovery::Rebuildable,
         ..Mock::default()
     });
     inapplicable.expect("skip");

@@ -7,13 +7,15 @@
 
 mod adapters;
 mod evidence;
+mod lifecycle;
 mod model;
 mod plan;
 
 pub use adapters::{
     AcquisitionAdapter, AdapterFailure, ApplyReceipt, ArtifactInstallationAdapter, CaptureReceipt,
     ExecutionClock, InspectionAdapter, MutationAdapter, PackageExecutionAdapter,
-    SafeModeInspectionAdapter, capture_driver_execution, inspect_input, remove_captured_packages,
+    SafeModeInspectionAdapter, capture_driver_execution, captured_package_removal_started,
+    inspect_input, remove_captured_packages, resume_captured_package_removal,
     validate_capture_binding,
 };
 pub use evidence::{
@@ -21,6 +23,16 @@ pub use evidence::{
     CaptureFreshnessPolicy, DriverExecutionCapture, InstallationEvidence,
     InstalledArtifactObservation, PackageRemovalDisposition, PackageRemovalOutcome,
     RemovalExecutionEvidence, SafeModeObservation, SafeModeState,
+};
+pub use lifecycle::{
+    DriverLifecycleError, DriverTransactionV2, DriverTransactionV2Stage, DrsApplicationSnapshot,
+    DrsItemKey, DrsItemKind, DrsMergeResult, DrsProfileSnapshot, DrsReconciliation,
+    DrsReconciliationItem, DrsReconciliationStatus, DrsSettingSnapshot, DrsSnapshot, DrsValue,
+    NVIDIA_COMPONENT_CATALOG_SCHEMA_VERSION, NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION,
+    NVIDIA_TRANSACTION_V2_SCHEMA_VERSION, NvidiaCleanupScope, NvidiaComponentCatalog,
+    NvidiaComponentDefinition, NvidiaComponentPreset, NvidiaComponentSelection,
+    ProfileBackupDigestReference, RequiredUnclassifiedComponent, SourceComponentClassification,
+    V1DriverTransactionState, V1TransactionMigrationDecision, migrate_v1_transaction,
 };
 pub use model::{
     ArtifactLocator, AuthenticodeEvidence, AuthenticodeStatus, ExactGpuIdentity, GpuVendor,

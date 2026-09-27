@@ -52,11 +52,7 @@ pub(crate) fn capture_cs2_config() -> Result<(Cs2ConfigBinding, BackupEntry), St
 }
 
 pub(crate) fn apply_cs2_config(binding: &Cs2ConfigBinding) -> Result<(), String> {
-    reobserve_cs2_config_binding(binding)?;
-    let controller = Cs2ConfigController::new(binding.install.clone())
-        .map_err(|error| format!("revalidate P1:34 CS2 config controller: {error}"))?;
-    let mut files = NativeCs2ConfigFs::new(&binding.install)
-        .map_err(|error| format!("bind trusted P1:34 CS2 CFG filesystem: {error}"))?;
+    let (controller, mut files) = revalidated_cs2_controller_and_files(binding)?;
     controller
         .apply(&binding.request, &mut files)
         .map(|_| ())
@@ -64,14 +60,21 @@ pub(crate) fn apply_cs2_config(binding: &Cs2ConfigBinding) -> Result<(), String>
 }
 
 pub(crate) fn verify_cs2_config(binding: &Cs2ConfigBinding) -> Result<(), String> {
-    reobserve_cs2_config_binding(binding)?;
-    let controller = Cs2ConfigController::new(binding.install.clone())
-        .map_err(|error| format!("revalidate P1:34 CS2 config controller: {error}"))?;
-    let mut files = NativeCs2ConfigFs::new(&binding.install)
-        .map_err(|error| format!("bind trusted P1:34 CS2 CFG filesystem: {error}"))?;
+    let (controller, mut files) = revalidated_cs2_controller_and_files(binding)?;
     controller
         .verify(&binding.request, &mut files)
         .map_err(|error| format!("verify P1:34 CS2 config transaction: {error}"))
+}
+
+fn revalidated_cs2_controller_and_files(
+    binding: &Cs2ConfigBinding,
+) -> Result<(Cs2ConfigController, NativeCs2ConfigFs), String> {
+    reobserve_cs2_config_binding(binding)?;
+    let controller = Cs2ConfigController::new(binding.install.clone())
+        .map_err(|error| format!("revalidate P1:34 CS2 config controller: {error}"))?;
+    let files = NativeCs2ConfigFs::new(&binding.install)
+        .map_err(|error| format!("bind trusted P1:34 CS2 CFG filesystem: {error}"))?;
+    Ok((controller, files))
 }
 
 pub(crate) fn restore_cs2_config(entry: &BackupEntry) -> Result<(), String> {

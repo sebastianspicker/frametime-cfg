@@ -12,12 +12,10 @@ use windows::{
             SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
             SetupDiGetDeviceInstanceIdW, SetupDiOpenDevRegKey,
         },
-        Foundation::{
-            ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError,
-        },
+        Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError},
         System::Registry::{
             HKEY, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_DWORD, REG_SZ, REG_VALUE_TYPE, RegCloseKey,
-            RegQueryValueExW, RegSetValueExW,
+            RegSetValueExW,
         },
     },
     core::{GUID, PCWSTR},
@@ -197,47 +195,17 @@ pub(crate) fn read_raw_value(
     key: &DriverKey,
     name: &str,
 ) -> Result<Option<(REG_VALUE_TYPE, Vec<u8>)>, String> {
-    let name = wide(name);
-    let mut kind = REG_VALUE_TYPE(0);
-    let mut size = 0_u32;
-    let first = unsafe {
-        RegQueryValueExW(
-            key.0,
-            PCWSTR(name.as_ptr()),
-            None,
-            Some(&mut kind),
-            None,
-            Some(&mut size),
-        )
-    };
-    if first == ERROR_FILE_NOT_FOUND {
-        return Ok(None);
-    }
-    if first.0 != 0 || size as usize > MAX_VALUE_BYTES {
-        return Err(format!(
+    let wide_name = wide(name);
+    super::qos::read_bounded_raw_value(key.0, name, MAX_VALUE_BYTES, |failure| match failure {
+        super::qos::RawRegistryReadFailure::Size(code) => format!(
             "P1:16 RegQueryValueExW({}) failed with {}",
-            name_label(&name),
-            first.0
-        ));
-    }
-    let mut bytes = vec![0_u8; size as usize];
-    let second = unsafe {
-        RegQueryValueExW(
-            key.0,
-            PCWSTR(name.as_ptr()),
-            None,
-            Some(&mut kind),
-            Some(bytes.as_mut_ptr()),
-            Some(&mut size),
-        )
-    };
-    if second.0 != 0 || size as usize != bytes.len() {
-        return Err(format!(
-            "P1:16 RegQueryValueExW(value) failed with {}",
-            second.0
-        ));
-    }
-    Ok(Some((kind, bytes)))
+            name_label(&wide_name),
+            code
+        ),
+        super::qos::RawRegistryReadFailure::Value(code) => {
+            format!("P1:16 RegQueryValueExW(value) failed with {}", code)
+        }
+    })
 }
 
 pub(crate) fn parse_guid(value: &str, label: &str) -> Result<GUID, String> {
@@ -251,10 +219,7 @@ pub(crate) fn utf16_bytes(bytes: &[u8], label: &str) -> Result<String, String> {
             "P1:16 {label} has an invalid UTF-16 registry value"
         ));
     }
-    let units = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect::<Vec<_>>();
+    let units = crate::system::device_bindings::windows_setupapi::utf16_units(bytes);
     utf16_text(&units, label)
 }
 
