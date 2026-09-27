@@ -50,8 +50,22 @@ The dependency direction is `domain <- windows <- app <- cli/gui`:
   native-window plumbing, but workflow decisions stay in the app and domain
   layers.
 
-The [`repo-checks`](../repo-checks) workspace member enforces this as part of
-`cargo test --workspace`, on every platform.
+Public surfaces are deliberately narrow:
+
+- Domain items are reached only through their owning module
+  (`frametime_domain::backup::BackupFile`); the crate root exports modules and
+  `PRODUCT_VERSION`, nothing else.
+- `frametime-windows` publishes one explicit list in `src/lib.rs`, identical on
+  every target. Off Windows the native operations are fail-closed stubs, so
+  the app, frontends, and source preview build and test on any host. Because
+  of those stubs, host builds allow dead code in this crate, and the
+  Windows-target Clippy run is the authority for it.
+
+The unpublished [`repo-checks`](../repo-checks) workspace member enforces the
+dependency direction (including rejecting reverse edges), domain purity, the
+frontend-to-app boundary, the native package surface, a 600-line file cap, and
+exact-clone detection. It runs as part of `cargo test --workspace` on every
+platform, including the Windows gate.
 
 ## Primary runtime flow
 
@@ -149,7 +163,7 @@ The root workspace has its own lockfile and validation gates. The archived
 workspaces keep their separate Cargo manifests and lockfiles as historical
 records, not active validation lanes. Root release packaging consumes prebuilt
 Windows CLI/GUI binaries and produces a portable directory and ZIP; it does not
-package either archived workspace. CI assembles only the structurally checked
+package `repo-checks` or either archived workspace. CI assembles only the structurally checked
 unsigned lane and never exercises authenticated signing.
 
 ## Invariants and non-goals
