@@ -70,9 +70,9 @@ fn gui_does_not_hardcode_phase_totals() {
         let source = repo_checks::read_utf8(&path);
         let relative = path.strip_prefix(&repository_root).unwrap_or(&path);
 
-        for (index, line) in non_test_lines(&source).enumerate() {
+        for (number, line) in repo_checks::production_lines(&source) {
             if pattern.is_match(line) {
-                offenders.push(format!("{}:{}: {line}", relative.display(), index + 1));
+                offenders.push(format!("{}:{number}: {line}", relative.display()));
             }
         }
     }
@@ -93,13 +93,4 @@ fn find_matches(repository_root: &Path, path: &Path, pattern: &Regex, offenders:
             offenders.push(format!("{}:{}: {line}", relative.display(), index + 1));
         }
     }
-}
-
-/// GUI phase totals are checked outside the file's terminal `cfg(test)`
-/// block, so test fixtures with matching numbers never register as
-/// violations.
-fn non_test_lines(source: &str) -> impl Iterator<Item = &str> {
-    source
-        .lines()
-        .take_while(|line| !line.starts_with("#[cfg(test)]"))
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-const FORBIDDEN_PATTERN: &str = r"std::(fs|env|process)|\bfs::|\bwindows::|std::os::windows|SystemTime::now|Instant::now|OffsetDateTime::now|std::process::id|\btime[[:space:]]*=";
+const FORBIDDEN_PATTERN: &str = r"std::(fs|env|process)|\bfs::|\bwindows::|std::os::windows|SystemTime::now|Instant::now|OffsetDateTime::now|std::process::id";
 const DEPENDENCY_TABLE_NAMES: [&str; 3] =
     ["dependencies", "dev-dependencies", "build-dependencies"];
 const FORBIDDEN_DEPENDENCIES: [&str; 2] = ["time", "windows"];
@@ -53,20 +53,11 @@ fn inspect_source(
     let source = repo_checks::read_utf8(path);
     let relative = path.strip_prefix(repository_root).unwrap_or(path);
 
-    for (index, line) in production_lines(&source).enumerate() {
+    for (number, line) in repo_checks::production_lines(&source) {
         if pattern.is_match(line) {
-            offenders.push(format!("{}:{}: {line}", relative.display(), index + 1));
+            offenders.push(format!("{}:{number}: {line}", relative.display()));
         }
     }
-}
-
-/// Every domain module keeps its tests in a terminal `cfg(test)` block. Stop
-/// at the first such block so test fixtures never register as production
-/// boundary violations.
-fn production_lines(source: &str) -> impl Iterator<Item = &str> {
-    source
-        .lines()
-        .take_while(|line| !line.starts_with("#[cfg(test)]") && !line.starts_with("#[cfg(any())]"))
 }
 
 fn forbidden_dependency_keys(document: &toml::Table) -> Vec<String> {
