@@ -8,61 +8,8 @@ use super::{
     Sha256Digest, SignedArtifactDescriptor, ValidationError,
 };
 
-fn timestamp(value: &str, field: &'static str) -> Result<i64, ValidationError> {
-    let bytes = value.as_bytes();
-    if bytes.len() != 20
-        || bytes[4] != b'-'
-        || bytes[7] != b'-'
-        || bytes[10] != b'T'
-        || bytes[13] != b':'
-        || bytes[16] != b':'
-        || bytes[19] != b'Z'
-    {
-        return Err(ValidationError::Invalid { field });
-    }
-    let number = |start: usize, end: usize| {
-        bytes[start..end]
-            .iter()
-            .try_fold(0_i64, |value, byte| match byte {
-                b'0'..=b'9' => Ok(value * 10 + i64::from(byte - b'0')),
-                _ => Err(ValidationError::Invalid { field }),
-            })
-    };
-    let year = number(0, 4)?;
-    let month = number(5, 7)?;
-    let day = number(8, 10)?;
-    let hour = number(11, 13)?;
-    let minute = number(14, 16)?;
-    let second = number(17, 19)?;
-    let days_in_month = match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
-        2 => 28,
-        _ => return Err(ValidationError::Invalid { field }),
-    };
-    if year == 0 || day == 0 || day > days_in_month || hour > 23 || minute > 59 || second > 59 {
-        Err(ValidationError::Invalid { field })
-    } else {
-        let completed_years = year - 1;
-        let days_before_year = completed_years * 365 + completed_years / 4 - completed_years / 100
-            + completed_years / 400;
-        let month_days = [0_i64, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-        let mut days = days_before_year + month_days[(month - 1) as usize] + day - 1;
-        if month > 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            days += 1;
-        }
-        Ok(days * 86_400 + hour * 3_600 + minute * 60 + second)
-    }
-}
-
-fn text(value: &str, field: &'static str) -> Result<(), ValidationError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-        Err(ValidationError::Invalid { field })
-    } else {
-        Ok(())
-    }
-}
+mod validation;
+use validation::{text, timestamp};
 
 /// One exact GPU-bound installed package set in canonical OEM-name order.
 /// Empty sets are permitted for a fresh post-removal observation.
@@ -146,6 +93,32 @@ impl SafeModeObservation {
         timestamp(&self.observed_at_utc, "safeModeObservedAtUtc")?;
         text(&self.boot_session_id, "bootSessionId")
     }
+
+    pub fn validate_for_resume(
+        &self,
+        capture: &DriverExecutionCapture,
+        freshness: CaptureFreshnessPolicy,
+        now_utc: &str,
+    ) -> Result<(), ValidationError> {
+        self.validate_against_capture(capture)?;
+        freshness.validate_capture_at(&self.observed_at_utc, now_utc)
+    }
+
+    fn validate_against_capture(
+        &self,
+        capture: &DriverExecutionCapture,
+    ) -> Result<(), ValidationError> {
+        self.validate()?;
+        if self.target_gpu != capture.target_gpu || self.state != SafeModeState::Confirmed {
+            return Err(ValidationError::SafeModeNotConfirmed);
+        }
+        if timestamp(&self.observed_at_utc, "resumeSafeModeObservedAtUtc")?
+            < timestamp(&capture.captured_at_utc, "capturedAtUtc")?
+        {
+            return Err(ValidationError::StaleCapture);
+        }
+        Ok(())
+    }
 }
 
 /// Host-selected maximum age for an execution capture. The host supplies the
@@ -192,11 +165,10 @@ pub struct DriverExecutionCapture {
 }
 
 impl DriverExecutionCapture {
-    pub fn validate_for_plan_at(
+    pub fn validate_for_plan(
         &self,
         plan: &DryRunDriverPlan,
         freshness: CaptureFreshnessPolicy,
-        now_utc: &str,
     ) -> Result<(), ValidationError> {
         plan.validate()?;
         if self.schema_version != SCHEMA_VERSION
@@ -221,14 +193,22 @@ impl DriverExecutionCapture {
         let safe_mode_observed =
             timestamp(&self.safe_mode.observed_at_utc, "safeModeObservedAtUtc")?;
         let captured_at = timestamp(&self.captured_at_utc, "capturedAtUtc")?;
-        if safe_mode_observed > captured_at {
-            return Err(ValidationError::CapturePlanMismatch);
-        }
-        if captured_at - safe_mode_observed
-            > i64::try_from(freshness.maximum_age_seconds).unwrap_or(i64::MAX)
+        if safe_mode_observed > captured_at
+            || captured_at - safe_mode_observed
+                > i64::try_from(freshness.maximum_age_seconds).unwrap_or(i64::MAX)
         {
             return Err(ValidationError::StaleCapture);
         }
+        Ok(())
+    }
+
+    pub fn validate_for_plan_at(
+        &self,
+        plan: &DryRunDriverPlan,
+        freshness: CaptureFreshnessPolicy,
+        now_utc: &str,
+    ) -> Result<(), ValidationError> {
+        self.validate_for_plan(plan, freshness)?;
         freshness.validate_capture_at(&self.captured_at_utc, now_utc)
     }
 }
@@ -254,6 +234,11 @@ pub struct ArtifactIdentity {
 }
 
 impl ArtifactIdentity {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        super::model::validate_token(&self.artifact_id, "artifactId")?;
+        super::model::validate_leaf(&self.artifact_file_name, "artifactFileName")
+    }
+
     pub fn from_descriptor(descriptor: &SignedArtifactDescriptor) -> Result<Self, ValidationError> {
         descriptor.locator.validate()?;
         descriptor.authenticode.validate()?;
@@ -293,11 +278,10 @@ pub struct ArtifactAcquisitionAuthorization {
 }
 
 impl ArtifactAcquisitionAuthorization {
-    pub fn validate_for_capture_at(
+    pub fn validate_for_capture(
         &self,
         capture: &DriverExecutionCapture,
         artifact: &SignedArtifactDescriptor,
-        now_utc: &str,
     ) -> Result<(), ValidationError> {
         if self.schema_version != SCHEMA_VERSION
             || self.plan_sha256 != capture.plan_sha256
@@ -311,8 +295,23 @@ impl ArtifactAcquisitionAuthorization {
         self.artifact.validate_matches(artifact)?;
         let authorized = timestamp(&self.authorized_at_utc, "authorizedAtUtc")?;
         let expires = timestamp(&self.expires_at_utc, "expiresAtUtc")?;
+        if authorized >= expires {
+            return Err(ValidationError::AuthorizationExpired);
+        }
+        Ok(())
+    }
+
+    pub fn validate_for_capture_at(
+        &self,
+        capture: &DriverExecutionCapture,
+        artifact: &SignedArtifactDescriptor,
+        now_utc: &str,
+    ) -> Result<(), ValidationError> {
+        self.validate_for_capture(capture, artifact)?;
+        let authorized = timestamp(&self.authorized_at_utc, "authorizedAtUtc")?;
+        let expires = timestamp(&self.expires_at_utc, "expiresAtUtc")?;
         let now = timestamp(now_utc, "nowUtc")?;
-        if authorized > now || expires < now || authorized >= expires {
+        if authorized > now || expires < now {
             Err(ValidationError::AuthorizationExpired)
         } else {
             Ok(())
@@ -342,28 +341,37 @@ pub struct PackageRemovalOutcome {
 #[serde(rename_all = "camelCase")]
 pub struct RemovalExecutionEvidence {
     pub capture: DriverExecutionCapture,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_safe_mode: Option<SafeModeObservation>,
     pub outcomes: Vec<PackageRemovalOutcome>,
     pub post_removal_packages: CanonicalPackageSet,
     pub observed_at_utc: String,
 }
 
 impl RemovalExecutionEvidence {
-    pub fn validate_for_plan_at(
+    pub fn validate_for_plan(
         &self,
         plan: &DryRunDriverPlan,
         freshness: CaptureFreshnessPolicy,
-        now_utc: &str,
     ) -> Result<(), ValidationError> {
-        self.capture
-            .validate_for_plan_at(plan, freshness, now_utc)?;
+        self.capture.validate_for_plan(plan, freshness)?;
+        if let Some(resume) = &self.resume_safe_mode {
+            resume.validate_against_capture(&self.capture)?;
+        }
         self.post_removal_packages.validate()?;
         // `post_removal_packages` is structurally the readback after the
         // ordered per-package outcomes. Windows timestamps are only precise
         // to a second here, so equality is valid; requiring an artificial
         // sleep would not strengthen the mutation binding.
+        let authorized_at = self
+            .resume_safe_mode
+            .as_ref()
+            .map_or(&self.capture.captured_at_utc, |resume| {
+                &resume.observed_at_utc
+            });
         if self.post_removal_packages.target_gpu != self.capture.target_gpu
             || timestamp(&self.observed_at_utc, "postRemovalObservedAtUtc")?
-                < timestamp(&self.capture.captured_at_utc, "capturedAtUtc")?
+                < timestamp(authorized_at, "removalAuthorizedAtUtc")?
         {
             return Err(ValidationError::InvalidRemovalEvidence);
         }
@@ -377,9 +385,11 @@ impl RemovalExecutionEvidence {
             return Err(ValidationError::InvalidRemovalEvidence);
         }
         for outcome in &self.outcomes {
-            if outcome.disposition != PackageRemovalDisposition::Removed
-                || timestamp(&outcome.observed_at_utc, "removalObservedAtUtc")?
-                    < timestamp(&self.capture.captured_at_utc, "capturedAtUtc")?
+            if !matches!(
+                &outcome.disposition,
+                PackageRemovalDisposition::Removed | PackageRemovalDisposition::AlreadyAbsent
+            ) || timestamp(&outcome.observed_at_utc, "removalObservedAtUtc")?
+                < timestamp(authorized_at, "removalAuthorizedAtUtc")?
             {
                 return Err(ValidationError::InvalidRemovalEvidence);
             }
@@ -389,6 +399,22 @@ impl RemovalExecutionEvidence {
         } else {
             Ok(())
         }
+    }
+
+    pub fn validate_for_plan_at(
+        &self,
+        plan: &DryRunDriverPlan,
+        freshness: CaptureFreshnessPolicy,
+        now_utc: &str,
+    ) -> Result<(), ValidationError> {
+        self.validate_for_plan(plan, freshness)?;
+        let authorized_at = self
+            .resume_safe_mode
+            .as_ref()
+            .map_or(&self.capture.captured_at_utc, |resume| {
+                &resume.observed_at_utc
+            });
+        freshness.validate_capture_at(authorized_at, now_utc)
     }
 }
 
@@ -436,45 +462,119 @@ impl InstallationEvidence {
         artifact: &SignedArtifactDescriptor,
         now_utc: &str,
     ) -> Result<(), ValidationError> {
+        self.validate_for_capture(capture, artifact)?;
         self.authorization
-            .validate_for_capture_at(capture, artifact, now_utc)?;
+            .validate_for_capture_at(capture, artifact, now_utc)
+    }
+
+    pub fn validate_for_capture(
+        &self,
+        capture: &DriverExecutionCapture,
+        artifact: &SignedArtifactDescriptor,
+    ) -> Result<(), ValidationError> {
+        self.validate_bound_observations(capture, artifact, true)
+    }
+
+    /// Validate a post-removal recovery install. The original bounded
+    /// authorization remains structurally bound, while its wall-clock expiry
+    /// does not strand a machine whose captured packages are already absent.
+    pub fn validate_for_recovery(
+        &self,
+        capture: &DriverExecutionCapture,
+        artifact: &SignedArtifactDescriptor,
+    ) -> Result<(), ValidationError> {
+        self.validate_bound_observations(capture, artifact, false)
+    }
+
+    fn validate_bound_observations(
+        &self,
+        capture: &DriverExecutionCapture,
+        artifact: &SignedArtifactDescriptor,
+        enforce_authorization_expiry: bool,
+    ) -> Result<(), ValidationError> {
+        self.authorization.validate_for_capture(capture, artifact)?;
         self.fresh_authenticode.validate()?;
+        self.installed_artifact.artifact.validate()?;
         self.post_install_packages.validate()?;
-        if self.post_install_packages.target_gpu != capture.target_gpu
-            || self.post_install_packages.packages.is_empty()
-            || self.installed_artifact.artifact != self.authorization.artifact
-            || self.fresh_authenticode.signer_subject != artifact.authenticode.signer_subject
-            || self.fresh_authenticode.signer_thumbprint_sha256
-                != artifact.authenticode.signer_thumbprint_sha256
-            || timestamp(
-                &self.fresh_authenticode.observed_at_utc,
-                "freshAuthenticodeObservedAtUtc",
-            )? < timestamp(&self.authorization.authorized_at_utc, "authorizedAtUtc")?
-            || timestamp(
-                &self.fresh_authenticode.observed_at_utc,
-                "freshAuthenticodeObservedAtUtc",
-            )? > timestamp(
-                &self.installed_artifact.observed_at_utc,
-                "installObservedAtUtc",
-            )?
-            || timestamp(
-                &self.installed_artifact.observed_at_utc,
-                "installObservedAtUtc",
-            )? < timestamp(&self.authorization.authorized_at_utc, "authorizedAtUtc")?
-            || timestamp(&self.observed_at_utc, "postInstallObservedAtUtc")?
-                < timestamp(&self.authorization.authorized_at_utc, "authorizedAtUtc")?
-            || timestamp(
-                &self.installed_artifact.observed_at_utc,
-                "installObservedAtUtc",
-            )? > timestamp(&self.observed_at_utc, "postInstallObservedAtUtc")?
-            // The record's field order is the operation sequence: retained
-            // artifact launch, SetupAPI reinspection, then this readback.
-            // Equal second-resolution timestamps therefore remain coherent.
-            || timestamp(&self.observed_at_utc, "postInstallObservedAtUtc")?
-                < timestamp(&capture.captured_at_utc, "capturedAtUtc")?
+        if !self.matches_capture_and_artifact(capture, artifact)
+            || !self.observations_are_ordered(capture, enforce_authorization_expiry)?
         {
             return Err(ValidationError::InvalidInstallationEvidence);
         }
         Ok(())
+    }
+
+    fn matches_capture_and_artifact(
+        &self,
+        capture: &DriverExecutionCapture,
+        artifact: &SignedArtifactDescriptor,
+    ) -> bool {
+        if self.post_install_packages.target_gpu != capture.target_gpu
+            || self.post_install_packages.packages.is_empty()
+            || self.installed_artifact.artifact.artifact_id
+                != self.authorization.artifact.artifact_id
+            || self.installed_artifact.artifact.signer_thumbprint_sha256
+                != self.fresh_authenticode.signer_thumbprint_sha256
+        {
+            return false;
+        }
+        self.matches_artifact_signer(artifact)
+    }
+
+    fn matches_artifact_signer(&self, artifact: &SignedArtifactDescriptor) -> bool {
+        if self.fresh_authenticode.signer_subject != artifact.authenticode.signer_subject {
+            return false;
+        }
+        self.fresh_authenticode.signer_thumbprint_sha256
+            == artifact.authenticode.signer_thumbprint_sha256
+    }
+
+    fn observations_are_ordered(
+        &self,
+        capture: &DriverExecutionCapture,
+        enforce_authorization_expiry: bool,
+    ) -> Result<bool, ValidationError> {
+        let authorization = timestamp(&self.authorization.authorized_at_utc, "authorizedAtUtc")?;
+        let expires = timestamp(&self.authorization.expires_at_utc, "expiresAtUtc")?;
+        let fresh = timestamp(
+            &self.fresh_authenticode.observed_at_utc,
+            "freshAuthenticodeObservedAtUtc",
+        )?;
+        let installed = timestamp(
+            &self.installed_artifact.observed_at_utc,
+            "installObservedAtUtc",
+        )?;
+        let observed = timestamp(&self.observed_at_utc, "postInstallObservedAtUtc")?;
+        let captured = timestamp(&capture.captured_at_utc, "capturedAtUtc")?;
+        Ok(fresh >= authorization
+            && (!enforce_authorization_expiry || fresh <= expires)
+            && fresh <= installed
+            && installed >= authorization
+            && (!enforce_authorization_expiry || installed <= expires)
+            && observed >= authorization
+            && installed <= observed
+            && observed >= captured)
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+
+    #[test]
+    fn timestamp_accepts_leap_day_and_preserves_second_resolution() {
+        let first = timestamp("2024-02-29T23:59:58Z", "capturedAtUtc").expect("leap day");
+        let second = timestamp("2024-02-29T23:59:59Z", "capturedAtUtc").expect("leap day");
+        assert_eq!(second - first, 1);
+    }
+
+    #[test]
+    fn timestamp_rejects_invalid_calendar_bound_with_its_input_field() {
+        assert_eq!(
+            timestamp("2023-02-29T00:00:00Z", "authorizedAtUtc"),
+            Err(ValidationError::Invalid {
+                field: "authorizedAtUtc"
+            })
+        );
     }
 }

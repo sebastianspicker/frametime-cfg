@@ -79,56 +79,83 @@ pub fn validate_selected_runtime(
     manifest: &RuntimeManifest,
     payload_hashes: &BTreeMap<String, String>,
 ) -> Result<String, String> {
-    if current.schema_version != RUNTIME_SCHEMA_VERSION {
-        return Err("unsupported runtime selector schema".into());
-    }
-    let prefix = format!("{RUNTIME_GENERATIONS_DIR}/");
-    let generation = current
-        .relative_path
-        .strip_prefix(&prefix)
-        .filter(|value| current.relative_path == format!("{prefix}{value}"))
-        .filter(|value| valid_generation_id(value))
-        .ok_or("unsafe selected runtime generation")?;
-    let selector_hash = current
-        .manifest_sha256
-        .as_deref()
-        .filter(|value| valid_sha256(value))
-        .ok_or("runtime selector missing manifest hash")?;
+    let generation = selected_generation(current)?;
+    let selector_hash = selected_manifest_hash(current)?;
     if hex_sha256(manifest_bytes) != selector_hash {
         return Err("runtime selector manifest hash mismatch".into());
     }
     if manifest.schema_version != RUNTIME_SCHEMA_VERSION || manifest.generation != generation {
         return Err("runtime selector and manifest generation differ".into());
     }
+    validate_runtime_file_sets(manifest, payload_hashes)?;
+    validate_runtime_executable(manifest)?;
+    validate_runtime_hashes(manifest, payload_hashes)?;
+    Ok(generation.to_owned())
+}
+
+fn selected_generation(current: &RuntimeCurrent) -> Result<&str, String> {
+    if current.schema_version != RUNTIME_SCHEMA_VERSION {
+        return Err("unsupported runtime selector schema".into());
+    }
+    let prefix = format!("{RUNTIME_GENERATIONS_DIR}/");
+    current
+        .relative_path
+        .strip_prefix(&prefix)
+        .filter(|value| current.relative_path == format!("{prefix}{value}"))
+        .filter(|value| valid_generation_id(value))
+        .ok_or_else(|| "unsafe selected runtime generation".into())
+}
+
+fn selected_manifest_hash(current: &RuntimeCurrent) -> Result<&str, String> {
+    current
+        .manifest_sha256
+        .as_deref()
+        .filter(|value| valid_sha256(value))
+        .ok_or_else(|| "runtime selector missing manifest hash".into())
+}
+
+fn validate_runtime_file_sets(
+    manifest: &RuntimeManifest,
+    payload_hashes: &BTreeMap<String, String>,
+) -> Result<(), String> {
     let expected = RUNTIME_PAYLOAD_PATHS
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    let declared = manifest
-        .files
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let observed = payload_hashes
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if declared != expected || observed != expected {
-        return Err("runtime file set differs from compiled payload contract".into());
+    for actual in [manifest.files.keys(), payload_hashes.keys()] {
+        if actual.map(String::as_str).collect::<BTreeSet<_>>() != expected {
+            return Err("runtime file set differs from compiled payload contract".into());
+        }
     }
-    if manifest.payload_contract_hash != portable_payload_contract_hash()
-        || manifest.executable.path != "frametime.exe"
-        || manifest.files.get("frametime.exe") != Some(&manifest.executable.sha256)
+    Ok(())
+}
+
+fn validate_runtime_executable(manifest: &RuntimeManifest) -> Result<(), String> {
+    let contract_matches = manifest.payload_contract_hash == portable_payload_contract_hash();
+    let executable_path_matches = manifest.executable.path == "frametime.exe";
+    let executable_hash_matches =
+        manifest.files.get("frametime.exe") == Some(&manifest.executable.sha256);
+    if !contract_matches
+        || !executable_path_matches
+        || !executable_hash_matches
         || !valid_sha256(&manifest.executable.sha256)
     {
-        return Err("runtime executable record is invalid".into());
+        Err("runtime executable record is invalid".into())
+    } else {
+        Ok(())
     }
+}
+
+fn validate_runtime_hashes(
+    manifest: &RuntimeManifest,
+    payload_hashes: &BTreeMap<String, String>,
+) -> Result<(), String> {
     for (path, hash) in &manifest.files {
         if !valid_sha256(hash) || payload_hashes.get(path) != Some(hash) {
             return Err(format!("runtime hash mismatch: {path}"));
         }
     }
-    Ok(generation.to_owned())
+    Ok(())
 }
 
 #[must_use]

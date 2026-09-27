@@ -193,11 +193,11 @@ fn secondary_command(area: Area, tertiary: bool) -> SecondaryCommand {
         (Area::Cs2Cfg, _) => SecondaryCommand::Warning(
             "Choose Install selected CS2 CFG to run the authenticated elevated CLI command.",
         ),
-        (Area::Network, _) => {
-            SecondaryCommand::Warning("This area has no native action in the current batch.")
-        }
+        (Area::Network, _) => SecondaryCommand::Warning(
+            "Enable Ethernet RSS is the only network change the GUI makes. Other network settings stay advisory.",
+        ),
         (Area::Drivers, _) => SecondaryCommand::Warning(
-            "Driver lifecycle mutation and Safe Mode execution remain CLI-only.",
+            "Driver changes and Safe Mode work run only from the terminal entrypoint, frametime.exe.",
         ),
     }
 }

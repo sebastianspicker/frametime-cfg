@@ -26,33 +26,11 @@ impl ExportDestination {
 
 pub(crate) fn parse_export_destination(path: &Path) -> Result<ExportDestination, String> {
     let text = path.to_string_lossy().replace('/', "\\");
-    if text.is_empty() || text.len() > 32_767 || text.contains('\0') {
-        return Err("backup export destination is empty, oversized, or contains NUL".into());
-    }
-    if text.starts_with(r"\\") || text.starts_with(r"\\?\") || text.starts_with(r"\\.\") {
-        return Err("backup export destination must not be a UNC or device path".into());
-    }
-    let drive = text.as_bytes().first().copied();
-    let bytes = text.as_bytes();
-    if bytes.len() < 4
-        || !drive.is_some_and(|value| value.is_ascii_alphabetic())
-        || bytes[1] != b':'
-        || bytes[2] != b'\\'
-    {
-        return Err("backup export destination must be an absolute local drive path".into());
-    }
-    let mut components = text[3..].split('\\').map(str::to_owned).collect::<Vec<_>>();
-    if components.is_empty()
-        || components.iter().any(|part| {
-            part.is_empty()
-                || part == "."
-                || part == ".."
-                || part.contains(':')
-                || part.contains(['<', '>', '"', '|', '?', '*'])
-                || part.ends_with(' ')
-                || part.ends_with('.')
-                || reserved_dos_device_name(part)
-        })
+    let drive = validated_drive_letter(&text)?;
+    let mut components = validated_components(&text)?;
+    if components
+        .iter()
+        .any(|component| unsafe_component(component))
     {
         return Err("backup export destination contains an unsafe path component".into());
     }
@@ -63,13 +41,47 @@ pub(crate) fn parse_export_destination(path: &Path) -> Result<ExportDestination,
         .pop()
         .ok_or("backup export destination has no file name")?;
     Ok(ExportDestination {
-        drive_root: format!(
-            "{}:\\",
-            char::from(drive.ok_or("backup export destination has no drive")?).to_ascii_uppercase()
-        ),
+        drive_root: format!("{}:\\", char::from(drive).to_ascii_uppercase()),
         directories: components,
         file_name,
     })
+}
+
+fn validated_drive_letter(text: &str) -> Result<u8, String> {
+    if text.is_empty() || text.len() > 32_767 || text.contains('\0') {
+        return Err("backup export destination is empty, oversized, or contains NUL".into());
+    }
+    if text.starts_with(r"\\") || text.starts_with(r"\\?\") || text.starts_with(r"\\.\") {
+        return Err("backup export destination must not be a UNC or device path".into());
+    }
+    let bytes = text.as_bytes();
+    let Some(drive) = bytes.first().copied() else {
+        return Err("backup export destination must be an absolute local drive path".into());
+    };
+    if bytes.len() < 4 || !drive.is_ascii_alphabetic() || bytes[1] != b':' || bytes[2] != b'\\' {
+        return Err("backup export destination must be an absolute local drive path".into());
+    }
+    Ok(drive)
+}
+
+fn validated_components(text: &str) -> Result<Vec<String>, String> {
+    let components = text[3..].split('\\').map(str::to_owned).collect::<Vec<_>>();
+    if components.is_empty() {
+        Err("backup export destination contains an unsafe path component".into())
+    } else {
+        Ok(components)
+    }
+}
+
+fn unsafe_component(component: &str) -> bool {
+    component.is_empty()
+        || component == "."
+        || component == ".."
+        || component.contains(':')
+        || component.contains(['<', '>', '"', '|', '?', '*'])
+        || component.ends_with(' ')
+        || component.ends_with('.')
+        || reserved_dos_device_name(component)
 }
 
 pub(crate) fn reserved_dos_device_name(component: &str) -> bool {

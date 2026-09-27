@@ -1,4 +1,8 @@
 use crate::*;
+mod baseline;
+mod final_reconciliation;
+pub(crate) use baseline::*;
+use final_reconciliation::*;
 /// Load progress only from the fixed live location.  Corrupt data is never
 /// rewritten by a read operation.
 pub fn load_progress() -> Result<Progress, String> {
@@ -49,7 +53,7 @@ pub(crate) fn load_benchmark_history_at(work_dir: &Path) -> Result<Vec<Benchmark
     }
     let value: serde_json::Value = read_json_trusted(&trusted, "benchmark_history.json")
         .map_err(|error| format!("read benchmark history: {error}"))?;
-    Ok(frametime_domain::benchmark::decode_benchmark_history(value))
+    frametime_domain::benchmark::decode_benchmark_history_checked(value)
 }
 
 /// Reads recovery state only through the trusted fixed root; absent data is
@@ -132,17 +136,30 @@ pub fn persist_fps_capture(
     _package: &AuthenticatedPackage,
     cap: u32,
     capture: BenchmarkCapture,
+    run_evidence: Option<BenchmarkRunEvidence>,
     label: String,
 ) -> Result<State, String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     let work_dir = trusted.path();
-    if cap == 0
-        || !capture.average_fps.is_finite()
+    if !capture.average_fps.is_finite()
         || capture.average_fps <= 0.0
         || !capture.p1_fps.is_finite()
         || capture.p1_fps < 0.0
     {
         return Err("invalid FPS capture".into());
+    }
+    if let Some(evidence) = &run_evidence {
+        evidence.validate_against(capture).map_err(str::to_owned)?;
+    }
+    if cap > 0 {
+        let evidence = run_evidence
+            .as_ref()
+            .ok_or("a nonzero FPS cap requires per-run benchmark evidence")?;
+        if evidence.observations.len() < MIN_CAP_AUTHORIZATION_RUNS
+            || evidence.failing_runs(cap) != 0
+        {
+            return Err("per-run benchmark evidence does not sustain the nonzero FPS cap".into());
+        }
     }
     let _lock = WorkLock::acquire(work_dir)?;
     let state_path = work_dir.join(STATE_FILE);
@@ -179,12 +196,14 @@ pub fn persist_fps_capture(
         } else {
             Vec::new()
         };
+        validate_benchmark_run_evidence(&history)?;
         history.push(BenchmarkRecord {
             timestamp: captured_at,
             avg_fps: capture.average_fps,
             p1_fps: capture.p1_fps,
             label,
             runs: capture.runs,
+            run_evidence,
             receipt_id: None,
             transaction_id: None,
             unknown: BTreeMap::new(),
@@ -209,7 +228,7 @@ pub fn persist_fps_capture(
 /// retry, while progress is always last.
 pub fn persist_baseline_benchmark(
     _package: &AuthenticatedPackage,
-    capture: BenchmarkCapture,
+    capture: &ValidatedBenchmarkCapture,
 ) -> Result<State, String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     let work_dir = trusted.path();
@@ -217,8 +236,13 @@ pub fn persist_baseline_benchmark(
     let state = read_state_for_baseline(&trusted, work_dir)?;
     let progress = read_progress_for_baseline(&trusted, work_dir)?;
     let history = read_history_for_baseline(&trusted, work_dir)?;
-    let commit =
-        prepare_baseline_benchmark_commit(&state, &progress, &history, timestamp(), capture)?;
+    let commit = prepare_baseline_benchmark_commit_with_evidence(
+        &state,
+        &progress,
+        &history,
+        timestamp(),
+        capture,
+    )?;
     if commit.idempotent {
         return Ok(commit.state);
     }
@@ -260,7 +284,7 @@ pub fn persist_baseline_benchmark(
 /// receipt already present in either prefix; any disagreement fails closed.
 pub fn persist_final_benchmark(
     _runtime: &VerifiedSelectedRuntime,
-    capture: BenchmarkCapture,
+    capture: &ValidatedBenchmarkCapture,
 ) -> Result<FinalBenchmarkReceipt, String> {
     // This must be first: on non-Windows `acquire` rejects before this API can
     // create a lock, load configuration, or mutate a persistence file.
@@ -271,13 +295,16 @@ pub fn persist_final_benchmark(
     let progress = read_progress_for_final(&trusted, work_dir)?;
     let history = read_history_for_final(&trusted, work_dir)?;
     let reconciliation = reconcile_final_benchmark(
-        &state,
-        &progress,
-        &history,
-        _runtime.config().value(),
+        FinalBenchmarkReconciliationInput {
+            state: &state,
+            progress: &progress,
+            history: &history,
+            config: _runtime.config().value(),
+            captured_utc: timestamp(),
+            capture: capture.aggregate(),
+            run_evidence: Some(capture.run_evidence()),
+        },
         || fresh_final_receipt_id(&state, &history),
-        timestamp(),
-        capture,
     )?;
     let FinalBenchmarkReconciliation::Pending(commit) = reconciliation else {
         let FinalBenchmarkReconciliation::Complete(receipt) = reconciliation else {
@@ -322,273 +349,6 @@ pub fn persist_final_benchmark(
     let history: Vec<BenchmarkRecord> = read_json_trusted(&trusted, "benchmark_history.json")
         .map_err(|error| format!("final benchmark history reread: {error}"))?;
     validate_persisted_final_benchmark(&state, &progress, &history)
-}
-
-pub(crate) enum FinalBenchmarkReconciliation {
-    Complete(FinalBenchmarkReceipt),
-    Pending(Box<FinalBenchmarkCommit>),
-}
-
-pub(crate) trait FreshReceiptId {
-    fn generate(self) -> Result<TransactionId, String>;
-}
-
-impl FreshReceiptId for TransactionId {
-    fn generate(self) -> Result<TransactionId, String> {
-        Ok(self)
-    }
-}
-
-impl<F> FreshReceiptId for F
-where
-    F: FnOnce() -> Result<TransactionId, String>,
-{
-    fn generate(self) -> Result<TransactionId, String> {
-        self()
-    }
-}
-
-pub(crate) fn reconcile_final_benchmark<Id>(
-    state: &State,
-    progress: &Progress,
-    history: &[BenchmarkRecord],
-    config: &Config,
-    fresh_receipt_id: Id,
-    captured_utc: String,
-    capture: BenchmarkCapture,
-) -> Result<FinalBenchmarkReconciliation, String>
-where
-    Id: FreshReceiptId,
-{
-    let completion_key = Progress::key(3, 13);
-    if progress.completed_steps.contains(&completion_key) {
-        let receipt = validate_persisted_final_benchmark(state, progress, history)?;
-        if !receipt_matches_capture(&receipt, capture) {
-            return Err("completed final benchmark conflicts with the requested capture".into());
-        }
-        return Ok(FinalBenchmarkReconciliation::Complete(receipt));
-    }
-    if progress.skipped_steps.contains(&completion_key) {
-        return Err("final benchmark progress was skipped and cannot be retried".into());
-    }
-
-    let partial_history = final_history_prefix(history)?;
-    let mut source_state = state.clone();
-    let state_receipt = source_state.final_benchmark.clone();
-    if let Some(receipt) = &state_receipt {
-        validate_partial_final_state(&source_state, receipt, capture)?;
-        source_state.final_benchmark = None;
-        let transaction = source_state
-            .active_reboot_transaction
-            .as_mut()
-            .ok_or("final benchmark partial state lost its reboot transaction")?;
-        transaction.stage = RebootStage::PhaseThreeArmed;
-    } else {
-        state.validate().map_err(str::to_owned)?;
-    }
-
-    let (receipt_id, record_timestamp, source_history) = match partial_history {
-        Some((index, record)) => {
-            validate_partial_final_record(record, state, capture)?;
-            if let Some(receipt) = &state_receipt
-                && !receipt.matches_history_record(record)
-            {
-                return Err("final benchmark history and state prefixes disagree".into());
-            }
-            let receipt_id = receipt_id_from_record(record)?;
-            let mut source_history = history.to_vec();
-            source_history.remove(index);
-            (receipt_id, record.timestamp.clone(), source_history)
-        }
-        None => match &state_receipt {
-            Some(receipt) => (
-                receipt.receipt_id.clone(),
-                receipt.captured_utc.clone(),
-                history.to_vec(),
-            ),
-            None => (fresh_receipt_id.generate()?, captured_utc, history.to_vec()),
-        },
-    };
-    let commit = prepare_final_benchmark_commit(
-        &source_state,
-        progress,
-        &source_history,
-        config,
-        receipt_id,
-        record_timestamp,
-        capture,
-    )?;
-    if let Some(receipt) = &state_receipt
-        && commit.receipt != *receipt
-    {
-        return Err("final benchmark partial state does not reproduce its receipt".into());
-    }
-    if let Some((_, record)) = final_history_prefix(history)?
-        && !commit.receipt.matches_history_record(record)
-    {
-        return Err("final benchmark partial history does not reproduce its receipt".into());
-    }
-    Ok(FinalBenchmarkReconciliation::Pending(Box::new(commit)))
-}
-
-pub(crate) fn final_history_prefix(
-    history: &[BenchmarkRecord],
-) -> Result<Option<(usize, &BenchmarkRecord)>, String> {
-    let records = history
-        .iter()
-        .enumerate()
-        .filter(|(_, record)| {
-            record.label == FINAL_BENCHMARK_LABEL
-                || record.receipt_id.is_some()
-                || record.transaction_id.is_some()
-        })
-        .collect::<Vec<_>>();
-    match records.as_slice() {
-        [] => Ok(None),
-        [record] => Ok(Some(*record)),
-        _ => Err("final benchmark history contains conflicting receipt prefixes".into()),
-    }
-}
-
-pub(crate) fn validate_partial_final_state(
-    state: &State,
-    receipt: &FinalBenchmarkReceipt,
-    capture: BenchmarkCapture,
-) -> Result<(), String> {
-    state.validate().map_err(str::to_owned)?;
-    if !matches!(
-        state
-            .active_reboot_transaction
-            .as_ref()
-            .map(|transaction| &transaction.stage),
-        Some(RebootStage::PhaseThreeComplete)
-    ) {
-        return Err("final benchmark partial state is not Phase 3 complete".into());
-    }
-    if !receipt_matches_capture(receipt, capture)
-        || state.fps_cap != receipt.fps_cap
-        || state.avg_fps != receipt.avg_fps
-        || state.p1_fps != Some(receipt.p1_fps)
-        || state.cap_date.as_deref() != Some(&receipt.captured_utc)
-    {
-        return Err("final benchmark partial state conflicts with the requested capture".into());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_partial_final_record(
-    record: &BenchmarkRecord,
-    state: &State,
-    capture: BenchmarkCapture,
-) -> Result<(), String> {
-    state.validate().map_err(str::to_owned)?;
-    let transaction_id = state
-        .active_reboot_transaction
-        .as_ref()
-        .and_then(|transaction| transaction.transaction_id.as_ref())
-        .ok_or("final benchmark history has no active reboot transaction")?;
-    if record.label != FINAL_BENCHMARK_LABEL
-        || record.receipt_id.is_none()
-        || record.transaction_id.as_ref() != Some(transaction_id)
-        || record.avg_fps != capture.average_fps
-        || record.p1_fps != capture.p1_fps
-        || record.runs != capture.runs
-    {
-        return Err("final benchmark partial history conflicts with the requested capture".into());
-    }
-    Ok(())
-}
-
-pub(crate) fn receipt_matches_capture(
-    receipt: &FinalBenchmarkReceipt,
-    capture: BenchmarkCapture,
-) -> bool {
-    receipt.avg_fps == capture.average_fps
-        && receipt.p1_fps == capture.p1_fps
-        && receipt.runs == capture.runs
-}
-
-pub(crate) fn receipt_id_from_record(record: &BenchmarkRecord) -> Result<TransactionId, String> {
-    record
-        .receipt_id
-        .clone()
-        .ok_or("final benchmark partial history has no receipt id".into())
-}
-
-pub(crate) fn fresh_final_receipt_id(
-    state: &State,
-    history: &[BenchmarkRecord],
-) -> Result<TransactionId, String> {
-    let transaction_id = state
-        .active_reboot_transaction
-        .as_ref()
-        .and_then(|transaction| transaction.transaction_id.as_ref());
-    for _ in 0..8 {
-        let candidate = random_final_receipt_id()?;
-        if transaction_id != Some(&candidate)
-            && history
-                .iter()
-                .all(|record| record.receipt_id.as_ref() != Some(&candidate))
-        {
-            return Ok(candidate);
-        }
-    }
-    Err("could not generate a unique final benchmark receipt id".into())
-}
-
-pub(crate) fn read_state_for_baseline(
-    trusted: &TrustedWorkDir,
-    work_dir: &Path,
-) -> Result<State, String> {
-    if !work_dir.join(STATE_FILE).exists() {
-        return Ok(State::default());
-    }
-    let state: State = read_json_trusted(trusted, STATE_FILE)
-        .map_err(|error| format!("read baseline state: {error}"))?;
-    state.validate().map_err(str::to_owned)?;
-    if !state.work_dir.eq_ignore_ascii_case(WINDOWS_WORK_DIR) {
-        return Err("state workDir must be C:\\FRAMETIME_CFG".into());
-    }
-    Ok(state)
-}
-
-pub(crate) fn read_progress_for_baseline(
-    trusted: &TrustedWorkDir,
-    work_dir: &Path,
-) -> Result<Progress, String> {
-    if !work_dir.join(PROGRESS_FILE).exists() {
-        return Ok(Progress::default());
-    }
-    read_json_trusted(trusted, PROGRESS_FILE)
-        .map_err(|error| format!("read baseline progress: {error}"))
-}
-
-pub(crate) fn read_history_for_baseline(
-    trusted: &TrustedWorkDir,
-    work_dir: &Path,
-) -> Result<Vec<BenchmarkRecord>, String> {
-    if !work_dir.join("benchmark_history.json").exists() {
-        return Ok(Vec::new());
-    }
-    let history: Vec<BenchmarkRecord> = read_json_trusted(trusted, "benchmark_history.json")
-        .map_err(|error| format!("read baseline benchmark history: {error}"))?;
-    // The core validator is deliberately invoked by prepare and persisted
-    // validation. Keeping the raw typed read here avoids normalizing corrupt
-    // history into an empty vector.
-    Ok(history)
-}
-
-pub(crate) fn baseline_benchmark_is_persisted(work_dir: &Path, trusted: &TrustedWorkDir) -> bool {
-    let Ok(state) = read_state_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    let Ok(progress) = read_progress_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    let Ok(history) = read_history_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    validate_persisted_baseline_benchmark(&state, &progress, &history).is_ok()
 }
 
 /// Execute only the bounded cleanup actions selected by the CLI.

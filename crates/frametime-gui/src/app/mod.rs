@@ -1,7 +1,7 @@
 use std::{
     ffi::c_void,
     os::windows::ffi::OsStrExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Child,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
@@ -15,8 +15,7 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
-            COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, GetSysColorBrush, HBRUSH, InvalidateRect,
-            UpdateWindow,
+            COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, HBRUSH, InvalidateRect, UpdateWindow,
         },
         System::{
             Console::{AttachConsole, CTRL_BREAK_EVENT, FreeConsole, GenerateConsoleCtrlEvent},
@@ -26,8 +25,8 @@ use windows::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW, NotifyWinEvent},
             Controls::Dialogs::{GetSaveFileNameW, OFN_OVERWRITEPROMPT, OPENFILENAMEW},
             Controls::{
-                BST_CHECKED, InitCommonControls, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT,
-                LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMTEXTW, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
+                BST_CHECKED, EM_LIMITTEXT, InitCommonControls, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
+                LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
                 LVM_INSERTITEMW, LVM_SETITEMTEXTW, LVNI_SELECTED, LVS_REPORT, LVS_SHOWSELALWAYS,
                 LVS_SINGLESEL,
             },
@@ -36,7 +35,7 @@ use windows::{
                 GetDpiForWindow, SetProcessDpiAwarenessContext,
             },
             Input::KeyboardAndMouse::{
-                EnableWindow, GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_F6,
+                EnableWindow, GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_F5, VK_F6,
             },
             Shell::{
                 IsUserAnAdmin, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
@@ -65,16 +64,22 @@ const VIDEO_ROOT: usize = 212;
 const VIDEO_TIER: usize = 213;
 const QUINARY: usize = 214;
 const CS2_CFG_ASSET: usize = 215;
+const REFRESH: usize = 216;
+const FPS_BASE: usize = 300;
 const POLL_TIMER: usize = 1;
 
 mod actions;
+mod benchmark;
 mod catalog;
 mod controls;
 mod layout;
 mod navigation;
 mod package;
+mod retro;
 mod runtime;
+mod selection;
 mod state;
+mod table;
 mod video;
 mod window_proc;
 
@@ -85,8 +90,10 @@ use layout::*;
 use navigation::*;
 use package::*;
 use runtime::*;
+use selection::*;
 pub(crate) use state::safe_mode_active;
 use state::{AppState, NativeOperation, NativeWorkerResult};
+use table::*;
 use video::*;
 use window_proc::*;
 
@@ -118,7 +125,7 @@ pub fn run(
             WINDOW_EX_STYLE::default(),
             class,
             w!("frametime.cfg"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             1180,

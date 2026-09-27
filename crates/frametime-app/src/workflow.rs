@@ -154,15 +154,7 @@ fn run_phase_three(yes: bool) -> Result<RunSummary, ApplicationError> {
     let receipt_route =
         phase_three_receipt_route(final_benchmark_status().map_err(ApplicationError::failed)?)?;
     if let PhaseThreeReceiptRoute::Complete(receipt) = receipt_route {
-        authorize_live_with_final_benchmark_evidence(
-            PhaseRequest::ClearPhaseThreeHandoff,
-            &state,
-            &progress,
-            BootMode::Normal,
-            RuntimeBinding::VerifiedSelectedExecutable,
-            Evidence::Verified,
-        )?;
-        clear_phase_three_handoff(&runtime).map_err(ApplicationError::failed)?;
+        clear_phase_three_handoff_with_receipt(&runtime, &state, &progress)?;
         return Ok(RunSummary::message(format!(
             "P3:13 final benchmark receipt is coherent: {}.",
             receipt.receipt_id
@@ -190,15 +182,7 @@ fn run_phase_three(yes: bool) -> Result<RunSummary, ApplicationError> {
         )),
         FinalBenchmarkStatus::Coherent(receipt) => {
             let (state, progress) = load_session()?;
-            authorize_live_with_final_benchmark_evidence(
-                PhaseRequest::ClearPhaseThreeHandoff,
-                &state,
-                &progress,
-                BootMode::Normal,
-                RuntimeBinding::VerifiedSelectedExecutable,
-                Evidence::Verified,
-            )?;
-            clear_phase_three_handoff(&runtime).map_err(ApplicationError::failed)?;
+            clear_phase_three_handoff_with_receipt(&runtime, &state, &progress)?;
             summary.messages.push(format!(
                 "P3:13 final benchmark receipt is coherent: {}.",
                 receipt.receipt_id
@@ -254,16 +238,24 @@ pub fn run_final_benchmark(
     )?;
     let outcome = persist_final_benchmark_capture(capture, &runtime)?;
     let (state, progress) = load_session()?;
+    clear_phase_three_handoff_with_receipt(&runtime, &state, &progress)?;
+    Ok(outcome)
+}
+
+fn clear_phase_three_handoff_with_receipt(
+    runtime: &frametime_windows::VerifiedSelectedRuntime,
+    state: &State,
+    progress: &Progress,
+) -> Result<(), ApplicationError> {
     authorize_live_with_final_benchmark_evidence(
         PhaseRequest::ClearPhaseThreeHandoff,
-        &state,
-        &progress,
+        state,
+        progress,
         BootMode::Normal,
         RuntimeBinding::VerifiedSelectedExecutable,
         Evidence::Verified,
     )?;
-    clear_phase_three_handoff(&runtime).map_err(ApplicationError::failed)?;
-    Ok(outcome)
+    clear_phase_three_handoff(runtime).map_err(ApplicationError::failed)
 }
 
 fn run_phase_three_handoff() -> Result<RunSummary, ApplicationError> {

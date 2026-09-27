@@ -187,6 +187,17 @@ pub(crate) mod native {
         expected_cim: i32,
         expected_vt: u16,
     ) -> Result<VARIANT, String> {
+        let (variant, cim) = property_variant(object, name)?;
+        let vt = unsafe { variant.Anonymous.Anonymous.vt.0 };
+        if cim != expected_cim || vt != expected_vt {
+            return Err(format!(
+                "WMI property {name} has unexpected CIM/VARIANT type"
+            ));
+        }
+        Ok(variant)
+    }
+
+    fn property_variant(object: &IWbemClassObject, name: &str) -> Result<(VARIANT, i32), String> {
         let mut variant = VARIANT::default();
         let mut cim = 0;
         let wide_name = property_name(name);
@@ -200,13 +211,7 @@ pub(crate) mod native {
             )
         }
         .map_err(|error| format!("read WMI property {name}: {error}"))?;
-        let vt = unsafe { variant.Anonymous.Anonymous.vt.0 };
-        if cim != expected_cim || vt != expected_vt {
-            return Err(format!(
-                "WMI property {name} has unexpected CIM/VARIANT type"
-            ));
-        }
-        Ok(variant)
+        Ok((variant, cim))
     }
 
     pub(crate) fn bstr_value(
@@ -228,19 +233,7 @@ pub(crate) mod native {
     }
 
     pub(crate) fn nullable_string(object: &IWbemClassObject, name: &str) -> Result<String, String> {
-        let mut variant = VARIANT::default();
-        let mut cim = 0;
-        let wide_name = property_name(name);
-        unsafe {
-            object.Get(
-                PCWSTR(wide_name.as_ptr()),
-                0,
-                &mut variant,
-                Some(&mut cim),
-                None,
-            )
-        }
-        .map_err(|error| format!("read WMI property {name}: {error}"))?;
+        let (variant, cim) = property_variant(object, name)?;
         let vt = unsafe { variant.Anonymous.Anonymous.vt.0 };
         if vt == VT_NULL.0 {
             return Ok(String::new());
@@ -297,6 +290,15 @@ pub(crate) mod native {
         name: &str,
         value: &str,
     ) -> Result<(), String> {
+        put_bstr(object, name, BSTR::from(value), CIM_STRING.0)
+    }
+
+    fn put_bstr(
+        object: &IWbemClassObject,
+        name: &str,
+        value: BSTR,
+        cim_type: i32,
+    ) -> Result<(), String> {
         let variant = VARIANT {
             Anonymous: VARIANT_0 {
                 Anonymous: ManuallyDrop::new(VARIANT_0_0 {
@@ -305,12 +307,12 @@ pub(crate) mod native {
                     wReserved2: 0,
                     wReserved3: 0,
                     Anonymous: VARIANT_0_0_0 {
-                        bstrVal: ManuallyDrop::new(BSTR::from(value)),
+                        bstrVal: ManuallyDrop::new(value),
                     },
                 }),
             },
         };
-        put(object, name, &variant, CIM_STRING.0)
+        put(object, name, &variant, cim_type)
     }
 
     pub(crate) fn put_uint32(
@@ -378,20 +380,7 @@ pub(crate) mod native {
         name: &str,
         value: u64,
     ) -> Result<(), String> {
-        let variant = VARIANT {
-            Anonymous: VARIANT_0 {
-                Anonymous: ManuallyDrop::new(VARIANT_0_0 {
-                    vt: VT_BSTR,
-                    wReserved1: 0,
-                    wReserved2: 0,
-                    wReserved3: 0,
-                    Anonymous: VARIANT_0_0_0 {
-                        bstrVal: ManuallyDrop::new(BSTR::from(value.to_string())),
-                    },
-                }),
-            },
-        };
-        put(object, name, &variant, CIM_UINT64.0)
+        put_bstr(object, name, BSTR::from(value.to_string()), CIM_UINT64.0)
     }
 
     pub(crate) fn put_sint8(

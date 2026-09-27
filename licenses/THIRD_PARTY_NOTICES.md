@@ -1,9 +1,12 @@
-# Rust distribution third-party notices
+# Third-party notices
 
-This file records the registry packages selected for the portable Rust
-distribution. It replaces the legacy PowerShell/source-provenance notice: the
-portable release contains the Rust executables and does not contain the
-repository's PowerShell implementation.
+`sevenz-rust2` 0.22.2 powers the NVIDIA SFX reader, with only its `util` feature
+enabled. It is Apache-2.0 and ships with its transitive `lzma-rust2`
+(Apache-2.0) and `crc32fast` (MIT OR Apache-2.0) dependencies. The applicable
+license texts are in this directory.
+
+This file lists the registry packages and SDK-derived material included in the
+portable Rust distribution.
 
 ## Scope and generation inputs
 
@@ -53,6 +56,7 @@ small ABI-derived portion.
 | `clap_lex v1.1.0` | `MIT OR Apache-2.0` |
 | `colorchoice v1.0.5` | `MIT OR Apache-2.0` |
 | `cpufeatures v0.2.17` | `MIT OR Apache-2.0` |
+| `crc32fast v1.5.0` | `MIT OR Apache-2.0` |
 | `crypto-common v0.1.7` | `MIT OR Apache-2.0` |
 | `deranged v0.5.8` | `MIT OR Apache-2.0` |
 | `digest v0.10.7` | `MIT OR Apache-2.0` |
@@ -62,6 +66,7 @@ small ABI-derived portion.
 | `indexmap v2.14.0` | `Apache-2.0 OR MIT` |
 | `is_terminal_polyfill v1.70.2` | `MIT OR Apache-2.0` |
 | `itoa v1.0.18` | `MIT OR Apache-2.0` |
+| `lzma-rust2 v0.20.1` | `Apache-2.0` |
 | `memchr v2.8.3` | `Unlicense OR MIT` |
 | `num-conv v0.2.2` | `MIT OR Apache-2.0` |
 | `once_cell_polyfill v1.70.2` | `MIT OR Apache-2.0` |
@@ -74,6 +79,7 @@ small ABI-derived portion.
 | `serde_core v1.0.229` | `MIT OR Apache-2.0` |
 | `serde_json v1.0.151` | `MIT OR Apache-2.0` |
 | `serde_spanned v1.1.1` | `MIT OR Apache-2.0` |
+| `sevenz-rust2 v0.22.2` | `Apache-2.0` |
 | `sha2 v0.10.9` | `MIT OR Apache-2.0` |
 | `strsim v0.11.1` | `MIT` |
 | `thiserror v2.0.20` | `MIT OR Apache-2.0` |

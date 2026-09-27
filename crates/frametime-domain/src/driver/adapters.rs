@@ -58,10 +58,16 @@ pub trait SafeModeInspectionAdapter {
 /// Injected package execution boundary. Each OEM package has its own typed
 /// outcome; callers must additionally obtain a fresh package inventory.
 pub trait PackageExecutionAdapter {
-    fn remove_published_package(
+    fn published_package_is_present(
         &self,
         target_gpu: &ExactGpuIdentity,
         published_name: &OemPublishedName,
+    ) -> Result<bool, AdapterFailure>;
+
+    fn remove_published_package(
+        &self,
+        target_gpu: &ExactGpuIdentity,
+        expected: &PublishedDriverPackage,
     ) -> Result<PackageRemovalOutcome, AdapterFailure>;
 
     fn inspect_published_packages(
@@ -136,7 +142,9 @@ pub fn validate_capture_binding(
         return Err(ValidationError::IncompleteReceipt);
     }
     capture.target_gpu.validate()?;
-    if capture.plan_sha256 != plan.input_sha256 || capture.target_gpu != plan.target_gpu {
+    let plan_hash_matches = capture.plan_sha256 == plan.input_sha256;
+    let target_gpu_matches = capture.target_gpu == plan.target_gpu;
+    if !plan_hash_matches || !target_gpu_matches {
         return Err(ValidationError::ReceiptPlanMismatch);
     }
     if capture.captured_at_utc.trim().is_empty()
@@ -230,10 +238,122 @@ pub fn remove_captured_packages(
             operation: "remove driver packages",
             reason: error.to_string(),
         })?;
+    if captured_package_removal_started(&capture, packages)? {
+        return Err(AdapterFailure {
+            operation: "remove driver packages",
+            reason: "the exact captured package set changed before removal".into(),
+        });
+    }
+    execute_captured_package_removal(plan, capture, None, packages, clock, freshness)
+}
+
+/// Reinspect the selected GPU and report whether removal of the immutable
+/// captured package set has already begun. Every package still associated with
+/// the target must match its complete captured record; new or rebound records
+/// fail closed.
+pub fn captured_package_removal_started(
+    capture: &DriverExecutionCapture,
+    packages: &dyn PackageExecutionAdapter,
+) -> Result<bool, AdapterFailure> {
+    capture
+        .installed_packages
+        .validate()
+        .map_err(|error| AdapterFailure {
+            operation: "inspect driver removal progress",
+            reason: error.to_string(),
+        })?;
+    let current = CanonicalPackageSet::from_unsorted(
+        capture.target_gpu.clone(),
+        packages.inspect_published_packages(&capture.target_gpu)?,
+    )
+    .map_err(|error| AdapterFailure {
+        operation: "inspect driver removal progress",
+        reason: error.to_string(),
+    })?;
+    let captured = &capture.installed_packages.packages;
+    for package in &current.packages {
+        if !captured.iter().any(|expected| expected == package) {
+            return Err(AdapterFailure {
+                operation: "inspect driver removal progress",
+                reason: "a current target package does not match the immutable capture".into(),
+            });
+        }
+    }
+    let mut removal_started = false;
+    for expected in captured {
+        let in_store =
+            packages.published_package_is_present(&capture.target_gpu, &expected.published_name)?;
+        let current_record = current
+            .packages
+            .iter()
+            .find(|package| package.published_name == expected.published_name);
+        match (in_store, current_record) {
+            (true, Some(package)) if package == expected => {}
+            (false, None) => removal_started = true,
+            _ => {
+                return Err(AdapterFailure {
+                    operation: "inspect driver removal progress",
+                    reason: "Driver Store presence and exact target-package records disagree"
+                        .into(),
+                });
+            }
+        }
+    }
+    Ok(removal_started)
+}
+
+/// Resume an already armed P2:2 cleanup from its immutable captured package
+/// set. The original capture may be old because some packages may already be
+/// absent, but the adapter must freshly confirm Safe Mode before any retry.
+pub fn resume_captured_package_removal(
+    plan: &DryRunDriverPlan,
+    capture: DriverExecutionCapture,
+    safe_mode: &dyn SafeModeInspectionAdapter,
+    packages: &dyn PackageExecutionAdapter,
+    clock: &dyn ExecutionClock,
+    freshness: CaptureFreshnessPolicy,
+) -> Result<RemovalExecutionEvidence, AdapterFailure> {
+    capture
+        .validate_for_plan(plan, freshness)
+        .map_err(|error| AdapterFailure {
+            operation: "resume driver package removal",
+            reason: error.to_string(),
+        })?;
+    let resume_safe_mode = safe_mode.observe_safe_mode(&capture.target_gpu)?;
+    let now = clock.current_utc()?;
+    resume_safe_mode
+        .validate_for_resume(&capture, freshness, &now)
+        .map_err(|error| AdapterFailure {
+            operation: "resume driver package removal",
+            reason: error.to_string(),
+        })?;
+    if !captured_package_removal_started(&capture, packages)? {
+        return Err(AdapterFailure {
+            operation: "resume driver package removal",
+            reason: "no captured package is absent; a live authorization is required".into(),
+        });
+    }
+    execute_captured_package_removal(
+        plan,
+        capture,
+        Some(resume_safe_mode),
+        packages,
+        clock,
+        freshness,
+    )
+}
+
+fn execute_captured_package_removal(
+    plan: &DryRunDriverPlan,
+    capture: DriverExecutionCapture,
+    resume_safe_mode: Option<SafeModeObservation>,
+    packages: &dyn PackageExecutionAdapter,
+    clock: &dyn ExecutionClock,
+    freshness: CaptureFreshnessPolicy,
+) -> Result<RemovalExecutionEvidence, AdapterFailure> {
     let mut outcomes = Vec::with_capacity(capture.installed_packages.packages.len());
     for package in &capture.installed_packages.packages {
-        outcomes
-            .push(packages.remove_published_package(&capture.target_gpu, &package.published_name)?);
+        outcomes.push(packages.remove_published_package(&capture.target_gpu, package)?);
     }
     let post_removal_packages = CanonicalPackageSet::from_unsorted(
         capture.target_gpu.clone(),
@@ -245,6 +365,7 @@ pub fn remove_captured_packages(
     })?;
     let evidence = RemovalExecutionEvidence {
         capture,
+        resume_safe_mode,
         outcomes,
         post_removal_packages,
         observed_at_utc: clock.current_utc()?,
@@ -258,3 +379,7 @@ pub fn remove_captured_packages(
         })?;
     Ok(evidence)
 }
+
+#[cfg(test)]
+#[path = "adapters/tests.rs"]
+mod tests;

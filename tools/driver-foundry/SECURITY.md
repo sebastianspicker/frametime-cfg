@@ -1,26 +1,54 @@
-# Security
+# Security policy
 
-## What Driver Foundry does
+> **Archived and unsupported.** This policy remains the security-reporting route
+> for the preserved Driver Foundry source, history, Cargo manifests, and
+> lockfiles. The workspace is excluded from active CI, Dependabot, issue routing,
+> packaging, and contributor workflows.
 
-Driver Foundry can remove display and audio drivers, edit the registry, stop services, and optionally launch vendor installers. Those capabilities are intentional and can damage a system if used carelessly.
+## Current mutation boundary
 
-## Safe defaults and opt-in controls
+The archived source can parse and plan sensitive driver, registry, service,
+filesystem, AppX, and Safe Mode operations. Current public execution paths do
+not authorize those plans:
 
-- Cleanup is plan/journal only until `--execute` (or its `--live` alias) is supplied.
-- Installation filters and dry-runs by default; it does not launch `setup.exe` until force-install is explicitly requested.
-- Safe Mode BCD edits stay disabled unless `DFOUNDRY_ALLOW_BCDEDIT=1` is set.
-- Live OEM-driver deletion remains disabled unless `DFOUNDRY_UNINSTALL_DELETE=1` is set.
-- Non-interactive environments can suppress a UAC relaunch with `DFOUNDRY_NO_UAC_RELAUNCH=1`; this does not grant elevation.
-- `DFOUNDRY_DATA_DIR` selects an alternate data directory. Treat its catalogs and embedded helpers as trusted input.
+- `clean --execute` fails until packaged cleanup catalogs can be independently
+  authenticated.
+- `install --force-install` and live registry application fail until a platform
+  signer verifier and authenticated vendor policy exist.
+- BCD mutation, restart, and shutdown are unavailable. No
+  `DFOUNDRY_ALLOW_BCDEDIT` bypass is supported.
+- Embedded-helper materialization/execution, 7z/SFX creation, and signing-helper
+  execution are unavailable until authenticated helper manifests exist.
+- `DFOUNDRY_UNINSTALL_DELETE=1` gates an inner OEM-delete stage, but the live
+  install authorization blocks the pipeline before that stage. Do not treat it
+  as a usable public mutation switch.
 
-Power restart and shutdown flags are journal-only.
+The supported environment controls are:
 
-## Reporting issues
+- `DFOUNDRY_DATA_DIR` selects the data root used for settings and catalogs; its
+  contents remain input that must be validated.
+- `DFOUNDRY_NO_UAC_RELAUNCH=1` suppresses a UAC relaunch attempt; it does not
+  grant elevation or mutation authority.
+- `DFOUNDRY_FORCE_CLI_HELP` and `DFOUNDRY_AUTO_GUI` select startup presentation
+  behavior.
 
-If you find a vulnerability in the open-source Driver Foundry code, use a private report if the host supports it. Otherwise, open an issue without publishing a working exploit.
+Treat every alternate data root, local archive, downloaded file, driver catalog,
+and future helper binary as untrusted until the relevant parser and
+authentication boundary validates it. HTTPS and an optional caller-supplied
+digest do not establish installer launch authority.
 
-Include the Windows build, Driver Foundry version or commit, exact `dfoundry` command, whether the process was elevated, and whether a live-mutation flag was used.
+## Reporting
+
+Use the repository host's private vulnerability-reporting channel when it is
+available. Otherwise open a public issue requesting a private contact channel,
+without technical details or exploit material.
+
+Include the affected commit, Windows build, exact `dfoundry` command, input
+source, elevation state, requested live flag, observed result, and a minimized
+sanitized reproduction. Do not publish credentials, device identifiers, private
+logs, proprietary vendor binaries, driver packages, certificates, or keys.
 
 ## Non-affiliation
 
-Driver Foundry is not affiliated with NVIDIA, AMD, Intel, Wagnardsoft, or TechPowerUp. Vendor catalog text may originate from Display Driver Uninstaller community settings; this attribution does not imply endorsement or affiliation.
+Driver Foundry is not affiliated with NVIDIA, AMD, Intel, Wagnardsoft, or
+TechPowerUp. Vendor catalog attribution does not imply endorsement.

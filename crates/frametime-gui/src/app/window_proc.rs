@@ -7,6 +7,12 @@ pub(super) unsafe extern "system" fn window_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match message {
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => with_state(window, |app| {
+            app.retro
+                .paint_client(window, app.area.title(), app.high_contrast)
+        })
+        .unwrap_or_else(|| unsafe { DefWindowProcW(window, message, wparam, lparam) }),
         WM_COMMAND => handle_command(window, wparam),
         WM_TIMER if wparam.0 == POLL_TIMER => handle_poll_timer(window),
         WM_SIZE => handle_size(window),
@@ -25,32 +31,65 @@ pub(super) unsafe extern "system" fn window_proc(
 fn handle_command(window: HWND, wparam: WPARAM) -> LRESULT {
     let _ = with_state(window, |app| app.last_focus = unsafe { GetFocus() });
     let id = command_id(wparam);
-    if (NAV_BASE..NAV_BASE + Area::ALL.len()).contains(&id) {
-        update_area(window, Area::ALL[id - NAV_BASE]);
-    } else if id == ACTION {
-        launch_or_act(window);
-    } else if id == SECONDARY {
-        secondary_action(window, false);
-    } else if id == TERTIARY {
-        secondary_action(window, true);
-    } else if id == QUATERNARY {
-        quaternary_action(window);
-    } else if id == QUINARY {
-        quinary_action(window);
-    } else if id == CATALOG_FILTER && (wparam.0 >> 16) == EN_CHANGE as usize {
-        refresh_catalog_filter(window);
-    } else if id == VIDEO_TIER && (wparam.0 >> 16) == CBN_SELCHANGE as usize {
-        refresh_video_preview(window);
-    } else if id == CANCEL {
-        cancel(window);
-    } else if id == FOCUS_RESTORE {
-        restore_focus(window);
+    match id {
+        value if (FPS_BASE..FPS_BASE + 11).contains(&value) => {
+            benchmark::command(window, value, command_notification(wparam))
+        }
+        MIN_INPUT if command_notification(wparam) == EN_CHANGE as usize => {
+            benchmark::input_changed(window, false)
+        }
+        value if (NAV_BASE..NAV_BASE + Area::ALL.len()).contains(&value) => {
+            update_area(window, Area::ALL[value - NAV_BASE])
+        }
+        ACTION => launch_or_act(window),
+        SECONDARY => secondary_action(window, false),
+        TERTIARY => secondary_action(window, true),
+        QUATERNARY => quaternary_action(window),
+        QUINARY => quinary_action(window),
+        CATALOG_FILTER if command_notification(wparam) == EN_CHANGE as usize => {
+            refresh_catalog_filter(window)
+        }
+        VPROF_INPUT if command_notification(wparam) == EN_MAXTEXT as usize => {
+            benchmark::input_changed(window, true);
+            let _ = with_state(window, |app| app.vprof_input_state.reject_incomplete());
+            update_status(
+                window,
+                StatusKind::Warning,
+                "VProf input exceeded the control limit and was rejected. Clear the field and paste a complete capture within 8 MiB.",
+            );
+        }
+        VPROF_INPUT if command_notification(wparam) == EN_CHANGE as usize => {
+            let _ = with_state(window, |app| {
+                app.vprof_input_state
+                    .edited(unsafe { GetWindowTextLengthW(app.vprof_input) == 0 })
+            });
+            benchmark::input_changed(window, true);
+        }
+        VIDEO_ROOT if command_notification(wparam) == EN_CHANGE as usize => {
+            refresh_video_preview(window)
+        }
+        VIDEO_TIER if command_notification(wparam) == CBN_SELCHANGE as usize => {
+            refresh_video_preview(window)
+        }
+        CANCEL => cancel(window),
+        FOCUS_RESTORE => restore_focus(window),
+        REFRESH => {
+            if let Some(area) = with_state(window, |app| app.area) {
+                refresh_area_data(window, area);
+            }
+        }
+        _ => {}
     }
     LRESULT(0)
 }
 
+fn command_notification(wparam: WPARAM) -> usize {
+    wparam.0 >> 16
+}
+
 fn handle_poll_timer(window: HWND) -> LRESULT {
     poll_terminal(window);
+    poll_reads(window);
     LRESULT(0)
 }
 
@@ -60,6 +99,7 @@ fn handle_size(window: HWND) -> LRESULT {
 }
 
 fn handle_dpi_changed(window: HWND, lparam: LPARAM) -> LRESULT {
+    refresh_theme(window);
     let suggested = unsafe { *(lparam.0 as *const RECT) };
     unsafe {
         let _ = SetWindowPos(
@@ -76,12 +116,7 @@ fn handle_dpi_changed(window: HWND, lparam: LPARAM) -> LRESULT {
 }
 
 fn handle_setting_change(window: HWND) -> LRESULT {
-    let _ = with_state(window, |app| app.high_contrast = high_contrast_enabled());
-    if let Some(status) = with_state(window, |app| app.status) {
-        unsafe {
-            let _ = InvalidateRect(Some(status), None, true);
-        }
-    }
+    refresh_theme(window);
     LRESULT(0)
 }
 
@@ -92,7 +127,7 @@ fn handle_min_max_info(window: HWND, lparam: LPARAM) -> LRESULT {
         left: 0,
         top: 0,
         right: (960 * dpi / 96) as i32,
-        bottom: (540 * dpi / 96) as i32,
+        bottom: (640 * dpi / 96) as i32,
     };
     unsafe {
         let _ = AdjustWindowRectExForDpi(
@@ -110,9 +145,15 @@ fn handle_min_max_info(window: HWND, lparam: LPARAM) -> LRESULT {
 
 fn handle_key_down(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
-    let key = wparam.0 as u32;
+    let Ok(key) = u32::try_from(wparam.0) else {
+        return unsafe { DefWindowProcW(window, message, wparam, lparam) };
+    };
     if ctrl && (0x31..=0x38).contains(&key) {
-        update_area(window, Area::ALL[(key - 0x31) as usize]);
+        update_area(
+            window,
+            Area::ALL[usize::try_from(key - 0x31)
+                .expect("guarded navigation accelerator index fits in usize")],
+        );
         return LRESULT(0);
     }
     if key == VK_ESCAPE.0 as u32 {
@@ -132,26 +173,57 @@ fn handle_set_focus(window: HWND) -> LRESULT {
 }
 
 fn handle_static_color(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if let Some((status, high_contrast, kind)) = with_state(window, |app| {
-        (app.status, app.high_contrast, app.operation.status)
-    }) {
+    with_state(window, |app| {
         let target = HWND(lparam.0 as *mut c_void);
-        if target == status {
-            unsafe {
-                let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut c_void);
-                let _ = windows::Win32::Graphics::Gdi::SetTextColor(
-                    hdc,
-                    status_color(kind, high_contrast),
-                );
-                let _ = windows::Win32::Graphics::Gdi::SetBkColor(
-                    hdc,
-                    COLORREF(GetSysColor(COLOR_WINDOW)),
-                );
-                return LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize);
-            }
+        let hdc = windows::Win32::Graphics::Gdi::HDC(wparam.0 as *mut c_void);
+        if let Some(index) = app.fps.steps.iter().position(|step| *step == target) {
+            use model::fps_session::FpsStage;
+            let current = match app.fps_session.stage() {
+                FpsStage::Import => 0,
+                FpsStage::Evaluate => 1,
+                FpsStage::Review => 2,
+                FpsStage::Save | FpsStage::Saved => 3,
+            };
+            return Some(
+                app.retro
+                    .color_step(hdc, current == index, app.high_contrast),
+            );
         }
+        app.retro.handle_static_color(
+            hdc,
+            HWND(lparam.0 as *mut c_void),
+            app.heading,
+            app.status,
+            status_color(app.operation.status, app.high_contrast),
+            app.high_contrast,
+        )
+    })
+    .flatten()
+    .unwrap_or_else(|| unsafe { DefWindowProcW(window, message, wparam, lparam) })
+}
+
+fn refresh_theme(window: HWND) {
+    let result = with_state(window, |app| {
+        app.high_contrast = high_contrast_enabled();
+        app.retro.refresh(
+            window,
+            app.heading,
+            app.status,
+            unsafe { GetDpiForWindow(window) },
+            app.high_contrast,
+        )
+    });
+    if let Some(Err(error)) = result {
+        update_status(
+            window,
+            StatusKind::Warning,
+            &format!("Could not update display resources: {error}"),
+        );
     }
-    unsafe { DefWindowProcW(window, message, wparam, lparam) }
+    unsafe {
+        let _ = InvalidateRect(Some(window), None, true);
+    }
+    layout(window);
 }
 
 fn handle_close(window: HWND) -> LRESULT {
@@ -220,7 +292,7 @@ fn confirm_close(window: HWND, diagnostic: bool) -> bool {
         )
     } else {
         w!(
-            "The native CLI is still running. Cancel with Ctrl-Break and wait for its terminal result, or choose OK to close this GUI and leave the CLI running safely."
+            "Read-only verification is still running. Choose OK to close the GUI and discard its result. No write or workflow progress is involved."
         )
     };
     unsafe {
@@ -261,7 +333,9 @@ pub(super) fn configure_preference(window: HWND) {
         SendMessageW(
             profile,
             CB_GETLBTEXT,
-            Some(WPARAM(selected as usize)),
+            Some(WPARAM(
+                usize::try_from(selected).expect("negative profile selection was rejected"),
+            )),
             Some(LPARAM(profile_text.as_mut_ptr() as isize)),
         );
     }

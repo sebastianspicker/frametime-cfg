@@ -289,21 +289,26 @@ fn valid_relative_path(value: &str) -> bool {
 }
 
 fn valid_user_sid(value: &str) -> bool {
-    let mut parts = value.split('-');
-    if parts.next() != Some("S") || parts.next() != Some("1") {
+    let mut parts = value.splitn(18, '-');
+    let revision = parts.next();
+    let identifier_authority_revision = parts.next();
+    if revision != Some("S") || identifier_authority_revision != Some("1") {
         return false;
     }
-    let Some(authority) = parts.next() else {
+    let Some(_) = parts
+        .next()
+        .filter(|part| canonical_decimal(part) && part.parse::<u64>().is_ok())
+    else {
         return false;
     };
-    if !canonical_decimal(authority) || authority.parse::<u64>().is_err() {
-        return false;
+    let mut subauthority_count = 0;
+    for part in parts {
+        subauthority_count += 1;
+        if !canonical_decimal(part) || part.parse::<u32>().is_err() {
+            return false;
+        }
     }
-    let subauthorities = parts.collect::<Vec<_>>();
-    (1..=15).contains(&subauthorities.len())
-        && subauthorities
-            .iter()
-            .all(|part| canonical_decimal(part) && part.parse::<u32>().is_ok())
+    (1..=15).contains(&subauthority_count)
 }
 
 fn canonical_decimal(value: &str) -> bool {

@@ -10,6 +10,16 @@ pub(super) fn layout(window: HWND) {
     }
     let metrics = LayoutMetrics::new(window, rect);
     layout_navigation(&controls, metrics);
+    if controls.area == Area::Benchmark {
+        benchmark::place(
+            window,
+            metrics.scale(96),
+            rect.right,
+            rect.bottom,
+            metrics.dpi,
+        );
+        return;
+    }
     layout_header(&controls, metrics);
     layout_primary_actions(&controls, metrics);
     layout_additional_actions(&controls, metrics);
@@ -19,11 +29,12 @@ pub(super) fn layout(window: HWND) {
     layout_video_controls(&controls, metrics);
     layout_cs2_cfg_controls(&controls, metrics);
     layout_table(&controls, metrics);
+    fit_columns(controls.table, ["Item", "Value", "State"]);
 }
 
 #[derive(Clone, Copy)]
 struct LayoutControls {
-    nav: [HWND; 8],
+    nav: [HWND; 9],
     heading: HWND,
     description: HWND,
     status: HWND,
@@ -99,8 +110,7 @@ impl LayoutMetrics {
     fn new(window: HWND, rect: RECT) -> Self {
         let dpi = unsafe { GetDpiForWindow(window) }.max(96) as i32;
         let margin = Self::scale_for(dpi, 16);
-        let nav_width = Self::scale_for(dpi, 176);
-        let content_x = nav_width + margin * 2;
+        let content_x = margin;
         Self {
             margin,
             content_x,
@@ -120,14 +130,16 @@ impl LayoutMetrics {
 }
 
 fn layout_navigation(controls: &LayoutControls, metrics: LayoutMetrics) {
-    let nav_width = metrics.scale(176);
+    let gap = metrics.scale(6);
+    let width = (metrics.content_width - gap * 8) / 9;
     for (index, button) in controls.nav.iter().enumerate() {
         move_control(
             *button,
-            metrics.margin,
-            metrics.margin + index as i32 * metrics.scale(44),
-            nav_width - metrics.margin * 2,
-            metrics.scale(36),
+            metrics.margin
+                + i32::try_from(index).expect("fixed control count fits i32") * (width + gap),
+            retro::content_offset(metrics.dpi.cast_unsigned()) + metrics.scale(6),
+            width,
+            metrics.scale(38),
         );
     }
 }
@@ -136,61 +148,47 @@ fn layout_header(controls: &LayoutControls, metrics: LayoutMetrics) {
     move_control(
         controls.heading,
         metrics.content_x,
-        metrics.margin,
+        metrics.scale(100),
         metrics.content_width,
         metrics.scale(28),
     );
     move_control(
         controls.description,
         metrics.content_x,
-        metrics.margin + metrics.scale(36),
+        metrics.scale(100) + metrics.scale(36),
         metrics.content_width,
         metrics.scale(48),
     );
     move_control(
         controls.status,
         metrics.content_x,
-        metrics.margin + metrics.scale(92),
+        metrics.scale(100) + metrics.scale(92),
         metrics.content_width,
         metrics.scale(40),
     );
 }
 
 fn layout_primary_actions(controls: &LayoutControls, metrics: LayoutMetrics) {
-    let y = metrics.margin + metrics.scale(140);
+    let y = metrics.scale(100) + metrics.scale(140);
     let button_width = metrics.scale(165);
-    move_control(
-        controls.action,
-        metrics.content_x,
-        y,
-        button_width,
-        metrics.scale(32),
-    );
-    move_control(
-        controls.secondary,
-        metrics.content_x + metrics.scale(175),
-        y,
-        button_width,
-        metrics.scale(32),
-    );
-    move_control(
-        controls.tertiary,
-        metrics.content_x + metrics.scale(350),
-        y,
-        button_width,
-        metrics.scale(32),
-    );
-    move_control(
-        controls.cancel,
-        metrics.content_x + metrics.scale(525),
-        y,
-        button_width,
-        metrics.scale(32),
-    );
+    for (control, offset) in [
+        (controls.action, 0),
+        (controls.secondary, 175),
+        (controls.tertiary, 350),
+        (controls.cancel, 525),
+    ] {
+        move_control(
+            control,
+            metrics.content_x + metrics.scale(offset),
+            y,
+            button_width,
+            metrics.scale(32),
+        );
+    }
 }
 
 fn layout_additional_actions(controls: &LayoutControls, metrics: LayoutMetrics) {
-    let y = metrics.margin + metrics.scale(178);
+    let y = metrics.scale(100) + metrics.scale(178);
     if matches!(
         controls.area,
         Area::Assess | Area::Benchmark | Area::Recovery
@@ -226,14 +224,14 @@ fn layout_catalog_filter(controls: &LayoutControls, metrics: LayoutMetrics) {
     move_control(
         controls.filter_label,
         metrics.content_x,
-        metrics.margin + metrics.scale(filter_y + 3),
+        metrics.scale(100) + metrics.scale(filter_y + 3),
         metrics.scale(150),
         metrics.scale(24),
     );
     move_control(
         controls.catalog_filter,
         metrics.content_x + metrics.scale(155),
-        metrics.margin + metrics.scale(filter_y),
+        metrics.scale(100) + metrics.scale(filter_y),
         (metrics.content_width - metrics.scale(155)).max(metrics.scale(180)),
         metrics.scale(28),
     );
@@ -246,35 +244,35 @@ fn layout_benchmark_controls(controls: &LayoutControls, metrics: LayoutMetrics) 
     move_control(
         controls.fps_label,
         metrics.content_x,
-        metrics.margin + metrics.scale(258),
+        metrics.scale(100) + metrics.scale(258),
         metrics.scale(88),
         metrics.scale(24),
     );
     move_control(
         controls.fps_input,
         metrics.content_x + metrics.scale(92),
-        metrics.margin + metrics.scale(254),
+        metrics.scale(100) + metrics.scale(254),
         metrics.scale(96),
         metrics.scale(28),
     );
     move_control(
         controls.min_label,
         metrics.content_x + metrics.scale(202),
-        metrics.margin + metrics.scale(258),
+        metrics.scale(100) + metrics.scale(258),
         metrics.scale(88),
         metrics.scale(24),
     );
     move_control(
         controls.min_input,
         metrics.content_x + metrics.scale(294),
-        metrics.margin + metrics.scale(254),
+        metrics.scale(100) + metrics.scale(254),
         metrics.scale(80),
         metrics.scale(28),
     );
     move_control(
         controls.vprof_input,
         metrics.content_x,
-        metrics.margin + metrics.scale(292),
+        metrics.scale(100) + metrics.scale(292),
         metrics.content_width,
         metrics.scale(74),
     );
@@ -287,14 +285,14 @@ fn layout_preference_controls(controls: &LayoutControls, metrics: LayoutMetrics)
     move_control(
         controls.profile,
         metrics.content_x,
-        metrics.margin + metrics.scale(216),
+        metrics.scale(100) + metrics.scale(216),
         metrics.scale(180),
         metrics.scale(240),
     );
     move_control(
         controls.dry_run,
         metrics.content_x + metrics.scale(194),
-        metrics.margin + metrics.scale(216),
+        metrics.scale(100) + metrics.scale(216),
         metrics.scale(190),
         metrics.scale(28),
     );
@@ -307,28 +305,28 @@ fn layout_video_controls(controls: &LayoutControls, metrics: LayoutMetrics) {
     move_control(
         controls.video_root_label,
         metrics.content_x,
-        metrics.margin + metrics.scale(220),
+        metrics.scale(100) + metrics.scale(220),
         metrics.scale(120),
         metrics.scale(24),
     );
     move_control(
         controls.video_root,
         metrics.content_x + metrics.scale(124),
-        metrics.margin + metrics.scale(216),
+        metrics.scale(100) + metrics.scale(216),
         metrics.scale(270),
         metrics.scale(28),
     );
     move_control(
         controls.video_tier_label,
         metrics.content_x + metrics.scale(404),
-        metrics.margin + metrics.scale(220),
+        metrics.scale(100) + metrics.scale(220),
         metrics.scale(76),
         metrics.scale(24),
     );
     move_control(
         controls.video_tier,
         metrics.content_x + metrics.scale(484),
-        metrics.margin + metrics.scale(216),
+        metrics.scale(100) + metrics.scale(216),
         metrics.scale(140),
         metrics.scale(180),
     );
@@ -341,21 +339,21 @@ fn layout_cs2_cfg_controls(controls: &LayoutControls, metrics: LayoutMetrics) {
     move_control(
         controls.cs2_cfg_asset_label,
         metrics.content_x,
-        metrics.margin + metrics.scale(220),
+        metrics.scale(100) + metrics.scale(220),
         metrics.scale(130),
         metrics.scale(24),
     );
     move_control(
         controls.cs2_cfg_asset,
         metrics.content_x + metrics.scale(134),
-        metrics.margin + metrics.scale(216),
+        metrics.scale(100) + metrics.scale(216),
         metrics.scale(280),
         metrics.scale(360),
     );
 }
 
 fn layout_table(controls: &LayoutControls, metrics: LayoutMetrics) {
-    let table_y = metrics.margin
+    let table_y = metrics.scale(100)
         + if controls.area == Area::Benchmark {
             metrics.scale(376)
         } else if matches!(

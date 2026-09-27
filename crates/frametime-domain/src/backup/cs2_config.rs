@@ -158,30 +158,11 @@ impl BackupEntry {
         install: &Cs2Install,
         request: &Cs2ConfigRequest,
     ) -> Result<(), Cs2ConfigBackupError> {
-        let Self::Cs2ConfigTransaction {
-            step,
-            install_identity: captured_install,
-            targets,
-            ..
-        } = self
-        else {
-            return Err(Cs2ConfigBackupError::WrongEntryType);
-        };
-        if step != CS2_CONFIG_TRANSACTION_STEP {
-            return Err(Cs2ConfigBackupError::WrongStep {
-                expected: CS2_CONFIG_TRANSACTION_STEP,
-                actual: step.clone(),
-            });
-        }
-
-        let controller = Cs2ConfigController::new(install.clone())?;
-        let expected_install = install_identity(controller.install());
-        if captured_install.steam_app_id != expected_install.steam_app_id
-            || captured_install.install_fingerprint != expected_install.install_fingerprint
-        {
-            return Err(Cs2ConfigBackupError::InstallMismatch);
-        }
-        validate_snapshot_targets(targets, &Cs2ConfigTarget::for_request(request))
+        self.validate_cs2_transaction(
+            install,
+            CS2_CONFIG_TRANSACTION_STEP,
+            Cs2ConfigTarget::for_request(request),
+        )
     }
 
     pub fn validate_optional_cs2_config_transaction(
@@ -189,29 +170,11 @@ impl BackupEntry {
         install: &Cs2Install,
         assets: &BTreeSet<crate::cs2_config::OptionalCfgAsset>,
     ) -> Result<(), Cs2ConfigBackupError> {
-        let Self::Cs2ConfigTransaction {
-            step,
-            install_identity: captured_install,
-            targets,
-            ..
-        } = self
-        else {
-            return Err(Cs2ConfigBackupError::WrongEntryType);
-        };
-        if step != CS2_OPTIONAL_CONFIG_TRANSACTION_STEP {
-            return Err(Cs2ConfigBackupError::WrongStep {
-                expected: CS2_OPTIONAL_CONFIG_TRANSACTION_STEP,
-                actual: step.clone(),
-            });
-        }
-        let controller = Cs2ConfigController::new(install.clone())?;
-        let expected_install = install_identity(controller.install());
-        if captured_install.steam_app_id != expected_install.steam_app_id
-            || captured_install.install_fingerprint != expected_install.install_fingerprint
-        {
-            return Err(Cs2ConfigBackupError::InstallMismatch);
-        }
-        validate_snapshot_targets(targets, &Cs2ConfigTarget::for_optional_assets(assets))
+        self.validate_cs2_transaction(
+            install,
+            CS2_OPTIONAL_CONFIG_TRANSACTION_STEP,
+            Cs2ConfigTarget::for_optional_assets(assets),
+        )
     }
 
     /// Restores only a fully known transaction after a fresh install binding.
@@ -240,10 +203,7 @@ impl BackupEntry {
             return Err(Cs2ConfigBackupError::UnknownFields);
         }
         let controller = Cs2ConfigController::new(install.clone())?;
-        let snapshots = targets
-            .iter()
-            .map(|snapshot| (snapshot.target, snapshot.original_bytes.as_deref()))
-            .collect::<Vec<_>>();
+        let snapshots = snapshot_originals(targets);
         controller.restore(request, &snapshots, files)?;
         Ok(())
     }
@@ -253,28 +213,9 @@ impl BackupEntry {
         install: &Cs2Install,
         files: &mut dyn Cs2ConfigFs,
     ) -> Result<(), Cs2ConfigBackupError> {
-        let Self::Cs2ConfigTransaction {
-            targets,
-            install_identity,
-            unknown,
-            ..
-        } = self
-        else {
-            return Err(Cs2ConfigBackupError::WrongEntryType);
-        };
-        let assets = optional_assets_from_snapshots(targets)?;
-        self.validate_optional_cs2_config_transaction(install, &assets)?;
-        if !unknown.is_empty()
-            || !install_identity.unknown.is_empty()
-            || targets.iter().any(|snapshot| !snapshot.unknown.is_empty())
-        {
-            return Err(Cs2ConfigBackupError::UnknownFields);
-        }
+        let (assets, targets) = self.validated_optional_transaction(install)?;
         let controller = Cs2ConfigController::new(install.clone())?;
-        let snapshots = targets
-            .iter()
-            .map(|snapshot| (snapshot.target, snapshot.original_bytes.as_deref()))
-            .collect::<Vec<_>>();
+        let snapshots = snapshot_originals(targets);
         controller.restore_optional_assets(&assets, &snapshots, files)?;
         Ok(())
     }
@@ -286,6 +227,52 @@ impl BackupEntry {
         install: &Cs2Install,
         files: &mut dyn Cs2ConfigFs,
     ) -> Result<Vec<std::path::PathBuf>, Cs2ConfigBackupError> {
+        let (assets, targets) = self.validated_optional_transaction(install)?;
+        let controller = Cs2ConfigController::new(install.clone())?;
+        let snapshots = snapshot_originals(targets);
+        controller
+            .apply_optional_assets_if_unchanged(&assets, &snapshots, files)
+            .map_err(Into::into)
+    }
+
+    fn validate_cs2_transaction(
+        &self,
+        install: &Cs2Install,
+        expected_step: &'static str,
+        expected_targets: Vec<Cs2ConfigTarget>,
+    ) -> Result<(), Cs2ConfigBackupError> {
+        let Self::Cs2ConfigTransaction {
+            step,
+            install_identity: captured_install,
+            targets,
+            ..
+        } = self
+        else {
+            return Err(Cs2ConfigBackupError::WrongEntryType);
+        };
+        if step != expected_step {
+            return Err(Cs2ConfigBackupError::WrongStep {
+                expected: expected_step,
+                actual: step.clone(),
+            });
+        }
+        let controller = Cs2ConfigController::new(install.clone())?;
+        if !same_install_identity(captured_install, &install_identity(controller.install())) {
+            return Err(Cs2ConfigBackupError::InstallMismatch);
+        }
+        validate_snapshot_targets(targets, &expected_targets)
+    }
+
+    fn validated_optional_transaction(
+        &self,
+        install: &Cs2Install,
+    ) -> Result<
+        (
+            BTreeSet<crate::cs2_config::OptionalCfgAsset>,
+            &[Cs2ConfigSnapshot],
+        ),
+        Cs2ConfigBackupError,
+    > {
         let Self::Cs2ConfigTransaction {
             targets,
             install_identity,
@@ -303,15 +290,19 @@ impl BackupEntry {
         {
             return Err(Cs2ConfigBackupError::UnknownFields);
         }
-        let controller = Cs2ConfigController::new(install.clone())?;
-        let snapshots = targets
-            .iter()
-            .map(|snapshot| (snapshot.target, snapshot.original_bytes.as_deref()))
-            .collect::<Vec<_>>();
-        controller
-            .apply_optional_assets_if_unchanged(&assets, &snapshots, files)
-            .map_err(Into::into)
+        Ok((assets, targets))
     }
+}
+
+fn snapshot_originals(snapshots: &[Cs2ConfigSnapshot]) -> Vec<(Cs2ConfigTarget, Option<&[u8]>)> {
+    snapshots
+        .iter()
+        .map(|snapshot| (snapshot.target, snapshot.original_bytes.as_deref()))
+        .collect()
+}
+
+fn same_install_identity(left: &Cs2InstallIdentity, right: &Cs2InstallIdentity) -> bool {
+    left.steam_app_id == right.steam_app_id && left.install_fingerprint == right.install_fingerprint
 }
 
 fn capture_targets(

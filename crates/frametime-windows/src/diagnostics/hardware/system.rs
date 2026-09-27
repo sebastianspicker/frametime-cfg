@@ -78,7 +78,8 @@ pub(crate) fn gpu_inventory() -> Result<GpuInventory, DiagnosticError> {
 pub(crate) fn system_status() -> Result<SystemStatus, DiagnosticError> {
     let info = system_info();
     let mut memory = MEMORYSTATUSEX {
-        dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+        dwLength: u32::try_from(size_of::<MEMORYSTATUSEX>())
+            .expect("MEMORYSTATUSEX size fits in u32"),
         ..MEMORYSTATUSEX::default()
     };
     unsafe { GlobalMemoryStatusEx(&mut memory) }.map_err(windows_error)?;

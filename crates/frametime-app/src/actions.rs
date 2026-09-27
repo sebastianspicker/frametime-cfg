@@ -19,7 +19,10 @@ use frametime_windows::{
     load_state, verify_settings,
 };
 
-use crate::commands::{Branch, CleanupMode, HardwareCommand};
+use crate::commands::{
+    Branch, BuildNvidiaLabRequest, CleanupMode, HardwareCommand, NvidiaInstallerSource,
+    PrepareNvidiaRequest,
+};
 use crate::{
     ApplicationError, CleanupSummary, DriverPlanOutcome, DriverPreparationOutcome, DryRunSummary,
     HardwareDiagnosticOutcome, VerificationSummary, require_authenticated_package,
@@ -105,6 +108,71 @@ pub fn run_prepare_nvidia(
     Ok(DriverPreparationOutcome {
         json: serde_json::to_string_pretty(&transaction).map_err(|error| {
             ApplicationError::failed(format!("serialize driver transaction: {error}"))
+        })?,
+    })
+}
+
+pub fn run_prepare_nvidia_request(
+    request: PrepareNvidiaRequest,
+) -> Result<DriverPreparationOutcome, ApplicationError> {
+    let package = require_authenticated_package()?;
+    let source = match request.source {
+        NvidiaInstallerSource::OfficialUrl(value) => {
+            frametime_windows::NvidiaInstallerSource::OfficialUrl(value)
+        }
+        NvidiaInstallerSource::LocalInstaller(value) => {
+            frametime_windows::NvidiaInstallerSource::LocalInstaller(value)
+        }
+    };
+    let transaction = frametime_windows::prepare_nvidia_driver_with_options(
+        &package,
+        frametime_windows::NvidiaPreparationRequest {
+            source,
+            preset: request.preset,
+            select: request.select,
+            deselect: request.deselect,
+            artifact_id: request.deprecated_artifact_id,
+            artifact_file_name: request.deprecated_artifact_file_name,
+        },
+    )
+    .map_err(ApplicationError::failed)?;
+    driver_json_outcome(&transaction)
+}
+
+pub fn run_driver_inspect() -> Result<DriverPreparationOutcome, ApplicationError> {
+    let status = frametime_windows::inspect_driver_status().map_err(ApplicationError::failed)?;
+    driver_json_outcome(&status)
+}
+
+pub fn run_reconcile_nvidia_profiles(
+    accept_driver_incompatible_profile_items: bool,
+    yes: bool,
+) -> Result<DriverPreparationOutcome, ApplicationError> {
+    let transaction =
+        frametime_windows::reconcile_nvidia_profiles(accept_driver_incompatible_profile_items, yes)
+            .map_err(ApplicationError::failed)?;
+    driver_json_outcome(&transaction)
+}
+
+pub fn run_build_nvidia_lab(
+    request: BuildNvidiaLabRequest,
+) -> Result<DriverPreparationOutcome, ApplicationError> {
+    let manifest = frametime_windows::build_nvidia_lab(&frametime_windows::NvidiaLabBuildRequest {
+        output: request.output,
+        deep_inf: request.deep_inf,
+        test_certificate_sha256: request.test_certificate_sha256,
+        acknowledge_unqualified_driver: request.acknowledge_unqualified_driver,
+    })
+    .map_err(ApplicationError::failed)?;
+    driver_json_outcome(&manifest)
+}
+
+fn driver_json_outcome(
+    value: &impl serde::Serialize,
+) -> Result<DriverPreparationOutcome, ApplicationError> {
+    Ok(DriverPreparationOutcome {
+        json: serde_json::to_string_pretty(value).map_err(|error| {
+            ApplicationError::failed(format!("serialize driver result: {error}"))
         })?,
     })
 }
@@ -236,25 +304,6 @@ mod tests {
         assert!(require_cleanup_confirmation(CleanupMode::Driver, false, true).is_err());
     }
 
-    fn final_receipt() -> frametime_domain::FinalBenchmarkReceipt {
-        frametime_domain::FinalBenchmarkReceipt {
-            schema_version: 1,
-            receipt_id: frametime_domain::TransactionId::parse("fedcba9876543210fedcba9876543210")
-                .expect("receipt id"),
-            transaction_id: frametime_domain::TransactionId::parse(
-                "0123456789abcdef0123456789abcdef",
-            )
-            .expect("transaction id"),
-            captured_utc: "2026-08-10 12:34:56".into(),
-            avg_fps: 300.0,
-            p1_fps: 180.0,
-            runs: 3,
-            fps_cap: 270,
-            label: "After all optimizations".into(),
-            unknown: std::collections::BTreeMap::new(),
-        }
-    }
-
     #[test]
     fn final_benchmark_verification_maps_absent_coherent_and_incoherent_receipts() {
         assert_eq!(
@@ -262,8 +311,10 @@ mod tests {
             VerificationStatus::Info
         );
         assert_eq!(
-            final_benchmark_verification_item(FinalBenchmarkStatus::Coherent(final_receipt()))
-                .status,
+            final_benchmark_verification_item(FinalBenchmarkStatus::Coherent(
+                crate::test_support::final_benchmark_receipt(),
+            ))
+            .status,
             VerificationStatus::Ok
         );
         assert_eq!(

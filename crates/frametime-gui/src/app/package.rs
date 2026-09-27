@@ -67,7 +67,8 @@ pub(super) fn relaunch_elevated(window: HWND) -> Result<(), String> {
     .ok_or_else(|| model::EXTERNAL_EXECUTION_UNAVAILABLE.to_owned())?;
     let verb = utf16("runas");
     let mut launch = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        cbSize: u32::try_from(std::mem::size_of::<SHELLEXECUTEINFOW>())
+            .expect("SHELLEXECUTEINFOW size fits in u32"),
         fMask: SEE_MASK_FLAG_NO_UI | SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
         hwnd: window,
         lpVerb: PCWSTR(verb.as_ptr()),

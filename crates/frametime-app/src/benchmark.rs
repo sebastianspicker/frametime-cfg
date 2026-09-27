@@ -1,119 +1,235 @@
-use std::{fs, path::PathBuf};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use frametime_domain::fps::{
-    BenchmarkCapture, FpsCapStrategy, measured_fps_cap, parse_vprof_output,
+    BenchmarkCapture, BenchmarkRunEvidence, FpsCapStrategy, MAX_VPROF_INPUT_BYTES,
+    ValidatedBenchmarkCapture, measured_fps_cap, parse_vprof_bytes_detailed,
+    parse_vprof_output_detailed,
 };
 use frametime_windows::{
-    copy_text_to_clipboard, persist_baseline_benchmark, persist_final_benchmark,
-    persist_fps_capture, platform_is_supported, read_text_from_clipboard,
+    AuthenticatedPackage, copy_text_to_clipboard, persist_baseline_benchmark,
+    persist_final_benchmark, persist_fps_capture, platform_is_supported, read_text_from_clipboard,
 };
 
-use crate::commands::{FpsRequest, FpsStrategyValue, VprofBenchmarkRequest};
+use crate::commands::{FpsRequest, FpsStrategyValue, ValidatedFpsRequest, VprofBenchmarkRequest};
 use crate::{
     ApplicationError, BenchmarkOutcome, BenchmarkPersistence, FpsCapOutcome, FpsCapStrategyLabel,
     require_authenticated_package,
 };
 
 pub fn run_fps_cap(request: FpsRequest) -> Result<FpsCapOutcome, ApplicationError> {
-    let capture = read_fps_capture(
-        request.average,
-        request.text,
-        request.file,
-        request.clipboard,
-    )?;
-    let strategy = match request.strategy {
-        FpsStrategyValue::Raw if request.measured_cap == 0 => {
+    let FpsRequest {
+        average,
+        text,
+        file,
+        clipboard,
+        strategy,
+        measured_cap,
+        refresh_hz,
+        ceiling_margin_hz,
+        label,
+        copy,
+        no_persist,
+    } = request;
+    let cap_strategy = select_fps_strategy(strategy, measured_cap, refresh_hz, ceiling_margin_hz)?;
+    if let Some(average_fps) = average {
+        if text.is_some() || file.is_some() || clipboard {
+            return Err(fps_vprof_source_error());
+        }
+        if !average_fps.is_finite() || average_fps <= 0.0 {
+            return Err(ApplicationError::Invalid(
+                "AVERAGE_FPS must be finite and greater than zero".into(),
+            ));
+        }
+        if !matches!(
+            cap_strategy,
             FpsCapStrategy::RawLatency { measured_cap: None }
-        }
-        FpsStrategyValue::Raw if (30..=1000).contains(&request.measured_cap) => {
-            FpsCapStrategy::RawLatency {
-                measured_cap: Some(request.measured_cap),
-            }
-        }
-        FpsStrategyValue::Raw => {
+        ) {
             return Err(ApplicationError::Invalid(
-                "--measured-cap must be zero (uncapped) or between 30 and 1000".into(),
+                "aggregate-only AVERAGE_FPS cannot authorize a new nonzero cap; provide complete VProf run evidence".into(),
             ));
         }
-        FpsStrategyValue::Vrr
-            if (30..=1000).contains(&request.refresh_hz)
-                && request.ceiling_margin_hz > 0
-                && request.ceiling_margin_hz < request.refresh_hz =>
-        {
-            FpsCapStrategy::Vrr {
-                refresh_hz: request.refresh_hz,
-                ceiling_margin_hz: request.ceiling_margin_hz,
-            }
-        }
-        FpsStrategyValue::Vrr => {
-            return Err(ApplicationError::Invalid(
-                "VRR requires --refresh-hz between 30 and 1000 and a positive --ceiling-margin-hz below refresh".into(),
-            ));
-        }
-    };
-    let cap = measured_fps_cap(strategy, capture).ok_or_else(|| {
-        ApplicationError::Invalid(
-            "capture P1 FPS does not sustain the selected measured or VRR cap".into(),
-        )
-    })?;
-    let strategy = if cap == 0 {
-        FpsCapStrategyLabel::RawUncapped
-    } else if matches!(request.strategy, FpsStrategyValue::Vrr) {
-        FpsCapStrategyLabel::VrrCeiling
-    } else {
-        FpsCapStrategyLabel::RawMeasured
-    };
-    let package = if platform_is_supported() && (request.copy || !request.no_persist) {
-        Some(require_authenticated_package()?)
-    } else {
-        None
-    };
-    let copied_to_clipboard = request.copy;
-    if copied_to_clipboard {
-        copy_text_to_clipboard(&cap.to_string()).map_err(ApplicationError::failed)?;
-    }
-    let persistence = if platform_is_supported() && !request.no_persist {
-        persist_fps_capture(
-            package.as_ref().ok_or_else(|| {
-                ApplicationError::failed("FPS persistence lost package authority")
-            })?,
-            cap,
+        let capture = BenchmarkCapture {
+            average_fps,
+            p1_fps: 0.0,
+            runs: 1,
+        };
+        let effects = FpsSideEffects {
+            label,
+            copy,
+            no_persist,
+        };
+        let persistence = effects.apply(0, capture, None)?;
+        return Ok(FpsCapOutcome {
+            cap: 0,
             capture,
-            request.label,
-        )
-        .map_err(ApplicationError::failed)?;
-        BenchmarkPersistence::Persisted
-    } else if request.no_persist {
-        BenchmarkPersistence::Disabled
-    } else {
-        BenchmarkPersistence::UnsupportedHost
-    };
-    Ok(FpsCapOutcome {
-        cap,
+            run_evidence: None,
+            strategy: FpsCapStrategyLabel::RawUncapped,
+            copied_to_clipboard: copy,
+            persistence,
+        });
+    }
+    let source = select_vprof_source(text, file, clipboard, fps_vprof_source_error)?;
+    let capture = read_vprof_capture(source)?;
+    evaluate_fps_cap(ValidatedFpsRequest {
         capture,
         strategy,
-        copied_to_clipboard,
+        measured_cap,
+        refresh_hz,
+        ceiling_margin_hz,
+        label,
+        copy,
+        no_persist,
+    })
+}
+
+pub fn evaluate_fps_cap(request: ValidatedFpsRequest) -> Result<FpsCapOutcome, ApplicationError> {
+    let cap_strategy = select_fps_strategy(
+        request.strategy,
+        request.measured_cap,
+        request.refresh_hz,
+        request.ceiling_margin_hz,
+    )?;
+    let cap = measured_fps_cap(cap_strategy, &request.capture).ok_or_else(|| {
+        let selected_cap = requested_cap(cap_strategy).unwrap_or_default();
+        ApplicationError::Invalid(format!(
+            "selected cap {selected_cap} rejected: {} failing runs among {} valid runs, including {} invalid runs with P1 above Avg; at least 5 valid runs are required and every P1 must support the cap",
+            request.capture.failing_runs(selected_cap),
+            request.capture.observations().len(),
+            request.capture.invalid_ordered_runs()
+        ))
+    })?;
+    let effects = FpsSideEffects {
+        label: request.label,
+        copy: request.copy,
+        no_persist: request.no_persist,
+    };
+    let aggregate = request.capture.aggregate();
+    let run_evidence = request.capture.run_evidence().clone();
+    let persistence = effects.apply(cap, aggregate, Some(&run_evidence))?;
+    Ok(FpsCapOutcome {
+        cap,
+        capture: aggregate,
+        run_evidence: Some(run_evidence),
+        strategy: fps_strategy_label(request.strategy, cap),
+        copied_to_clipboard: request.copy,
         persistence,
     })
 }
 
-fn read_fps_capture(
-    average: Option<f64>,
-    text: Option<String>,
-    file: Option<PathBuf>,
-    clipboard: bool,
-) -> Result<BenchmarkCapture, ApplicationError> {
-    match (average, text, file, clipboard) {
-        (Some(value), None, None, false) => Ok(BenchmarkCapture {
-            average_fps: value,
-            p1_fps: 0.0,
-            runs: 1,
-        }),
-        (None, text, file, clipboard) => {
-            let source = select_vprof_source(text, file, clipboard, fps_vprof_source_error)?;
-            read_vprof_capture(source)
+const fn requested_cap(strategy: FpsCapStrategy) -> Option<u32> {
+    match strategy {
+        FpsCapStrategy::RawLatency { measured_cap } => measured_cap,
+        FpsCapStrategy::Vrr {
+            refresh_hz,
+            ceiling_margin_hz,
+        } => refresh_hz.checked_sub(ceiling_margin_hz),
+    }
+}
+
+struct FpsSideEffects {
+    label: String,
+    copy: bool,
+    no_persist: bool,
+}
+
+impl FpsSideEffects {
+    fn apply(
+        self,
+        cap: u32,
+        capture: BenchmarkCapture,
+        run_evidence: Option<&BenchmarkRunEvidence>,
+    ) -> Result<BenchmarkPersistence, ApplicationError> {
+        let package = if authenticated_package_is_required(self.copy, self.no_persist) {
+            Some(require_authenticated_package()?)
+        } else {
+            None
+        };
+        if self.copy {
+            copy_text_to_clipboard(&cap.to_string()).map_err(ApplicationError::failed)?;
         }
-        _ => Err(fps_vprof_source_error()),
+        persist_selected_fps_capture(
+            package.as_ref(),
+            cap,
+            capture,
+            run_evidence,
+            self.label,
+            self.no_persist,
+        )
+    }
+}
+
+fn select_fps_strategy(
+    strategy: FpsStrategyValue,
+    measured_cap: u32,
+    refresh_hz: u32,
+    ceiling_margin_hz: u32,
+) -> Result<FpsCapStrategy, ApplicationError> {
+    match strategy {
+        FpsStrategyValue::Raw if measured_cap == 0 => {
+            Ok(FpsCapStrategy::RawLatency { measured_cap: None })
+        }
+        FpsStrategyValue::Raw if (30..=1000).contains(&measured_cap) => {
+            Ok(FpsCapStrategy::RawLatency {
+                measured_cap: Some(measured_cap),
+            })
+        }
+        FpsStrategyValue::Raw => Err(ApplicationError::Invalid(
+            "--measured-cap must be zero (uncapped) or between 30 and 1000".into(),
+        )),
+        FpsStrategyValue::Vrr
+            if (30..=1000).contains(&refresh_hz)
+                && ceiling_margin_hz > 0
+                && ceiling_margin_hz < refresh_hz =>
+        {
+            Ok(FpsCapStrategy::Vrr {
+                refresh_hz,
+                ceiling_margin_hz,
+            })
+        }
+        FpsStrategyValue::Vrr => Err(ApplicationError::Invalid(
+            "VRR requires --refresh-hz between 30 and 1000 and a positive --ceiling-margin-hz below refresh".into(),
+        )),
+    }
+}
+
+fn authenticated_package_is_required(copy: bool, no_persist: bool) -> bool {
+    platform_is_supported() && (copy || !no_persist)
+}
+
+fn persist_selected_fps_capture(
+    package: Option<&AuthenticatedPackage>,
+    cap: u32,
+    capture: BenchmarkCapture,
+    run_evidence: Option<&BenchmarkRunEvidence>,
+    label: String,
+    no_persist: bool,
+) -> Result<BenchmarkPersistence, ApplicationError> {
+    if platform_is_supported() && !no_persist {
+        persist_fps_capture(
+            package.ok_or_else(|| {
+                ApplicationError::failed("FPS persistence lost package authority")
+            })?,
+            cap,
+            capture,
+            run_evidence.cloned(),
+            label,
+        )
+        .map_err(ApplicationError::failed)?;
+        Ok(BenchmarkPersistence::Persisted)
+    } else if no_persist {
+        Ok(BenchmarkPersistence::Disabled)
+    } else {
+        Ok(BenchmarkPersistence::UnsupportedHost)
+    }
+}
+
+fn fps_strategy_label(strategy: FpsStrategyValue, cap: u32) -> FpsCapStrategyLabel {
+    if cap == 0 {
+        FpsCapStrategyLabel::RawUncapped
+    } else if matches!(strategy, FpsStrategyValue::Vrr) {
+        FpsCapStrategyLabel::VrrCeiling
+    } else {
+        FpsCapStrategyLabel::RawMeasured
     }
 }
 
@@ -131,9 +247,10 @@ pub fn run_baseline_benchmark(
     let capture = read_complete_vprof_capture(request, "baseline-benchmark")?;
     require_windows_benchmark_host("baseline-benchmark")?;
     let package = require_authenticated_package()?;
-    persist_baseline_benchmark(&package, capture).map_err(ApplicationError::failed)?;
+    persist_baseline_benchmark(&package, &capture).map_err(ApplicationError::failed)?;
     Ok(BenchmarkOutcome {
-        capture,
+        capture: capture.aggregate(),
+        run_evidence: Some(capture.run_evidence().clone()),
         receipt: None,
     })
 }
@@ -142,27 +259,38 @@ pub fn run_baseline_benchmark(
 /// It does not clear the retained same-user Phase 3 handoff.
 pub(crate) fn read_final_benchmark_capture(
     request: VprofBenchmarkRequest,
-) -> Result<BenchmarkCapture, ApplicationError> {
+) -> Result<ValidatedBenchmarkCapture, ApplicationError> {
     let capture = read_complete_vprof_capture(request, "final-benchmark")?;
     require_windows_benchmark_host("final-benchmark")?;
     Ok(capture)
 }
 
 pub(crate) fn persist_final_benchmark_capture(
-    capture: BenchmarkCapture,
+    capture: ValidatedBenchmarkCapture,
     runtime: &frametime_windows::VerifiedSelectedRuntime,
 ) -> Result<BenchmarkOutcome, ApplicationError> {
-    let receipt = persist_final_benchmark(runtime, capture).map_err(ApplicationError::failed)?;
+    let receipt = persist_final_benchmark(runtime, &capture).map_err(ApplicationError::failed)?;
     Ok(BenchmarkOutcome {
-        capture,
+        capture: capture.aggregate(),
+        run_evidence: Some(capture.run_evidence().clone()),
         receipt: Some(receipt),
     })
+}
+
+/// Read one bounded VProf source for advisory GUI analysis without persistence.
+pub fn read_fps_capture(
+    request: VprofBenchmarkRequest,
+) -> Result<ValidatedBenchmarkCapture, ApplicationError> {
+    let source = select_vprof_source(request.text, request.file, request.clipboard, || {
+        ApplicationError::Invalid("Choose exactly one VProf source".into())
+    })?;
+    read_vprof_capture(source)
 }
 
 fn read_complete_vprof_capture(
     request: VprofBenchmarkRequest,
     command: &str,
-) -> Result<BenchmarkCapture, ApplicationError> {
+) -> Result<ValidatedBenchmarkCapture, ApplicationError> {
     if request.clipboard && !platform_is_supported() {
         return Err(ApplicationError::Failed(format!(
             "{command} is only supported on Windows; no artifacts were written"
@@ -197,29 +325,46 @@ fn select_vprof_source(
     }
 }
 
-fn read_vprof_capture(source: VprofSource) -> Result<BenchmarkCapture, ApplicationError> {
-    let invalid_result = match &source {
-        VprofSource::Text(_) => "--vprof-text contains no valid VProf result",
-        VprofSource::File(_) => "--vprof-file contains no valid VProf result",
-        VprofSource::Clipboard => "clipboard contains no valid VProf result",
+fn read_vprof_capture(source: VprofSource) -> Result<ValidatedBenchmarkCapture, ApplicationError> {
+    let source_name = match &source {
+        VprofSource::Text(_) => "--vprof-text",
+        VprofSource::File(_) => "--vprof-file",
+        VprofSource::Clipboard => "clipboard",
     };
-    let value = match source {
-        VprofSource::Text(value) => value,
-        VprofSource::File(path) => fs::read_to_string(path)
-            .map_err(|error| ApplicationError::failed(format!("read VProf file: {error}")))?,
-        VprofSource::Clipboard => read_text_from_clipboard().map_err(ApplicationError::failed)?,
-    };
-    parse_vprof_output(&value).ok_or_else(|| ApplicationError::Invalid(invalid_result.into()))
+    match source {
+        VprofSource::Text(value) => parse_vprof_output_detailed(&value),
+        VprofSource::File(path) => {
+            let bytes = read_bounded_vprof_file(&path)?;
+            parse_vprof_bytes_detailed(&bytes)
+        }
+        VprofSource::Clipboard => {
+            let value = read_text_from_clipboard().map_err(ApplicationError::failed)?;
+            parse_vprof_output_detailed(&value)
+        }
+    }
+    .map_err(|error| ApplicationError::Invalid(format!("{source_name}: {error}")))
+}
+
+fn read_bounded_vprof_file(path: &PathBuf) -> Result<Vec<u8>, ApplicationError> {
+    let file = File::open(path)
+        .map_err(|error| ApplicationError::failed(format!("open VProf file: {error}")))?;
+    let mut bytes = Vec::new();
+    file.take((MAX_VPROF_INPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ApplicationError::failed(format!("read VProf file: {error}")))?;
+    Ok(bytes)
 }
 
 fn validate_complete_vprof_capture(
-    capture: BenchmarkCapture,
+    capture: ValidatedBenchmarkCapture,
     command: &str,
-) -> Result<BenchmarkCapture, ApplicationError> {
-    let average_is_valid = capture.average_fps.is_finite() && capture.average_fps > 0.0;
-    let p1_is_valid =
-        capture.p1_fps.is_finite() && capture.p1_fps > 0.0 && capture.p1_fps <= capture.average_fps;
-    let runs_are_valid = capture.runs > 0;
+) -> Result<ValidatedBenchmarkCapture, ApplicationError> {
+    let aggregate = capture.aggregate();
+    let average_is_valid = aggregate.average_fps.is_finite() && aggregate.average_fps > 0.0;
+    let p1_is_valid = aggregate.p1_fps.is_finite()
+        && aggregate.p1_fps > 0.0
+        && aggregate.p1_fps <= aggregate.average_fps;
+    let runs_are_valid = aggregate.runs > 0;
     if !(average_is_valid && p1_is_valid && runs_are_valid) {
         return Err(ApplicationError::Invalid(format!(
             "{command} requires complete VProf Avg > 0, P1 > 0, and runs > 0"
@@ -238,141 +383,4 @@ fn require_windows_benchmark_host(command: &str) -> Result<(), ApplicationError>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn vprof_request(
-        text: Option<&str>,
-        file: Option<PathBuf>,
-        clipboard: bool,
-    ) -> VprofBenchmarkRequest {
-        VprofBenchmarkRequest {
-            text: text.map(str::to_owned),
-            file,
-            clipboard,
-        }
-    }
-
-    #[test]
-    fn complete_vprof_text_capture_is_read_and_validated() {
-        let capture = read_complete_vprof_capture(
-            vprof_request(
-                Some("[VProf] FPS: Avg=300.0, P1=150.0\n[VProf] FPS: Avg=200.0, P1=100.0"),
-                None,
-                false,
-            ),
-            "baseline-benchmark",
-        )
-        .expect("complete capture");
-
-        assert_eq!(
-            capture,
-            BenchmarkCapture {
-                average_fps: 250.0,
-                p1_fps: 125.0,
-                runs: 2,
-            }
-        );
-    }
-
-    #[test]
-    fn fps_cap_keeps_manual_average_as_its_only_non_vprof_source() {
-        let manual = read_fps_capture(Some(240.0), None, None, false).expect("manual average");
-        assert_eq!(
-            manual,
-            BenchmarkCapture {
-                average_fps: 240.0,
-                p1_fps: 0.0,
-                runs: 1,
-            }
-        );
-
-        let ambiguous = read_fps_capture(
-            Some(240.0),
-            Some("[VProf] FPS: Avg=300.0, P1=150.0".into()),
-            None,
-            false,
-        )
-        .expect_err("manual average plus VProf source");
-        assert_eq!(
-            ambiguous.to_string(),
-            "provide exactly one of AVERAGE_FPS, --vprof-text, --vprof-file, or --clipboard"
-        );
-    }
-
-    #[test]
-    fn vprof_source_selection_rejects_missing_or_ambiguous_sources_before_file_reads() {
-        let missing =
-            read_complete_vprof_capture(vprof_request(None, None, false), "baseline-benchmark")
-                .expect_err("missing source");
-        assert_eq!(
-            missing.to_string(),
-            "baseline-benchmark: provide exactly one of --vprof-text, --vprof-file, or --clipboard"
-        );
-
-        let ambiguous = read_complete_vprof_capture(
-            vprof_request(
-                Some("[VProf] FPS: Avg=300.0, P1=150.0"),
-                Some(PathBuf::from("source-must-not-be-read.vprof")),
-                false,
-            ),
-            "baseline-benchmark",
-        )
-        .expect_err("ambiguous source");
-        assert_eq!(
-            ambiguous.to_string(),
-            "baseline-benchmark: provide exactly one of --vprof-text, --vprof-file, or --clipboard"
-        );
-    }
-
-    #[test]
-    fn invalid_vprof_source_preserves_its_input_specific_error() {
-        let error = read_complete_vprof_capture(
-            vprof_request(Some("no VProf result"), None, false),
-            "baseline-benchmark",
-        )
-        .expect_err("invalid source");
-
-        assert_eq!(
-            error.to_string(),
-            "--vprof-text contains no valid VProf result"
-        );
-    }
-
-    #[test]
-    fn incomplete_capture_is_rejected_by_validation_without_reading_a_source() {
-        let error = validate_complete_vprof_capture(
-            BenchmarkCapture {
-                average_fps: 300.0,
-                p1_fps: 0.0,
-                runs: 1,
-            },
-            "final-benchmark",
-        )
-        .expect_err("incomplete capture");
-
-        assert_eq!(
-            error.to_string(),
-            "final-benchmark requires complete VProf Avg > 0, P1 > 0, and runs > 0"
-        );
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn clipboard_benchmark_rejection_happens_before_source_selection() {
-        let error = read_complete_vprof_capture(
-            vprof_request(
-                Some("[VProf] FPS: Avg=300.0, P1=150.0"),
-                Some(PathBuf::from("clipboard-and-file-must-not-be-read.vprof")),
-                true,
-            ),
-            "final-benchmark",
-        )
-        .expect_err("unsupported clipboard benchmark");
-
-        assert_eq!(
-            error.to_string(),
-            "final-benchmark is only supported on Windows; no artifacts were written"
-        );
-    }
-}
+mod tests;

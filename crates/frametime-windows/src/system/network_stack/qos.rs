@@ -16,7 +16,7 @@ use windows::{
             Registry::{
                 HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_SZ, REG_VALUE_TYPE,
                 RegCloseKey, RegDeleteKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryInfoKeyW,
-                RegQueryValueExW, RegSetValueExW,
+                RegSetValueExW,
             },
             Wmi::{WBEM_FLAG_CREATE_ONLY, WBEM_GENERIC_FLAG_TYPE},
         },
@@ -166,43 +166,46 @@ pub(crate) fn open_nla(
 pub(crate) fn read_nla_raw(
     key: &RegistryKey,
 ) -> Result<Option<NetworkStackRawRegistryValue>, String> {
-    let name = wide(QOS_NLA_NAME);
-    let mut kind = REG_VALUE_TYPE(0);
-    let mut size = 0_u32;
-    let first = unsafe {
-        RegQueryValueExW(
-            key.0,
-            PCWSTR(name.as_ptr()),
-            None,
-            Some(&mut kind),
-            None,
-            Some(&mut size),
-        )
-    };
-    if first == ERROR_FILE_NOT_FOUND {
-        return Ok(None);
-    }
-    if first.0 != 0 || size as usize > MAX_NLA_BYTES {
-        return Err("P1:16 Do not use NLA has an unsupported registry type or size".into());
-    }
-    let mut bytes = vec![0_u8; size as usize];
-    let second = unsafe {
-        RegQueryValueExW(
-            key.0,
-            PCWSTR(name.as_ptr()),
-            None,
-            Some(&mut kind),
-            Some(bytes.as_mut_ptr()),
-            Some(&mut size),
-        )
-    };
-    if second.0 != 0 || size as usize != bytes.len() {
-        return Err("P1:16 Do not use NLA changed during its typed read".into());
-    }
-    Ok(Some(NetworkStackRawRegistryValue {
-        value_type: kind.0,
-        bytes,
-    }))
+    read_bounded_raw_value(
+        key.0,
+        QOS_NLA_NAME,
+        MAX_NLA_BYTES,
+        |failure| match failure {
+            RawRegistryReadFailure::Size(_) => {
+                "P1:16 Do not use NLA has an unsupported registry type or size".into()
+            }
+            RawRegistryReadFailure::Value(_) => {
+                "P1:16 Do not use NLA changed during its typed read".into()
+            }
+        },
+    )
+    .map(|value| {
+        value.map(|(kind, bytes)| NetworkStackRawRegistryValue {
+            value_type: kind.0,
+            bytes,
+        })
+    })
+}
+
+pub(crate) enum RawRegistryReadFailure {
+    Size(u32),
+    Value(u32),
+}
+
+pub(crate) fn read_bounded_raw_value<E>(
+    key: HKEY,
+    name: &str,
+    maximum: usize,
+    error: impl Fn(RawRegistryReadFailure) -> E,
+) -> Result<Option<(REG_VALUE_TYPE, Vec<u8>)>, E> {
+    crate::system::query_registry_value(key, name, maximum, true).map_err(|failure| match failure {
+        crate::system::RegistryQueryFailure::Size(code) => {
+            error(RawRegistryReadFailure::Size(code.0))
+        }
+        crate::system::RegistryQueryFailure::Value(code) => {
+            error(RawRegistryReadFailure::Value(code.0))
+        }
+    })
 }
 
 pub(crate) fn write_nla_raw(

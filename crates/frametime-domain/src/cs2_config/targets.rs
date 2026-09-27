@@ -35,23 +35,7 @@ impl Cs2ConfigTarget {
         if request.bootstraps_autoexec() {
             targets.push(Self::Autoexec);
         }
-        targets.extend(request.optional_assets().iter().map(|asset| match asset {
-            OptionalCfgAsset::NetStable => Self::NetStable,
-            OptionalCfgAsset::NetHighPing => Self::NetHighPing,
-            OptionalCfgAsset::NetUnstable => Self::NetUnstable,
-            OptionalCfgAsset::NetBad => Self::NetBad,
-            OptionalCfgAsset::DebugHud => Self::DebugHud,
-            OptionalCfgAsset::DebugHudOff => Self::DebugHudOff,
-            OptionalCfgAsset::AudioStable => Self::AudioStable,
-            OptionalCfgAsset::AudioLowLatency025 => Self::AudioLowLatency025,
-            OptionalCfgAsset::AudioLowLatency001 => Self::AudioLowLatency001,
-            OptionalCfgAsset::FrameBaseline400 => Self::FrameBaseline400,
-            OptionalCfgAsset::FrameRawUncapped => Self::FrameRawUncapped,
-            OptionalCfgAsset::AudioEqCrisp => Self::AudioEqCrisp,
-            OptionalCfgAsset::AudioEqSmooth => Self::AudioEqSmooth,
-            OptionalCfgAsset::AudioLegacyLrIsolation => Self::AudioLegacyLrIsolation,
-            OptionalCfgAsset::Competitive2026 => Self::Competitive2026,
-        }));
+        targets.extend(Self::for_optional_assets(request.optional_assets()));
         targets
     }
 
@@ -112,21 +96,10 @@ impl Cs2ConfigTarget {
         match self {
             Self::Optimization => OPTIMIZATION_FILE,
             Self::Autoexec => AUTOEXEC_FILE,
-            Self::NetStable => "net_stable.cfg",
-            Self::NetHighPing => "net_highping.cfg",
-            Self::NetUnstable => "net_unstable.cfg",
-            Self::NetBad => "net_bad.cfg",
-            Self::DebugHud => "debug_hud.cfg",
-            Self::DebugHudOff => "debug_hud_off.cfg",
-            Self::AudioStable => "audio_stable.cfg",
-            Self::AudioLowLatency025 => "audio_lowlatency_025.cfg",
-            Self::AudioLowLatency001 => "audio_lowlatency_001.cfg",
-            Self::FrameBaseline400 => "frame_baseline_400.cfg",
-            Self::FrameRawUncapped => "frame_raw_uncapped.cfg",
-            Self::AudioEqCrisp => "audio_eq_crisp.cfg",
-            Self::AudioEqSmooth => "audio_eq_smooth.cfg",
-            Self::AudioLegacyLrIsolation => "audio_legacy_lr_isolation.cfg",
-            Self::Competitive2026 => "competitive_2026.cfg",
+            target => target
+                .optional_asset()
+                .expect("non-core target has a matching optional asset")
+                .file_name(),
         }
     }
 }

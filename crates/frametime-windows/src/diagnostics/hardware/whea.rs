@@ -174,7 +174,7 @@ fn utf16z(value: &str) -> Vec<u16> {
 }
 
 fn is_win32_error(error: &windows::core::Error, expected: u32) -> bool {
-    error.code().0 as u32 == (0x8007_0000 | expected)
+    error.code().0.cast_unsigned() == (0x8007_0000 | expected)
 }
 
 fn event_log_error(api: &str, error: windows::core::Error) -> DiagnosticError {

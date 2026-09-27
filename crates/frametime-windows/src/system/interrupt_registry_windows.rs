@@ -43,8 +43,7 @@ mod windows_interrupt_registry {
             Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR},
             System::Registry::{
                 HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_BINARY, REG_DWORD,
-                REG_VALUE_TYPE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
-                RegSetValueExW,
+                REG_VALUE_TYPE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
             },
         },
         core::PCWSTR,
@@ -91,48 +90,35 @@ mod windows_interrupt_registry {
         let Some(handle) = open(key, KEY_QUERY_VALUE)? else {
             return Ok(None);
         };
-        let name = wide(name);
-        let mut kind = REG_VALUE_TYPE(0);
-        let mut size = 0_u32;
-        let first = unsafe {
-            RegQueryValueExW(
-                handle,
-                PCWSTR(name.as_ptr()),
-                None,
-                Some(&mut kind),
-                None,
-                Some(&mut size),
-            )
-        };
-        if first == ERROR_FILE_NOT_FOUND {
-            unsafe {
-                let _ = RegCloseKey(handle);
-            }
-            return Ok(None);
-        }
-        if first.0 != 0 || size as usize > MAX_INTERRUPT_VALUE_BYTES {
-            unsafe {
-                let _ = RegCloseKey(handle);
-            }
-            return Err(error("RegQueryValueExW(size)", first));
-        }
-        let mut bytes = vec![0_u8; size as usize];
-        let second = unsafe {
-            RegQueryValueExW(
-                handle,
-                PCWSTR(name.as_ptr()),
-                None,
-                Some(&mut kind),
-                Some(bytes.as_mut_ptr()),
-                Some(&mut size),
-            )
-        };
+        let value = read_opened_value(handle, name)?;
+        decode_value(value)
+    }
+
+    fn read_opened_value(
+        handle: HKEY,
+        name: &str,
+    ) -> Result<Option<(REG_VALUE_TYPE, Vec<u8>)>, DeviceBindingError> {
+        let value =
+            crate::system::query_registry_value(handle, name, MAX_INTERRUPT_VALUE_BYTES, true);
         unsafe {
             let _ = RegCloseKey(handle);
         }
-        if second.0 != 0 || size as usize != bytes.len() {
-            return Err(error("RegQueryValueExW(value)", second));
-        }
+        value.map_err(|failure| match failure {
+            crate::system::RegistryQueryFailure::Size(code) => {
+                error("RegQueryValueExW(size)", code)
+            }
+            crate::system::RegistryQueryFailure::Value(code) => {
+                error("RegQueryValueExW(value)", code)
+            }
+        })
+    }
+
+    fn decode_value(
+        value: Option<(REG_VALUE_TYPE, Vec<u8>)>,
+    ) -> Result<Option<InterruptRegistryValue>, DeviceBindingError> {
+        let Some((kind, bytes)) = value else {
+            return Ok(None);
+        };
         match kind {
             REG_DWORD if bytes.len() == 4 => Ok(Some(InterruptRegistryValue::Dword(
                 u32::from_le_bytes(bytes.try_into().map_err(|_| {

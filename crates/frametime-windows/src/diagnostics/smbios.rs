@@ -38,64 +38,15 @@ pub(crate) fn verify_memory_topology(captured: &Option<MemoryTopology>) -> Resul
 /// terminator so an ignored structure cannot desynchronise the walk.
 pub(crate) fn parse_memory_topology(raw: &[u8]) -> Result<Option<MemoryTopology>, String> {
     let table = raw_smbios_table(raw)?;
-    let mut devices = std::collections::BTreeMap::<u16, bool>::new();
-    let mut channels = Vec::<MemoryChannel>::new();
-    let mut seen_selected_handles = std::collections::BTreeSet::new();
-    let mut offset = 0;
-
-    while offset < table.len() {
-        let structure = next_smbios_structure(table, &mut offset)?;
-        let kind = structure[0];
-        let handle = u16::from_le_bytes([structure[2], structure[3]]);
-        match kind {
-            17 => {
-                if !seen_selected_handles.insert(handle) || devices.contains_key(&handle) {
-                    return Err("P1:24 SMBIOS has duplicate selected structure handles".into());
-                }
-                devices.insert(handle, type17_is_populated(structure)?);
-            }
-            37 => {
-                if !seen_selected_handles.insert(handle) {
-                    return Err("P1:24 SMBIOS has duplicate selected structure handles".into());
-                }
-                channels.push(parse_type37_channel(handle, structure)?);
-            }
-            _ => {}
-        }
-    }
+    let (devices, channels) = selected_memory_structures(table)?;
 
     if channels.is_empty() {
         return Ok(None);
     }
     let channel_count =
         u16::try_from(channels.len()).map_err(|_| "P1:24 SMBIOS channel count exceeds u16")?;
-    let mut membership = std::collections::BTreeSet::new();
-    let mut populated_channels = Vec::new();
-    for channel in channels {
-        let mut populated = Vec::new();
-        for device_handle in channel.device_handles {
-            let populated_device = devices
-                .get(&device_handle)
-                .ok_or("P1:24 SMBIOS memory channel references a missing Type 17 device")?;
-            if !membership.insert(device_handle) {
-                return Err("P1:24 SMBIOS has duplicate Type 17 channel membership".into());
-            }
-            if *populated_device {
-                populated.push(device_handle);
-            }
-        }
-        if !populated.is_empty() {
-            populated_channels.push(MemoryChannel {
-                handle: channel.handle,
-                device_handles: populated,
-            });
-        }
-    }
-
-    let every_populated_device_is_mapped = devices
-        .iter()
-        .filter(|(_, populated)| **populated)
-        .all(|(handle, _)| membership.contains(handle));
+    let (populated_channels, every_populated_device_is_mapped) =
+        populated_channel_mapping(devices, channels)?;
     if populated_channels.is_empty() || !every_populated_device_is_mapped {
         return Ok(None);
     }
@@ -103,6 +54,93 @@ pub(crate) fn parse_memory_topology(raw: &[u8]) -> Result<Option<MemoryTopology>
         channel_count,
         populated_channels,
     }))
+}
+
+fn selected_memory_structures(
+    table: &[u8],
+) -> Result<(std::collections::BTreeMap<u16, bool>, Vec<MemoryChannel>), String> {
+    let mut devices = std::collections::BTreeMap::new();
+    let mut channels = Vec::new();
+    let mut seen_selected_handles = std::collections::BTreeSet::new();
+    let mut offset = 0;
+    while offset < table.len() {
+        let structure = next_smbios_structure(table, &mut offset)?;
+        let handle = u16::from_le_bytes([structure[2], structure[3]]);
+        match structure[0] {
+            17 => insert_type17(&mut devices, &mut seen_selected_handles, handle, structure)?,
+            37 => insert_type37(&mut channels, &mut seen_selected_handles, handle, structure)?,
+            _ => {}
+        }
+    }
+    Ok((devices, channels))
+}
+
+fn insert_type17(
+    devices: &mut std::collections::BTreeMap<u16, bool>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    handle: u16,
+    structure: &[u8],
+) -> Result<(), String> {
+    if !seen.insert(handle) || devices.contains_key(&handle) {
+        return Err("P1:24 SMBIOS has duplicate selected structure handles".into());
+    }
+    devices.insert(handle, type17_is_populated(structure)?);
+    Ok(())
+}
+
+fn insert_type37(
+    channels: &mut Vec<MemoryChannel>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    handle: u16,
+    structure: &[u8],
+) -> Result<(), String> {
+    if !seen.insert(handle) {
+        return Err("P1:24 SMBIOS has duplicate selected structure handles".into());
+    }
+    channels.push(parse_type37_channel(handle, structure)?);
+    Ok(())
+}
+
+fn populated_channel_mapping(
+    devices: std::collections::BTreeMap<u16, bool>,
+    channels: Vec<MemoryChannel>,
+) -> Result<(Vec<MemoryChannel>, bool), String> {
+    let mut membership = std::collections::BTreeSet::new();
+    let mut populated_channels = Vec::new();
+    for channel in channels {
+        let populated = populated_devices_in_channel(&devices, &mut membership, channel)?;
+        if !populated.device_handles.is_empty() {
+            populated_channels.push(populated);
+        }
+    }
+    let every_populated_device_is_mapped = devices
+        .iter()
+        .filter(|(_, populated)| **populated)
+        .all(|(handle, _)| membership.contains(handle));
+    Ok((populated_channels, every_populated_device_is_mapped))
+}
+
+fn populated_devices_in_channel(
+    devices: &std::collections::BTreeMap<u16, bool>,
+    membership: &mut std::collections::BTreeSet<u16>,
+    channel: MemoryChannel,
+) -> Result<MemoryChannel, String> {
+    let mut populated = Vec::new();
+    for device_handle in channel.device_handles {
+        let populated_device = devices
+            .get(&device_handle)
+            .ok_or("P1:24 SMBIOS memory channel references a missing Type 17 device")?;
+        if !membership.insert(device_handle) {
+            return Err("P1:24 SMBIOS has duplicate Type 17 channel membership".into());
+        }
+        if *populated_device {
+            populated.push(device_handle);
+        }
+    }
+    Ok(MemoryChannel {
+        handle: channel.handle,
+        device_handles: populated,
+    })
 }
 
 pub(crate) fn raw_smbios_table(raw: &[u8]) -> Result<&[u8], String> {

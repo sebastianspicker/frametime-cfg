@@ -105,16 +105,25 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
+        self.validate_fps_cap()?;
+        self.validate_shader_cache_templates()?;
+        self.validate_fixed_cache_templates()
+    }
+
+    fn validate_fps_cap(&self) -> Result<(), ConfigError> {
         if self.fps_cap.measured_cap != 0 && !(30..=1000).contains(&self.fps_cap.measured_cap) {
             return Err(ConfigError::FpsMeasuredCap);
         }
-        if self.fps_cap.strategy == FpsCapMode::Vrr
-            && (!(30..=1000).contains(&self.fps_cap.refresh_hz)
-                || self.fps_cap.ceiling_margin_hz == 0
-                || self.fps_cap.ceiling_margin_hz >= self.fps_cap.refresh_hz)
-        {
+        let refresh_is_valid = (30..=1000).contains(&self.fps_cap.refresh_hz);
+        let margin_is_valid = self.fps_cap.ceiling_margin_hz != 0
+            && self.fps_cap.ceiling_margin_hz < self.fps_cap.refresh_hz;
+        if self.fps_cap.strategy == FpsCapMode::Vrr && (!refresh_is_valid || !margin_is_valid) {
             return Err(ConfigError::FpsVrr);
         }
+        Ok(())
+    }
+
+    fn validate_shader_cache_templates(&self) -> Result<(), ConfigError> {
         let mut seen = std::collections::BTreeSet::new();
         if self.paths.shader_cache.is_empty() {
             return Err(ConfigError::ShaderCachePath(
@@ -128,6 +137,10 @@ impl Config {
                 return Err(ConfigError::ShaderCachePath(path.clone()));
             }
         }
+        Ok(())
+    }
+
+    fn validate_fixed_cache_templates(&self) -> Result<(), ConfigError> {
         for (path, expected) in [
             (&self.paths.nvidia_dx_cache, NVIDIA_DX_CACHE_TEMPLATE),
             (&self.paths.nvidia_gl_cache, NVIDIA_GL_CACHE_TEMPLATE),

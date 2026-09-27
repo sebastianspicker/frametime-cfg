@@ -6,19 +6,25 @@ pub(super) fn accelerators() -> windows::core::Result<HACCEL> {
         .enumerate()
         .map(|(index, _)| ACCEL {
             fVirt: FCONTROL | FVIRTKEY,
-            key: b'1' as u16 + index as u16,
-            cmd: (NAV_BASE + index) as u16,
+            key: u16::from(b'1')
+                + u16::try_from(index).expect("nine fixed navigation accelerators fit in u16"),
+            cmd: u16::try_from(NAV_BASE + index).expect("fixed navigation control IDs fit in u16"),
         })
         .collect::<Vec<_>>();
     entries.push(ACCEL {
         fVirt: FVIRTKEY,
+        key: VK_F5.0,
+        cmd: u16::try_from(REFRESH).expect("fixed refresh control ID fits in u16"),
+    });
+    entries.push(ACCEL {
+        fVirt: FVIRTKEY,
         key: VK_ESCAPE.0,
-        cmd: CANCEL as u16,
+        cmd: u16::try_from(CANCEL).expect("fixed cancel control ID fits in u16"),
     });
     entries.push(ACCEL {
         fVirt: FVIRTKEY,
         key: VK_F6.0,
-        cmd: FOCUS_RESTORE as u16,
+        cmd: u16::try_from(FOCUS_RESTORE).expect("fixed focus control ID fits in u16"),
     });
     unsafe { CreateAcceleratorTableW(&entries) }
 }
@@ -60,75 +66,78 @@ pub(super) fn update_area(window: HWND, area: Area) {
         }));
         NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, heading, OBJID_CLIENT.0, 0);
     }
-    if area == Area::Video {
-        refresh_video_preview(window);
-    } else {
-        render_catalog(window, area);
+    refresh_area_data(window, area);
+    if area == Area::Benchmark {
+        benchmark::render(window);
     }
     layout(window);
 }
 
 fn update_area_controls(app: &mut AppState, area: Area, authenticated: bool) {
-    let show_primary_action = area != Area::SetupVerify || authenticated;
-    unsafe {
-        let _ = ShowWindow(
-            app.action,
-            if show_primary_action {
-                SW_SHOW
-            } else {
-                SW_HIDE
-            },
-        );
-    }
-    let (secondary, tertiary, quaternary, quinary) = area_secondary_actions(area, authenticated);
+    set_visible(app.action, area != Area::SetupVerify || authenticated);
+    update_secondary_action_controls(app, area, authenticated);
+    set_visible_all(benchmark_controls(app), area == Area::Benchmark);
+    set_visible_all(
+        setup_controls(app),
+        area == Area::SetupVerify && authenticated,
+    );
+    set_visible_all(video_controls(app), area == Area::Video);
+    set_visible_all(cs2_cfg_controls(app), area == Area::Cs2Cfg);
+    set_visible(app.table, true);
+    set_visible(app.filter_label, true);
+    set_visible(app.catalog_filter, true);
+    benchmark::visibility(app);
+}
+
+fn update_secondary_action_controls(app: &AppState, area: Area, authenticated: bool) {
+    let labels = area_secondary_actions(area, authenticated);
     for (handle, label) in [
-        (app.secondary, secondary),
-        (app.tertiary, tertiary),
-        (app.quaternary, quaternary),
-        (app.quinary, quinary),
+        (app.secondary, labels.0),
+        (app.tertiary, labels.1),
+        (app.quaternary, labels.2),
+        (app.quinary, labels.3),
     ] {
         set_text(handle, label);
-        unsafe {
-            let _ = ShowWindow(handle, if label.is_empty() { SW_HIDE } else { SW_SHOW });
-        }
+        set_visible(handle, !label.is_empty());
     }
     unsafe {
         let _ = EnableWindow(app.secondary, area != Area::Video);
     }
-    let show_benchmark = area == Area::Benchmark;
-    for handle in [
+}
+
+fn benchmark_controls(app: &AppState) -> [HWND; 5] {
+    [
         app.fps_label,
         app.fps_input,
         app.min_label,
         app.min_input,
         app.vprof_input,
-    ] {
-        unsafe {
-            let _ = ShowWindow(handle, if show_benchmark { SW_SHOW } else { SW_HIDE });
-        }
-    }
-    let show_setup = area == Area::SetupVerify && authenticated;
-    for handle in [app.profile, app.dry_run] {
-        unsafe {
-            let _ = ShowWindow(handle, if show_setup { SW_SHOW } else { SW_HIDE });
-        }
-    }
-    let show_video = area == Area::Video;
-    for handle in [
+    ]
+}
+fn setup_controls(app: &AppState) -> [HWND; 2] {
+    [app.profile, app.dry_run]
+}
+fn video_controls(app: &AppState) -> [HWND; 4] {
+    [
         app.video_root_label,
         app.video_root,
         app.video_tier_label,
         app.video_tier,
-    ] {
-        unsafe {
-            let _ = ShowWindow(handle, if show_video { SW_SHOW } else { SW_HIDE });
-        }
+    ]
+}
+fn cs2_cfg_controls(app: &AppState) -> [HWND; 2] {
+    [app.cs2_cfg_asset_label, app.cs2_cfg_asset]
+}
+
+pub(super) fn set_visible_all(handles: impl IntoIterator<Item = HWND>, visible: bool) {
+    for handle in handles {
+        set_visible(handle, visible);
     }
-    let show_cs2_cfg = area == Area::Cs2Cfg;
-    for handle in [app.cs2_cfg_asset_label, app.cs2_cfg_asset] {
-        unsafe {
-            let _ = ShowWindow(handle, if show_cs2_cfg { SW_SHOW } else { SW_HIDE });
-        }
+}
+
+pub(super) fn set_visible(handle: HWND, visible: bool) {
+    unsafe {
+        let _ = ShowWindow(handle, if visible { SW_SHOW } else { SW_HIDE });
     }
 }
 
@@ -154,6 +163,7 @@ pub(super) fn area_secondary_actions(
         ),
         Area::Benchmark => ("Parse VProf", "", "Capture 5s ETW frames", ""),
         Area::Recovery => ("Restore all", "Restore selected", "Clear backups", ""),
+        Area::Drivers => ("", "", "", ""),
         Area::Video => ("", "", "", ""),
         Area::Cs2Cfg => ("", "", "", ""),
         Area::Network => ("", "", "", ""),

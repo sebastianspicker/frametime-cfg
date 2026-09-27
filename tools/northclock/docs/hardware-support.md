@@ -1,8 +1,13 @@
 # Hardware support
 
-CI and local mocks are the current acceptance environment. No support row below
-has physical Windows evidence, so every hardware-specific row remains
-`hardware-unverified`.
+> **Archived and unsupported.** This table preserves historical source intent;
+> it is not a hardware-support matrix or a qualification claim. Northclock is
+> excluded from active CI, Dependabot, issue routing, packaging, and contributor
+> workflows. Report vulnerabilities through the repository
+> [security policy](../../../.github/SECURITY.md).
+
+No row below has recorded physical Windows evidence in this repository, so every
+hardware-specific row remains `hardware-unverified`.
 
 | Area | Intended backend | Current behavior | Verification |
 | --- | --- | --- | --- |
@@ -14,7 +19,7 @@ has physical Windows evidence, so every hardware-specific row remains
 | Radeon telemetry and tuning | Installed AMD ADLX API | DLL presence reported; Rust-only telemetry ABI not registered | hardware-unverified |
 | GeForce telemetry | Installed NVIDIA NVAPI | Doctor resolves and initializes the Release 590 ABI before reporting availability; read-only load and temperature are implemented | hardware-unverified |
 | GeForce tuning | Installed NVIDIA NVAPI | No write backend registered | hardware-unverified |
-| VRAM validation | Isolated D3D12 worker | Bounded upload, device-local copy, readback, timeout, and device-removal handling implemented | hardware-unverified |
+| VRAM validation | Isolated D3D12 worker | Direct worker has bounded D3D12 upload, copy, readback, and device-removal handling; normal parent launch is unavailable because worker-image authentication is absent | hardware-unverified |
 | System memory validation | Bounded Rust workload and Windows Event Log API | Measured timing and error counts with an explicit WHEA correlation result | hardware-unverified |
 | Power plans | Windows power APIs | Native GUID and friendly-name enumeration implemented | hardware-unverified |
 | Task scheduling | Task Scheduler 2.0 COM | Read-only inspection of the exact `\Northclock` folder and its registered tasks | hardware-unverified |
@@ -32,10 +37,10 @@ field and is not persisted.
 
 `northclock system status` is descriptive. A reported potential conflict means
 only that a known overlapping hardware-control component was observed; it does
-not prove that the component is writing hardware or causing instability. A
-device finding means Windows reports a Code 12 resource conflict, but does not
-identify the competing device. A missing observation never means the machine is
-safe for tuning.
+not prove the component is writing hardware or causing instability. A device
+finding means Windows reports a Code 12 resource conflict, without identifying
+the competing device. A missing observation never means the machine is safe for
+tuning.
 
 [AMD ADLX](https://github.com/GPUOpen-LibrariesAndSDKs/ADLX),
 [NVIDIA NVAPI](https://github.com/NVIDIA/nvapi), and

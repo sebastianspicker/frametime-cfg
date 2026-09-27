@@ -1,32 +1,43 @@
 use super::*;
 
 pub(super) fn calculate_fps_cap(window: HWND) {
-    let Some((vprof_input, min_input)) = with_state(window, |app| (app.vprof_input, app.min_input))
-    else {
-        return;
-    };
-    let vprof = control_text(vprof_input);
-    let target = control_text(min_input)
-        .trim()
-        .parse::<u32>()
-        .unwrap_or(u32::MAX);
-    match model::calculate_fps_cap(&vprof, target) {
-        Ok(cap) => update_status(
-            window,
-            StatusKind::Complete,
-            &format!(
-                "Selected fps_max: {cap}. A nonzero target was accepted only from at least five parsed P1-supported runs."
-            ),
-        ),
-        Err(error) => update_status(window, StatusKind::Warning, error),
-    }
+    benchmark::command(window, FPS_BASE + 2, 0);
 }
 pub(super) fn control_text(handle: HWND) -> String {
+    bounded_control_text(handle, 32_768).unwrap_or_default()
+}
+
+pub(super) fn vprof_control_text(window: HWND, handle: HWND) -> Option<String> {
+    if with_state(window, |app| app.vprof_input_state.is_rejected()).unwrap_or(true) {
+        update_status(
+            window,
+            StatusKind::Warning,
+            "VProf input was not retained completely. Clear the field and paste a complete capture within 8 MiB.",
+        );
+        return None;
+    }
+    match bounded_control_text(handle, frametime_domain::fps::MAX_VPROF_INPUT_BYTES) {
+        Ok(text) => Some(text),
+        Err(error) => {
+            update_status(window, StatusKind::Warning, &error);
+            None
+        }
+    }
+}
+
+fn bounded_control_text(handle: HWND, max_bytes: usize) -> Result<String, String> {
     unsafe {
-        let length = GetWindowTextLengthW(handle);
-        let mut buffer = vec![0_u16; length as usize + 1];
-        GetWindowTextW(handle, &mut buffer);
-        String::from_utf16_lossy(&buffer[..length as usize])
+        let length =
+            usize::try_from(GetWindowTextLengthW(handle)).map_err(|_| "Invalid input length")?;
+        // UTF-16 code units cannot exceed the UTF-8 byte budget. Check before allocating.
+        if length > max_bytes {
+            return Err("Input exceeds the permitted UTF-8 byte limit".into());
+        }
+        let capacity = length.checked_add(1).ok_or("Input length overflow")?;
+        let mut buffer = vec![0_u16; capacity];
+        let copied = usize::try_from(GetWindowTextW(handle, &mut buffer))
+            .map_err(|_| "Invalid input length")?;
+        model::decode_bounded_control_text(&buffer[..copied], max_bytes)
     }
 }
 pub(super) fn cancel(window: HWND) {
@@ -100,12 +111,19 @@ pub(super) fn poll_terminal(window: HWND) {
     .flatten();
     if let Some(code) = result {
         let _ = with_state(window, |app| app.child = None);
+        invalidate_after_operation(window);
         let outcome = OperationState::terminal_result(code);
         update_status(window, outcome.status, &outcome.detail);
     }
 
     poll_elevation_watchdog(window);
     if let Some(native) = take_native_result(window) {
+        if !matches!(
+            native.0,
+            NativeOperation::Diagnostic | NativeOperation::FpsRead
+        ) {
+            invalidate_after_operation(window);
+        }
         present_native_result(window, native);
     }
 }
@@ -120,6 +138,7 @@ fn poll_elevation_watchdog(window: HWND) {
     match elevation {
         Some(Ok(true)) => {
             let _ = with_state(window, |app| app.elevation_watchdog = None);
+            invalidate_after_operation(window);
             unsafe {
                 let _ = ShowWindow(window, SW_RESTORE);
             }
@@ -174,6 +193,22 @@ fn take_native_result(window: HWND) -> Option<(NativeOperation, NativeWorkerResu
 
 fn present_native_result(window: HWND, (operation, result): (NativeOperation, NativeWorkerResult)) {
     match (operation, result) {
+        (NativeOperation::FpsRead, NativeWorkerResult::FpsRead(result)) => {
+            benchmark::present_result(window, NativeWorkerResult::FpsRead(result))
+        }
+        (NativeOperation::FpsSave, NativeWorkerResult::FpsSaved(result)) => {
+            benchmark::present_result(window, NativeWorkerResult::FpsSaved(result))
+        }
+        (NativeOperation::FpsRead, _) => benchmark::present_result(
+            window,
+            NativeWorkerResult::FpsRead(Err("Source worker ended without a valid result.".into())),
+        ),
+        (NativeOperation::FpsSave, _) => benchmark::present_result(
+            window,
+            NativeWorkerResult::FpsSaved(Err(
+                "Save worker ended without a valid result. State may be partially saved.".into(),
+            )),
+        ),
         (NativeOperation::Recovery, NativeWorkerResult::Transaction(Ok(detail))) => {
             refresh_area_data(window, Area::Recovery);
             update_status(window, StatusKind::Complete, &detail);
@@ -213,7 +248,8 @@ fn present_native_result(window: HWND, (operation, result): (NativeOperation, Na
             refresh_area_data(window, area);
             update_status(window, kind, &detail);
         }
-        (_, NativeWorkerResult::Diagnostic(_))
+        (_, NativeWorkerResult::FpsRead(_) | NativeWorkerResult::FpsSaved(_))
+        | (_, NativeWorkerResult::Diagnostic(_))
         | (NativeOperation::Diagnostic, NativeWorkerResult::Transaction(_)) => update_status(
             window,
             StatusKind::Failed,
@@ -224,7 +260,8 @@ fn present_native_result(window: HWND, (operation, result): (NativeOperation, Na
 
 pub(super) fn high_contrast_enabled() -> bool {
     let mut setting = HIGHCONTRASTW {
-        cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32,
+        cbSize: u32::try_from(std::mem::size_of::<HIGHCONTRASTW>())
+            .expect("HIGHCONTRASTW size fits in u32"),
         ..Default::default()
     };
     unsafe {
@@ -245,9 +282,9 @@ pub(super) fn status_color(kind: StatusKind, high_contrast: bool) -> COLORREF {
         }
     }
     match kind {
-        StatusKind::Ready | StatusKind::Complete => COLORREF(0x007000),
-        StatusKind::Running => COLORREF(0x9A6500),
-        StatusKind::Warning => COLORREF(0x0050B0),
-        StatusKind::Failed => COLORREF(0x0000C0),
+        StatusKind::Ready | StatusKind::Complete => COLORREF(0x005000),
+        StatusKind::Running => COLORREF(0x643200),
+        StatusKind::Warning => COLORREF(0x003068),
+        StatusKind::Failed => COLORREF(0x000090),
     }
 }

@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 pub(super) const MAX_TRUSTED_JSON_BYTES: usize = 64 * 1024 * 1024;
-const TRUSTED_JSON_CHILDREN: [&str; 8] = [
+const TRUSTED_JSON_CHILDREN: [&str; 10] = [
     "backup.json",
     "progress.json",
     "state.json",
@@ -16,6 +16,8 @@ const TRUSTED_JSON_CHILDREN: [&str; 8] = [
     // Driver lifecycle evidence is independently durable. It must never be
     // folded into mutable profile state or selected by a caller path.
     "driver-transaction.json",
+    "driver-profile-backup.json",
+    "driver-previous-transaction.json",
 ];
 
 pub(super) fn is_allowed_child(name: &str) -> bool {
@@ -80,6 +82,8 @@ mod tests {
             "evidence.json",
             "runtime-current.json",
             "driver-transaction.json",
+            "driver-profile-backup.json",
+            "driver-previous-transaction.json",
         ] {
             assert!(is_allowed_child(name), "{name}");
         }

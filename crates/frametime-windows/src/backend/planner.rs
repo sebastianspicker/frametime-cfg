@@ -85,39 +85,7 @@ impl Backend for PlannerBackend {
                 operation.step.title,
             )]);
         }
-        let guide = match native_action {
-            Action::GpuDriverCleanPreparation => Some(
-                "Would present GPU driver-clean preparation: confirm the exact target GPU and signed replacement driver, and prepare Safe Mode and recovery first; no driver removal, handoff, reboot, files, or system settings will be changed.",
-            ),
-            Action::NvidiaProfilePreparation => Some(
-                "Would perform a read-only NVIDIA DRS profile inspection and prepare a durable receipt; NVAPI, DRS profiles, registry settings, files, and system settings will not be changed.",
-            ),
-            Action::SafeModeHandoff => Some(
-                "Would publish the exact compiled payload into a protected immutable generation, visibly elevate its retained frametime.exe, and let that selected process bind HKLM RunOnce and Safe Boot before P1:38 progress; dry-run performs none of those effects.",
-            ),
-            Action::PhaseThreeHandoff => Some(
-                "Would require coherent P2:2 removal evidence, the initiating TokenUser, and the selected immutable runtime before binding the exact HKCU Phase 3 Run handoff; dry-run performs no registry or reboot effect.",
-            ),
-            Action::MsiPreparation => Some(
-                "Would present MSI preparation: use only specifically supported devices, record current state, then reboot and verify negotiated mode because a registry request does not prove MSI or MSI-X is active; no files or system settings will be changed.",
-            ),
-            Action::NicAffinityPreparation => Some(
-                "Would present NIC-affinity preparation only after reproducible NIC DPC diagnosis and authoritative logical-processor topology validation; an unsuitable mask can increase latency or concentrate load, and no files or system settings will be changed.",
-            ),
-            Action::Cs2LaunchVideoGuide => Some(
-                "Would present manual CS2 launch-options plus Raw latency, NVIDIA VRR, AMD FreeSync, and GPU-constrained video UI guidance; Steam launch options and CS2 video files will not be written.",
-            ),
-            Action::AmdRadeonGuide => Some(
-                "Would present AMD Radeon guidance: verify current AMD and game documentation, including anti-cheat compatibility, before enabling driver features; firmware, AMD settings, files, and system settings will not be changed.",
-            ),
-            Action::VramUsageGuide => Some(
-                "Would present same-workload VRAM observation guidance; no telemetry is collected and no files or system settings will be changed.",
-            ),
-            Action::FinalChecklistGuide => Some(
-                "Would present the final checklist without requiring optional hardware observations; no files or system settings will be changed.",
-            ),
-            _ => None,
-        };
+        let guide = dry_run_guide(native_action);
         if let Some(guide) = guide {
             return Ok(vec![format!(
                 "Would report {} ({}).",
@@ -177,5 +145,41 @@ impl Backend for PlannerBackend {
     }
     fn timestamp(&self) -> String {
         timestamp()
+    }
+}
+
+fn dry_run_guide(action: &Action) -> Option<&'static str> {
+    match action {
+        Action::GpuDriverCleanPreparation => Some(
+            "Would present GPU driver-clean preparation: confirm the exact target GPU and signed replacement driver, and prepare Safe Mode and recovery first; no driver removal, handoff, reboot, files, or system settings will be changed.",
+        ),
+        Action::NvidiaProfilePreparation => Some(
+            "Would perform a read-only NVIDIA DRS profile inspection and prepare a durable receipt; NVAPI, DRS profiles, registry settings, files, and system settings will not be changed.",
+        ),
+        Action::SafeModeHandoff => Some(
+            "Would publish the exact compiled payload into a protected immutable generation, visibly elevate its retained frametime.exe, and let that selected process bind HKLM RunOnce and Safe Boot before P1:38 progress; dry-run performs none of those effects.",
+        ),
+        Action::PhaseThreeHandoff => Some(
+            "Would require coherent P2:2 removal evidence, the initiating TokenUser, and the selected immutable runtime before binding the exact HKCU Phase 3 Run handoff; dry-run performs no registry or reboot effect.",
+        ),
+        Action::MsiPreparation => Some(
+            "Would present MSI preparation: use only specifically supported devices, record current state, then reboot and verify negotiated mode because a registry request does not prove MSI or MSI-X is active; no files or system settings will be changed.",
+        ),
+        Action::NicAffinityPreparation => Some(
+            "Would present NIC-affinity preparation only after reproducible NIC DPC diagnosis and authoritative logical-processor topology validation; an unsuitable mask can increase latency or concentrate load, and no files or system settings will be changed.",
+        ),
+        Action::Cs2LaunchVideoGuide => Some(
+            "Would present manual CS2 launch-options plus Raw latency, NVIDIA VRR, AMD FreeSync, and GPU-constrained video UI guidance; Steam launch options and CS2 video files will not be written.",
+        ),
+        Action::AmdRadeonGuide => Some(
+            "Would present AMD Radeon guidance: verify current AMD and game documentation, including anti-cheat compatibility, before enabling driver features; firmware, AMD settings, files, and system settings will not be changed.",
+        ),
+        Action::VramUsageGuide => Some(
+            "Would present same-workload VRAM observation guidance; no telemetry is collected and no files or system settings will be changed.",
+        ),
+        Action::FinalChecklistGuide => Some(
+            "Would present the final checklist without requiring optional hardware observations; no files or system settings will be changed.",
+        ),
+        _ => None,
     }
 }
