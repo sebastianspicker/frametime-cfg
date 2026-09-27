@@ -10,7 +10,6 @@ on:
 permissions:
   contents: read
 
-# Prevent CI abuse: cancel redundant runs, limit concurrent PR jobs
 concurrency:
   group: security-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -26,50 +25,13 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Scan for secrets and credentials
-        shell: bash
-        run: |
-          echo "=== Scanning for hardcoded secrets ==="
-          FOUND=0
-          # Scan first-party source, configuration, and documentation.
-          EXCLUDE_ANALYSIS_PATHS='(^|/)(vendor|third_party|third-party|3rdparty|external)/|\.git/'
-
-          # Patterns that should never appear in committed code
-          PATTERNS=(
-            'AKIA[0-9A-Z]{16}'                          # AWS Access Key
-            'ghp_[a-zA-Z0-9]{36}'                       # GitHub PAT (fine-grained)
-            'github_pat_[a-zA-Z0-9_]{82}'               # GitHub PAT (classic)
-            'gho_[a-zA-Z0-9]{36}'                       # GitHub OAuth
-            'glpat-[a-zA-Z0-9\-_]{20,}'                 # GitLab PAT
-            'sk-[a-zA-Z0-9]{20,}'                       # sk-style secret key
-            'xox[boaprs]-[a-zA-Z0-9\-]+'                # Slack token
-            'hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+' # Slack webhook
-          )
-
-          for pattern in "${PATTERNS[@]}"; do
-            if grep -rEn "$pattern" --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.yaml' --include='*.json' --include='*.md' --include='*.txt' --include='*.cfg' --include='*.env' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS"; then
-              echo "::error::Potential secret found matching pattern: $pattern"
-              FOUND=$((FOUND + 1))
-            fi
-          done
-
-          # Check for generic password/secret assignments
-          if grep -rEin '(password|passwd|secret|token|api_key|apikey|private_key)\s*[:=]\s*["\x27][^"\x27]{8,}' --include='*.cmd' --include='*.rs' --include='*.toml' --include='Cargo.lock' --include='*.yml' --include='*.json' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v 'CONTRIBUTING' | grep -v 'SECURITY' | grep -v '#'; then
-            echo "::error::Potential hardcoded credential assignment found"
-            FOUND=$((FOUND + 1))
-          fi
-
-          # Check for private keys
-          if grep -rn 'BEGIN.*PRIVATE KEY' . 2>/dev/null | grep -Ev "$EXCLUDE_ANALYSIS_PATHS" | grep -v '.github/workflows/security.yml'; then
-            echo "::error::Private key found in repository"
-            FOUND=$((FOUND + 1))
-          fi
-
-          if [ "$FOUND" -gt 0 ]; then
-            echo "::error::Found potential secret(s). Review and remove before merging."
-            exit 1
-          fi
-          echo "Secret scan: clean"
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: false
+          GITLEAKS_ENABLE_SUMMARY: false
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
 
   native-runtime-boundary:
     name: Native runtime and package boundaries
@@ -102,15 +64,18 @@ jobs:
           echo "=== Checking GitHub Actions workflows ==="
           FOUND=0
 
-          # Check for dangerous trigger that allows fork PRs to run with write access
-          if grep -rn 'pull_request_target' .github/workflows/ 2>/dev/null | grep -v 'security\.yml'; then
+          PR_TARGET='pull_request'
+          PR_TARGET="${PR_TARGET}_target"
+          if grep -rEn "^[[:space:]]*${PR_TARGET}:" .github/workflows/; then
             echo "::error::pull_request_target trigger found - risk of fork PR privilege escalation"
             FOUND=$((FOUND + 1))
           fi
 
-          # Unpinned third-party actions (not actions/ or github/ org)
-          if grep -rEn 'uses:\s+[^#]*@v[0-9]' .github/workflows/ 2>/dev/null | grep -v 'actions/' | grep -v 'github/'; then
-            echo "::warning::Third-party action with tag (not SHA) found - pin to full SHA"
+          if grep -rEh '^[[:space:]]*-[[:space:]]+uses:' .github/workflows/ \
+            | sed -E 's/.*@([^ #]+).*/\1/' \
+            | grep -Ev '^[0-9a-f]{40}$'; then
+            echo "::error::Action reference is not pinned to a full commit SHA"
+            FOUND=$((FOUND + 1))
           fi
 
           # Expression injection - untrusted event data in run: blocks
@@ -134,21 +99,20 @@ jobs:
           EXPR_OPEN='$'
           EXPR_OPEN="${EXPR_OPEN}{{"
           for expr in "${UNSAFE_EXPRS[@]}"; do
-            if grep -rPn "\\${EXPR_OPEN}\s*${expr}" .github/workflows/ 2>/dev/null | grep -v '#'; then
+            if grep -rEn "\\${EXPR_OPEN}[[:space:]]*${expr}" .github/workflows/; then
               echo "::error::Potential expression injection found for ${expr} in workflow - use env: block instead"
               FOUND=$((FOUND + 1))
             fi
           done
 
-          # Overly broad permissions (write-all)
           if grep -rEn 'permissions:\s*write-all' .github/workflows/ 2>/dev/null; then
             echo "::error::write-all permissions found - use least-privilege scoping"
             FOUND=$((FOUND + 1))
           fi
 
-          # workflow_dispatch inputs used directly in run: (template injection)
-          if grep -rPn '\$\{\{\s*github\.event\.inputs\.' .github/workflows/ 2>/dev/null | grep -v 'env:' | grep -v '#'; then
-            echo "::warning::workflow_dispatch input used in expression - verify it is sanitized or passed via env:"
+          if grep -rEn '\$\{\{[[:space:]]*github\.event\.inputs\.' .github/workflows/; then
+            echo "::error::workflow_dispatch input must be passed through env and validated"
+            FOUND=$((FOUND + 1))
           fi
 
           if [ "$FOUND" -gt 0 ]; then
