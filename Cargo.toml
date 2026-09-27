@@ -5,6 +5,7 @@ members = [
     "crates/frametime-app",
     "crates/frametime-cli",
     "crates/frametime-gui",
+    "repo-checks",
 ]
 resolver = "3"
 
