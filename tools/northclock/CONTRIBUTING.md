@@ -1,36 +1,29 @@
 # Contributing
 
-## Development
+> **Archived and unsupported.** Northclock has no active contributor workflow.
+> The workspace remains in place for source, history, Cargo manifests and
+> lockfiles, and the repository
+> [security-reporting route](../../.github/SECURITY.md).
 
-Use a current Rust stable toolchain on Windows 11 x64. Run the checks that
-apply to your change before opening a pull request:
+## Historical maintenance notes
 
-```powershell
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-cargo run -p xtask -- hygiene
-```
-
-Run the CLI contract tests when changing CLI behavior. Run the isolated driver
-workspace checks when changing its protocol or driver-facing source.
+The commands in [development](docs/development.md) are historical reference, not
+requested pull-request checks. Do not treat the preserved workspace as an active
+product or packaging surface.
 
 ## Scope and safety
 
-- Keep `northclock-core` independent of physical hardware so user-mode tests
-  can use mocks.
+- Keep `northclock-core` independent of physical hardware so user-mode tests can
+  use mocks.
 - Keep Windows integration in `northclock-platform-windows`.
 - Keep CLI and GUI behavior aligned through the shared application layer.
-- Preserve the read-only default. Do not represent an untested request as a
+- Preserve the read-only default. Never present an untested request as a
   physical write.
 - Do not commit local configuration, logs, device dumps, keys, certificates,
   proprietary SDKs, or vendor binaries.
 
-## Pull requests
+## Security reports
 
-Keep changes focused and include tests or an explanation of why tests are not
-applicable. Update public documentation when capability states, local
-configuration, the CLI contract, or driver protocol change. State any
-hardware-dependent validation separately from mock or CI results.
-
-By contributing, you agree that your contribution is licensed under the [MIT License](LICENSE).
+Report vulnerabilities through the repository
+[security policy](../../.github/SECURITY.md). Do not disclose secrets, device
+dumps, proprietary SDKs, vendor binaries, keys, or certificates.

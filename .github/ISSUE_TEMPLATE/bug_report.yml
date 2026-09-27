@@ -19,9 +19,7 @@ body:
         - Authenticated package or publisher validation
         - Trusted work directory, state, or reboot handoff
         - Packaged CS2 configuration
-        - Hardware diagnostics
-        - Driver preparation
-        - Northclock or Driver Foundry tool workspace
+        - Root hardware diagnostics (independent)
         - Build, CI, or packaging
         - Other
     validations:
@@ -85,7 +83,7 @@ body:
         - CLI dry-run
         - CLI workflow mutation
         - Native GUI
-        - Read-only hardware diagnostic
+        - Independent read-only hardware diagnostic
         - Build or CI
         - Not sure
     validations:
