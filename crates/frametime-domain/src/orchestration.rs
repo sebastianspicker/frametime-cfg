@@ -6,9 +6,13 @@
 //! effect reports a partial failure.
 
 use crate::{
-    OrchestrationRole, PHASE_ONE_RESIZABLE_BAR_CHECK, PHASE_ONE_SAFE_MODE_HANDOFF,
-    PHASE_ONE_XMP_EXPO_CHECK, PHASE_THREE_DRIVER_INSTALL, PHASE_THREE_FINAL_BENCHMARK,
-    PHASE_TWO_SAFE_BOOT_CLEAR, Phase, Progress, RebootStage, State, StepId, step_catalog,
+    catalog::{
+        OrchestrationRole, PHASE_ONE_RESIZABLE_BAR_CHECK, PHASE_ONE_SAFE_MODE_HANDOFF,
+        PHASE_ONE_XMP_EXPO_CHECK, PHASE_THREE_DRIVER_INSTALL, PHASE_THREE_FINAL_BENCHMARK,
+        PHASE_TWO_SAFE_BOOT_CLEAR, Phase, StepId, step_catalog,
+    },
+    handoff::RebootStage,
+    state::{Progress, State},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

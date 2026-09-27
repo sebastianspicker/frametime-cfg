@@ -7,7 +7,7 @@ use std::{
 };
 
 use frametime_domain::{
-    RuntimeRecord,
+    handoff::RuntimeRecord,
     runtime::{
         RUNTIME_GENERATIONS_DIR, RUNTIME_PAYLOAD_PATHS, RUNTIME_SCHEMA_VERSION, RuntimeCurrent,
     },

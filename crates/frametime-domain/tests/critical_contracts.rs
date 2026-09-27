@@ -1,4 +1,4 @@
-use frametime_domain::{BackupFile, Config};
+use frametime_domain::{backup::BackupFile, config::Config};
 
 #[test]
 fn configuration_and_backup_inputs_are_validated_without_fixture_files() {

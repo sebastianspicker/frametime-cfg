@@ -1,8 +1,17 @@
 use frametime_domain::{
-    BootEnvironment, Engine, Evidence, FinalBenchmarkReceipt, HandoffEvidence, MigrationDecision,
-    MigrationInventory, OrchestrationRole, PHASE_ONE_SAFE_MODE_HANDOFF, PHASE_TWO_DRIVER_CLEANUP,
-    Phase, PhaseFacts, PhaseRequest, Profile, Progress, RuntimeBinding, State, Transition,
-    assess_inventory, authorize, require_phase_one_handoff_ready, step_by_id, step_catalog,
+    benchmark::FinalBenchmarkReceipt,
+    catalog::{
+        OrchestrationRole, PHASE_ONE_SAFE_MODE_HANDOFF, PHASE_TWO_DRIVER_CLEANUP, Phase,
+        step_by_id, step_catalog,
+    },
+    engine::Engine,
+    migration::{MigrationDecision, MigrationInventory, assess_inventory},
+    orchestration::{
+        BootEnvironment, Evidence, HandoffEvidence, PhaseFacts, PhaseRequest, RuntimeBinding,
+        Transition, authorize, require_phase_one_handoff_ready,
+    },
+    policy::Profile,
+    state::{Progress, State},
 };
 use frametime_windows::{
     AuthenticatedPackage, BootMode, BootModeEvidence, FinalBenchmarkStatus,
@@ -79,7 +88,7 @@ fn run_phase_one(
     Ok(summary)
 }
 
-fn is_phase_one_engine_step(step: &frametime_domain::Step) -> bool {
+fn is_phase_one_engine_step(step: &frametime_domain::catalog::Step) -> bool {
     step.id.phase == Phase::One && step.orchestration_role == OrchestrationRole::Engine
 }
 
@@ -219,7 +228,7 @@ fn phase_three_receipt_route(
     }
 }
 
-fn phase_three_engine_steps() -> Vec<frametime_domain::Step> {
+fn phase_three_engine_steps() -> Vec<frametime_domain::catalog::Step> {
     step_catalog()
         .iter()
         .filter(|step| {
@@ -477,7 +486,7 @@ enum LiveMutationAuthority<'authority> {
 }
 
 fn run_live_steps(
-    filter: impl Fn(&frametime_domain::Step) -> bool,
+    filter: impl Fn(&frametime_domain::catalog::Step) -> bool,
     profile: Profile,
     progress: Progress,
     yes: bool,

@@ -6,9 +6,9 @@ use crate::audit::{
 
 pub(super) fn irreversible_target(step: &str) -> ManualRecoveryTarget {
     match step {
-        "P1:13" => crate::P1_13_MANUAL_RECOVERY_TARGET,
-        "P2:2" => crate::P2_2_MANUAL_RECOVERY_TARGET,
-        "P3:1" => crate::P3_1_MANUAL_RECOVERY_TARGET,
+        "P1:13" => crate::audit::P1_13_MANUAL_RECOVERY_TARGET,
+        "P2:2" => crate::audit::P2_2_MANUAL_RECOVERY_TARGET,
+        "P3:1" => crate::audit::P3_1_MANUAL_RECOVERY_TARGET,
         _ => panic!("unexpected irreversible step {step}"),
     }
 }

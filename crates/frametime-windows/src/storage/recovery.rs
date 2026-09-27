@@ -310,7 +310,7 @@ pub(crate) fn validate_registry_restore_binding(
     key: &str,
     name: &str,
 ) -> Result<(), String> {
-    let expected = frametime_domain::step_catalog().iter().any(|catalog_step| {
+    let expected = frametime_domain::catalog::step_catalog().iter().any(|catalog_step| {
         let catalog_key = catalog_step.id.progress_key();
         catalog_key == step
             && matches!(

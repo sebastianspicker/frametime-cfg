@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use frametime_domain::{OptionalCfgAsset, Profile};
+use frametime_domain::{
+    cs2_config::OptionalCfgAsset, fps::ValidatedBenchmarkCapture, policy::Profile,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Branch {
@@ -52,6 +54,18 @@ pub struct FpsRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct ValidatedFpsRequest {
+    pub capture: ValidatedBenchmarkCapture,
+    pub strategy: FpsStrategyValue,
+    pub measured_cap: u32,
+    pub refresh_hz: u32,
+    pub ceiling_margin_hz: u32,
+    pub label: String,
+    pub copy: bool,
+    pub no_persist: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct VprofBenchmarkRequest {
     pub text: Option<String>,
     pub file: Option<PathBuf>,
@@ -68,6 +82,30 @@ pub enum DriverCommand {
         artifact_file_name: String,
         server_path: String,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum NvidiaInstallerSource {
+    OfficialUrl(String),
+    LocalInstaller(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+pub struct PrepareNvidiaRequest {
+    pub source: NvidiaInstallerSource,
+    pub preset: frametime_domain::driver::NvidiaComponentPreset,
+    pub select: Vec<String>,
+    pub deselect: Vec<String>,
+    pub deprecated_artifact_id: Option<String>,
+    pub deprecated_artifact_file_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BuildNvidiaLabRequest {
+    pub output: PathBuf,
+    pub deep_inf: bool,
+    pub test_certificate_sha256: String,
+    pub acknowledge_unqualified_driver: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

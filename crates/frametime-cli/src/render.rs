@@ -80,19 +80,19 @@ fn render_run(summary: RunSummary) {
 fn cleanup(summary: CleanupSummary) {
     for result in &summary.report.action_results {
         let line = match &result.outcome {
-            frametime_domain::CleanupActionOutcome::Completed { affected_items } => {
+            frametime_domain::cleanup::CleanupActionOutcome::Completed { affected_items } => {
                 format!("COMPLETED: {:?} ({affected_items} items)", result.action)
             }
-            frametime_domain::CleanupActionOutcome::Inapplicable { reason } => {
+            frametime_domain::cleanup::CleanupActionOutcome::Inapplicable { reason } => {
                 format!("INAPPLICABLE: {:?}: {reason}", result.action)
             }
-            frametime_domain::CleanupActionOutcome::Deferred { reason } => {
+            frametime_domain::cleanup::CleanupActionOutcome::Deferred { reason } => {
                 format!("DEFERRED: {:?}: {reason}", result.action)
             }
-            frametime_domain::CleanupActionOutcome::Skipped { reason } => {
+            frametime_domain::cleanup::CleanupActionOutcome::Skipped { reason } => {
                 format!("SKIPPED: {:?}: {reason}", result.action)
             }
-            frametime_domain::CleanupActionOutcome::Failed { reason } => {
+            frametime_domain::cleanup::CleanupActionOutcome::Failed { reason } => {
                 eprintln!("FAILED: {:?}: {reason}", result.action);
                 continue;
             }

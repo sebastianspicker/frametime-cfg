@@ -258,12 +258,15 @@ mod action_catalog_tests {
     use super::*;
     #[test]
     fn every_current_domain_step_has_exactly_one_native_action() {
-        let resolved = frametime_domain::step_catalog()
+        let resolved = frametime_domain::catalog::step_catalog()
             .iter()
             .map(|step| native_action_for(step.intent).map(|_| step.intent))
             .collect::<Result<Vec<_>, _>>()
             .expect("every domain step must resolve");
-        assert_eq!(resolved.len(), frametime_domain::step_catalog().len());
+        assert_eq!(
+            resolved.len(),
+            frametime_domain::catalog::step_catalog().len()
+        );
         assert_eq!(
             resolved
                 .iter()

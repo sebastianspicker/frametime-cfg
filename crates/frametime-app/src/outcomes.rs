@@ -1,5 +1,8 @@
 use frametime_domain::{
-    CleanupReport, FinalBenchmarkReceipt, VerificationReport, fps::BenchmarkCapture,
+    benchmark::FinalBenchmarkReceipt,
+    cleanup::CleanupReport,
+    fps::{BenchmarkCapture, BenchmarkRunEvidence},
+    verification::VerificationReport,
 };
 
 /// Text is a presentation concern; application services return these values
@@ -58,6 +61,7 @@ pub struct HardwareDiagnosticOutcome {
 pub struct FpsCapOutcome {
     pub cap: u32,
     pub capture: BenchmarkCapture,
+    pub run_evidence: Option<BenchmarkRunEvidence>,
     pub strategy: FpsCapStrategyLabel,
     pub copied_to_clipboard: bool,
     pub persistence: BenchmarkPersistence,
@@ -80,6 +84,7 @@ pub enum BenchmarkPersistence {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BenchmarkOutcome {
     pub capture: BenchmarkCapture,
+    pub run_evidence: Option<BenchmarkRunEvidence>,
     pub receipt: Option<FinalBenchmarkReceipt>,
 }
 
@@ -90,8 +95,8 @@ pub struct CleanupSummary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerificationSummary {
-    pub state: frametime_domain::State,
-    pub progress: frametime_domain::Progress,
+    pub state: frametime_domain::state::State,
+    pub progress: frametime_domain::state::Progress,
     pub report: VerificationReport,
     pub work_dir: &'static str,
 }

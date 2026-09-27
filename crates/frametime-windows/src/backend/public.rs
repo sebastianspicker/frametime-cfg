@@ -71,12 +71,12 @@ pub fn read_log() -> Result<String, String> {
 /// non-cloneable package capability that authorizes the mutation.
 pub fn run_network_stack_transaction(
     package: &AuthenticatedPackage,
-) -> Result<frametime_domain::RunReport, String> {
+) -> Result<frametime_domain::engine::RunReport, String> {
     let step = network_stack_step()?;
     let state = load_state()?;
     let progress = load_progress()?;
     let backend = LiveBackend::from_package(package)?;
-    let mut engine = frametime_domain::Engine::new(backend, progress);
+    let mut engine = frametime_domain::engine::Engine::new(backend, progress);
     engine
         .run_with_consent(&[step], state.profile, |_| true)
         .map_err(|error| error.to_string())
@@ -134,10 +134,12 @@ pub fn deploy_optional_cs2_cfgs(
     Ok(written)
 }
 
-pub(crate) fn network_stack_step() -> Result<frametime_domain::Step, String> {
-    let mut matches = frametime_domain::step_catalog()
+pub(crate) fn network_stack_step() -> Result<frametime_domain::catalog::Step, String> {
+    let mut matches = frametime_domain::catalog::step_catalog()
         .iter()
-        .filter(|step| step.id.phase == frametime_domain::Phase::One && step.id.number == 16)
+        .filter(|step| {
+            step.id.phase == frametime_domain::catalog::Phase::One && step.id.number == 16
+        })
         .copied();
     let step = matches
         .next()

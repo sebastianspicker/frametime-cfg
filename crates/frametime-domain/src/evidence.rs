@@ -11,8 +11,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-    BindingReceiptId, NetworkAdapterBinding, PciDeviceBinding, TransactionId,
-    binding::NATIVE_BINDING_SCHEMA_VERSION,
+    binding::{
+        BindingReceiptId, NATIVE_BINDING_SCHEMA_VERSION, NetworkAdapterBinding, PciDeviceBinding,
+    },
+    handoff::TransactionId,
 };
 
 pub const EVIDENCE_SCHEMA_VERSION: u8 = 1;

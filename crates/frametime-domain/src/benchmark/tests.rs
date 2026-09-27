@@ -1,5 +1,5 @@
 use super::*;
-use crate::{RebootStage, RebootTransaction, RuntimeRecord};
+use crate::handoff::{RebootStage, RebootTransaction, RuntimeRecord};
 
 const ID: &str = "0123456789abcdef0123456789abcdef";
 const RECEIPT_ID: &str = "fedcba9876543210fedcba9876543210";

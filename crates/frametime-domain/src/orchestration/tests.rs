@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeMap;
 
-use crate::{RebootTransaction, RuntimeRecord, TransactionId};
+use crate::handoff::{RebootTransaction, RuntimeRecord, TransactionId};
 use serde_json::Value;
 
 const ID: &str = "0123456789abcdef0123456789abcdef";

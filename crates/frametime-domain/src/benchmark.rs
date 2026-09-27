@@ -4,13 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    OrchestrationRole, PHASE_ONE_BASELINE_BENCHMARK, PHASE_THREE_DRIVER_INSTALL,
-    PHASE_THREE_FINAL_BENCHMARK, Phase,
+    catalog::{
+        OrchestrationRole, PHASE_THREE_DRIVER_INSTALL, PHASE_THREE_FINAL_BENCHMARK, Phase,
+        step_catalog,
+    },
     config::Config,
-    fps::BenchmarkCapture,
+    fps::{BenchmarkCapture, BenchmarkRunEvidence, ValidatedBenchmarkCapture},
     handoff::{RebootStage, RebootTransaction, TransactionId},
     state::{Progress, State},
-    step_catalog,
 };
 
 pub const MAX_BENCHMARK_HISTORY: usize = 200;
@@ -18,7 +19,22 @@ pub const FINAL_BENCHMARK_SCHEMA_VERSION: u8 = 1;
 pub const FINAL_BENCHMARK_LABEL: &str = "After all optimizations";
 pub const BASELINE_BENCHMARK_LABEL: &str = "Baseline (before optimizations)";
 
-fn phase_three_engine_steps() -> impl Iterator<Item = &'static crate::Step> {
+pub fn validate_benchmark_run_evidence(history: &[BenchmarkRecord]) -> Result<(), String> {
+    for record in history {
+        if let Some(evidence) = &record.run_evidence {
+            evidence
+                .validate_against(BenchmarkCapture {
+                    average_fps: record.avg_fps,
+                    p1_fps: record.p1_fps,
+                    runs: record.runs,
+                })
+                .map_err(str::to_owned)?;
+        }
+    }
+    Ok(())
+}
+
+fn phase_three_engine_steps() -> impl Iterator<Item = &'static crate::catalog::Step> {
     step_catalog().iter().filter(|step| {
         step.id.phase == Phase::Three
             && step.orchestration_role == OrchestrationRole::Engine
@@ -26,186 +42,15 @@ fn phase_three_engine_steps() -> impl Iterator<Item = &'static crate::Step> {
     })
 }
 
-/// Coherent in-memory target for the P1:17 observation bundle. The fixed
-/// write order is platform-owned: history, state, then progress.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BaselineBenchmarkCommit {
-    pub state: State,
-    pub progress: Progress,
-    pub history: Vec<BenchmarkRecord>,
-    pub captured_utc: String,
-    pub idempotent: bool,
-}
+mod baseline;
+mod legacy_retry;
+pub use baseline::{
+    BaselineBenchmarkCommit, prepare_baseline_benchmark_commit,
+    prepare_baseline_benchmark_commit_with_evidence, validate_persisted_baseline_benchmark,
+};
+pub use legacy_retry::prepare_final_benchmark_legacy_retry;
 
-/// Prepare the P1:17 baseline observation without filesystem I/O. A retry may
-/// repair a history/state crash prefix only when it supplies exactly the same
-/// validated VProf aggregate; conflicting or skipped/completed state fails
-/// closed.
-pub fn prepare_baseline_benchmark_commit(
-    state: &State,
-    progress: &Progress,
-    history: &[BenchmarkRecord],
-    captured_utc: String,
-    capture: BenchmarkCapture,
-) -> Result<BaselineBenchmarkCommit, String> {
-    state.validate().map_err(str::to_owned)?;
-    validate_history(history)?;
-    validate_complete_capture(capture)?;
-    if !valid_capture_timestamp(&captured_utc) {
-        return Err("baseline benchmark timestamp is invalid".into());
-    }
-    if progress.is_skipped(PHASE_ONE_BASELINE_BENCHMARK) {
-        return Err("baseline benchmark was skipped and cannot be captured".into());
-    }
-    let matching = history
-        .iter()
-        .filter(|record| record.label == BASELINE_BENCHMARK_LABEL)
-        .collect::<Vec<_>>();
-    if matching.len() > 1 {
-        return Err("baseline benchmark history is duplicated".into());
-    }
-    let existing = matching.first().copied();
-    if let Some(record) = existing
-        && !record_matches_capture(record, capture)
-    {
-        return Err("baseline benchmark conflicts with existing history".into());
-    }
-    let state_has_baseline = state.baseline_avg > 0.0 || state.baseline_p1.is_some();
-    if state_has_baseline {
-        let Some(record) = existing else {
-            return Err("baseline state has no matching benchmark history".into());
-        };
-        if state.baseline_avg != capture.average_fps || state.baseline_p1 != Some(capture.p1_fps) {
-            return Err("baseline state conflicts with requested capture".into());
-        }
-        if progress.is_completed(PHASE_ONE_BASELINE_BENCHMARK) {
-            validate_persisted_baseline_benchmark(state, progress, history)?;
-            return Ok(BaselineBenchmarkCommit {
-                state: state.clone(),
-                progress: progress.clone(),
-                history: history.to_vec(),
-                captured_utc: record.timestamp.clone(),
-                idempotent: true,
-            });
-        }
-    } else if progress.is_completed(PHASE_ONE_BASELINE_BENCHMARK) {
-        return Err("baseline benchmark progress precedes its state".into());
-    }
-
-    let record_timestamp = existing.map_or(captured_utc, |record| record.timestamp.clone());
-    let mut next_state = state.clone();
-    next_state.baseline_avg = capture.average_fps;
-    next_state.baseline_p1 = Some(capture.p1_fps);
-    next_state.validate().map_err(str::to_owned)?;
-    let mut next_history = history.to_vec();
-    if existing.is_none() {
-        next_history.push(BenchmarkRecord {
-            timestamp: record_timestamp.clone(),
-            avg_fps: capture.average_fps,
-            p1_fps: capture.p1_fps,
-            label: BASELINE_BENCHMARK_LABEL.into(),
-            runs: capture.runs,
-            receipt_id: None,
-            transaction_id: None,
-            unknown: BTreeMap::new(),
-        });
-        if next_history.len() > MAX_BENCHMARK_HISTORY {
-            next_history.drain(..next_history.len() - MAX_BENCHMARK_HISTORY);
-        }
-    }
-    let mut next_progress = progress.clone();
-    next_progress.complete_step(PHASE_ONE_BASELINE_BENCHMARK, record_timestamp.clone());
-    Ok(BaselineBenchmarkCommit {
-        state: next_state,
-        progress: next_progress,
-        history: next_history,
-        captured_utc: record_timestamp,
-        idempotent: false,
-    })
-}
-
-/// Require all three persisted P1:17 records to agree before the catalog can
-/// treat the observation as satisfied.
-pub fn validate_persisted_baseline_benchmark(
-    state: &State,
-    progress: &Progress,
-    history: &[BenchmarkRecord],
-) -> Result<BenchmarkRecord, String> {
-    state.validate().map_err(str::to_owned)?;
-    validate_history(history)?;
-    let baseline_p1 = state.baseline_p1.unwrap_or_default();
-    if !state.baseline_avg.is_finite()
-        || state.baseline_avg <= 0.0
-        || !baseline_p1.is_finite()
-        || baseline_p1 <= 0.0
-        || baseline_p1 > state.baseline_avg
-    {
-        return Err("baseline state is incomplete or invalid".into());
-    }
-    if !progress.is_completed(PHASE_ONE_BASELINE_BENCHMARK)
-        || progress.is_skipped(PHASE_ONE_BASELINE_BENCHMARK)
-    {
-        return Err("baseline benchmark progress is incomplete or skipped".into());
-    }
-    let matching = history
-        .iter()
-        .filter(|record| {
-            record.label == BASELINE_BENCHMARK_LABEL
-                && record.avg_fps == state.baseline_avg
-                && record.p1_fps == baseline_p1
-                && record.runs > 0
-                && record.receipt_id.is_none()
-                && record.transaction_id.is_none()
-        })
-        .collect::<Vec<_>>();
-    if matching.len() != 1 || progress.timestamps.get("1-17") != Some(&matching[0].timestamp) {
-        return Err("baseline state, history, and progress are not coherent".into());
-    }
-    Ok(matching[0].clone())
-}
-
-fn validate_complete_capture(capture: BenchmarkCapture) -> Result<(), String> {
-    if !capture.average_fps.is_finite()
-        || capture.average_fps <= 0.0
-        || !capture.p1_fps.is_finite()
-        || capture.p1_fps <= 0.0
-        || capture.p1_fps > capture.average_fps
-        || capture.runs == 0
-    {
-        return Err("baseline benchmark requires complete VProf Avg, P1, and runs".into());
-    }
-    Ok(())
-}
-
-fn validate_history(history: &[BenchmarkRecord]) -> Result<(), String> {
-    if history.len() > MAX_BENCHMARK_HISTORY {
-        return Err("benchmark history exceeds its retention limit".into());
-    }
-    if history.iter().any(|record| {
-        !record.avg_fps.is_finite()
-            || record.avg_fps < 0.0
-            || !record.p1_fps.is_finite()
-            || record.p1_fps < 0.0
-            || record.runs == 0
-            || record.label.is_empty()
-            || !valid_capture_timestamp(&record.timestamp)
-    }) {
-        return Err("benchmark history contains an invalid record".into());
-    }
-    Ok(())
-}
-
-fn record_matches_capture(record: &BenchmarkRecord, capture: BenchmarkCapture) -> bool {
-    record.avg_fps == capture.average_fps
-        && record.p1_fps == capture.p1_fps
-        && record.runs == capture.runs
-        && record.receipt_id.is_none()
-        && record.transaction_id.is_none()
-}
-
-/// Durable evidence for the Phase 3 final benchmark. It is deliberately
-/// distinct from an advisory `fps-cap` calculation: a final receipt requires
-/// a complete VProf capture and is bound to one reboot transaction.
+/// Durable transaction-bound Phase 3 evidence, distinct from advisory `fps-cap` calculation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FinalBenchmarkReceipt {
@@ -216,6 +61,8 @@ pub struct FinalBenchmarkReceipt {
     pub avg_fps: f64,
     pub p1_fps: f64,
     pub runs: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_evidence: Option<BenchmarkRunEvidence>,
     pub fps_cap: u32,
     pub label: String,
     #[serde(flatten)]
@@ -233,12 +80,42 @@ pub struct FinalBenchmarkCommit {
     pub receipt: FinalBenchmarkReceipt,
 }
 
+struct FinalBenchmarkCommitInput<'a> {
+    state: &'a State,
+    progress: &'a Progress,
+    history: &'a [BenchmarkRecord],
+    config: &'a Config,
+    receipt_id: TransactionId,
+    captured_utc: String,
+    capture: BenchmarkCapture,
+    run_evidence: Option<&'a BenchmarkRunEvidence>,
+    legacy_retry: bool,
+}
+
 impl FinalBenchmarkReceipt {
     pub fn new(
         receipt_id: TransactionId,
         transaction_id: TransactionId,
         captured_utc: String,
         capture: BenchmarkCapture,
+        fps_cap: u32,
+    ) -> Result<Self, &'static str> {
+        Self::new_with_evidence(
+            receipt_id,
+            transaction_id,
+            captured_utc,
+            capture,
+            None,
+            fps_cap,
+        )
+    }
+
+    pub fn new_with_evidence(
+        receipt_id: TransactionId,
+        transaction_id: TransactionId,
+        captured_utc: String,
+        capture: BenchmarkCapture,
+        run_evidence: Option<BenchmarkRunEvidence>,
         fps_cap: u32,
     ) -> Result<Self, &'static str> {
         let receipt = Self {
@@ -249,6 +126,7 @@ impl FinalBenchmarkReceipt {
             avg_fps: capture.average_fps,
             p1_fps: capture.p1_fps,
             runs: capture.runs,
+            run_evidence,
             fps_cap,
             label: FINAL_BENCHMARK_LABEL.into(),
             unknown: BTreeMap::new(),
@@ -267,14 +145,15 @@ impl FinalBenchmarkReceipt {
         if !valid_capture_timestamp(&self.captured_utc) {
             return Err("final benchmark timestamp is invalid");
         }
-        if !self.avg_fps.is_finite()
-            || self.avg_fps <= 0.0
-            || !self.p1_fps.is_finite()
-            || self.p1_fps <= 0.0
-            || self.p1_fps > self.avg_fps
-            || self.runs == 0
-        {
+        if !receipt_capture_is_complete(self) {
             return Err("final benchmark capture is incomplete or invalid");
+        }
+        if let Some(evidence) = &self.run_evidence {
+            evidence.validate_against(BenchmarkCapture {
+                average_fps: self.avg_fps,
+                p1_fps: self.p1_fps,
+                runs: self.runs,
+            })?;
         }
         if self.label != FINAL_BENCHMARK_LABEL {
             return Err("final benchmark label is not the fixed Phase 3 label");
@@ -295,14 +174,31 @@ impl FinalBenchmarkReceipt {
 
     #[must_use]
     pub fn matches_history_record(&self, record: &BenchmarkRecord) -> bool {
-        record.timestamp == self.captured_utc
-            && record.avg_fps == self.avg_fps
-            && record.p1_fps == self.p1_fps
-            && record.label == self.label
-            && record.runs == self.runs
-            && record.receipt_id.as_ref() == Some(&self.receipt_id)
-            && record.transaction_id.as_ref() == Some(&self.transaction_id)
+        let timestamp_matches = record.timestamp == self.captured_utc;
+        let average_matches = record.avg_fps == self.avg_fps;
+        let percentile_matches = record.p1_fps == self.p1_fps;
+        let label_matches = record.label == self.label;
+        let run_count_matches = record.runs == self.runs;
+        let evidence_matches = record.run_evidence == self.run_evidence;
+        let receipt_matches = record.receipt_id.as_ref() == Some(&self.receipt_id);
+        let transaction_matches = record.transaction_id.as_ref() == Some(&self.transaction_id);
+        timestamp_matches
+            && average_matches
+            && percentile_matches
+            && label_matches
+            && run_count_matches
+            && evidence_matches
+            && receipt_matches
+            && transaction_matches
     }
+}
+
+fn receipt_capture_is_complete(receipt: &FinalBenchmarkReceipt) -> bool {
+    baseline::capture_is_complete(BenchmarkCapture {
+        average_fps: receipt.avg_fps,
+        p1_fps: receipt.p1_fps,
+        runs: receipt.runs,
+    })
 }
 
 /// Prepare one transaction-bound final benchmark commit without performing
@@ -317,45 +213,83 @@ pub fn prepare_final_benchmark_commit(
     captured_utc: String,
     capture: BenchmarkCapture,
 ) -> Result<FinalBenchmarkCommit, String> {
-    config.validate().map_err(|error| error.to_string())?;
-    state.validate().map_err(str::to_owned)?;
-    if state.final_benchmark.is_some() {
-        return Err("final benchmark receipt already exists".into());
-    }
-    if !progress.is_completed(PHASE_THREE_DRIVER_INSTALL) {
-        return Err("final benchmark requires completed P3:1".into());
-    }
-    if phase_three_engine_steps()
-        .any(|step| !progress.is_completed(step.id) && !progress.is_skipped(step.id))
-        || progress.is_completed(PHASE_THREE_FINAL_BENCHMARK)
-        || progress.is_skipped(PHASE_THREE_FINAL_BENCHMARK)
-    {
-        return Err("final benchmark requires resolved P3:2-P3:12 and unresolved P3:13".into());
-    }
-    let transaction = state
-        .active_reboot_transaction
-        .as_ref()
-        .ok_or("final benchmark requires an active reboot transaction")?;
-    if !transaction.is_authorized_at(&RebootStage::PhaseThreeArmed) {
-        return Err("final benchmark requires an authorized Phase 3 transaction".into());
-    }
-    let transaction_id = transaction
-        .transaction_id
-        .clone()
-        .ok_or("authorized reboot transaction is missing its id")?;
-    if history.iter().any(|record| {
-        record.receipt_id.as_ref() == Some(&receipt_id)
-            || record.transaction_id.as_ref() == Some(&transaction_id)
-    }) {
+    prepare_final_benchmark_commit_inner(FinalBenchmarkCommitInput {
+        state,
+        progress,
+        history,
+        config,
+        receipt_id,
+        captured_utc,
+        capture,
+        run_evidence: None,
+        legacy_retry: false,
+    })
+}
+
+pub fn prepare_final_benchmark_commit_with_evidence(
+    state: &State,
+    progress: &Progress,
+    history: &[BenchmarkRecord],
+    config: &Config,
+    receipt_id: TransactionId,
+    captured_utc: String,
+    capture: &ValidatedBenchmarkCapture,
+) -> Result<FinalBenchmarkCommit, String> {
+    prepare_final_benchmark_commit_inner(FinalBenchmarkCommitInput {
+        state,
+        progress,
+        history,
+        config,
+        receipt_id,
+        captured_utc,
+        capture: capture.aggregate(),
+        run_evidence: Some(capture.run_evidence()),
+        legacy_retry: false,
+    })
+}
+
+fn prepare_final_benchmark_commit_inner(
+    input: FinalBenchmarkCommitInput<'_>,
+) -> Result<FinalBenchmarkCommit, String> {
+    let FinalBenchmarkCommitInput {
+        state,
+        progress,
+        history,
+        config,
+        receipt_id,
+        captured_utc,
+        capture,
+        run_evidence,
+        legacy_retry,
+    } = input;
+    validate_final_commit_prerequisites(config, state, progress)?;
+    validate_benchmark_run_evidence(history)?;
+    let transaction_id = authorized_phase_three_transaction_id(state)?;
+    if history_has_final_benchmark_collision(history, &receipt_id, &transaction_id) {
         return Err("final benchmark receipt or reboot transaction was already recorded".into());
     }
-    let fps_cap = crate::fps::measured_fps_cap(config.fps_cap.strategy(), capture)
-        .ok_or("final benchmark P1 FPS does not sustain the selected measured or VRR cap")?;
-    let receipt = FinalBenchmarkReceipt::new(
+    let fps_cap = match run_evidence {
+        Some(evidence) => {
+            evidence.validate_against(capture).map_err(str::to_owned)?;
+            let validated =
+                ValidatedBenchmarkCapture::new(evidence.clone()).map_err(str::to_owned)?;
+            crate::fps::measured_fps_cap(config.fps_cap.strategy(), &validated)
+        }
+        None if legacy_retry => {
+            crate::fps::legacy_aggregate_fps_cap(config.fps_cap.strategy(), capture)
+        }
+        None => match config.fps_cap.strategy() {
+            crate::fps::FpsCapStrategy::RawLatency { measured_cap: None } => Some(0),
+            _ => None,
+        },
+    }
+    .ok_or_else(|| cap_rejection_message(config, run_evidence))?;
+    let receipt = FinalBenchmarkReceipt::new_with_evidence(
         receipt_id,
         transaction_id,
         captured_utc.clone(),
         capture,
+        run_evidence.cloned(),
         fps_cap,
     )
     .map_err(str::to_owned)?;
@@ -385,6 +319,7 @@ pub fn prepare_final_benchmark_commit(
         p1_fps: receipt.p1_fps,
         label: receipt.label.clone(),
         runs: receipt.runs,
+        run_evidence: receipt.run_evidence.clone(),
         receipt_id: Some(receipt.receipt_id.clone()),
         transaction_id: Some(receipt.transaction_id.clone()),
         unknown: BTreeMap::new(),
@@ -406,6 +341,82 @@ pub fn prepare_final_benchmark_commit(
     })
 }
 
+fn cap_rejection_message(config: &Config, evidence: Option<&BenchmarkRunEvidence>) -> String {
+    let requested = match config.fps_cap.strategy() {
+        crate::fps::FpsCapStrategy::RawLatency { measured_cap } => measured_cap.unwrap_or_default(),
+        crate::fps::FpsCapStrategy::Vrr {
+            refresh_hz,
+            ceiling_margin_hz,
+        } => refresh_hz.saturating_sub(ceiling_margin_hz),
+    };
+    match evidence {
+        Some(evidence) => format!(
+            "final benchmark rejected cap {requested}: {} failing runs among {} valid runs, including {} invalid runs with P1 above Avg",
+            evidence.failing_runs(requested),
+            evidence.observations.len(),
+            evidence.invalid_ordered_runs()
+        ),
+        None => "aggregate-only legacy benchmark data cannot authorize a new nonzero cap".into(),
+    }
+}
+
+fn validate_final_commit_prerequisites(
+    config: &Config,
+    state: &State,
+    progress: &Progress,
+) -> Result<(), String> {
+    config.validate().map_err(|error| error.to_string())?;
+    state.validate().map_err(str::to_owned)?;
+    if state.final_benchmark.is_some() {
+        return Err("final benchmark receipt already exists".into());
+    }
+    if !progress.is_completed(PHASE_THREE_DRIVER_INSTALL) {
+        return Err("final benchmark requires completed P3:1".into());
+    }
+    if !final_benchmark_stage_is_ready(progress) {
+        return Err("final benchmark requires resolved P3:2-P3:12 and unresolved P3:13".into());
+    }
+    Ok(())
+}
+
+fn final_benchmark_stage_is_ready(progress: &Progress) -> bool {
+    let earlier_steps_are_resolved = !has_unresolved_phase_three_engine_steps(progress);
+    let final_step_is_unresolved = !progress.is_completed(PHASE_THREE_FINAL_BENCHMARK)
+        && !progress.is_skipped(PHASE_THREE_FINAL_BENCHMARK);
+    earlier_steps_are_resolved && final_step_is_unresolved
+}
+
+fn has_unresolved_phase_three_engine_steps(progress: &Progress) -> bool {
+    phase_three_engine_steps()
+        .any(|step| !progress.is_completed(step.id) && !progress.is_skipped(step.id))
+}
+
+fn authorized_phase_three_transaction_id(state: &State) -> Result<TransactionId, String> {
+    let transaction = state
+        .active_reboot_transaction
+        .as_ref()
+        .ok_or("final benchmark requires an active reboot transaction")?;
+    if !transaction.is_authorized_at(&RebootStage::PhaseThreeArmed) {
+        return Err("final benchmark requires an authorized Phase 3 transaction".into());
+    }
+    transaction
+        .transaction_id
+        .clone()
+        .ok_or_else(|| "authorized reboot transaction is missing its id".into())
+}
+
+fn history_has_final_benchmark_collision(
+    history: &[BenchmarkRecord],
+    receipt_id: &TransactionId,
+    transaction_id: &TransactionId,
+) -> bool {
+    history.iter().any(|record| {
+        let receipt_is_replayed = record.receipt_id.as_ref() == Some(receipt_id);
+        let transaction_is_replayed = record.transaction_id.as_ref() == Some(transaction_id);
+        receipt_is_replayed || transaction_is_replayed
+    })
+}
+
 /// Validate the complete persisted bundle after all independent file writes.
 /// This readback condition does not authorize removal of the native handoff.
 pub fn validate_persisted_final_benchmark(
@@ -414,6 +425,7 @@ pub fn validate_persisted_final_benchmark(
     history: &[BenchmarkRecord],
 ) -> Result<FinalBenchmarkReceipt, String> {
     state.validate().map_err(str::to_owned)?;
+    validate_benchmark_run_evidence(history)?;
     let receipt = state
         .final_benchmark
         .as_ref()
@@ -428,36 +440,62 @@ pub fn validate_persisted_final_benchmark(
     receipt
         .validate_for_transaction(transaction)
         .map_err(str::to_owned)?;
-    if !progress.is_completed(PHASE_THREE_DRIVER_INSTALL)
-        || !progress.is_completed(PHASE_THREE_FINAL_BENCHMARK)
-        || progress.is_skipped(PHASE_THREE_FINAL_BENCHMARK)
-        || progress.timestamps.get("3-13") != Some(&receipt.captured_utc)
-    {
+    if !persisted_final_benchmark_progress_is_complete(progress, receipt) {
         return Err("persisted final benchmark progress is incomplete or skipped".into());
     }
-    if phase_three_engine_steps()
-        .any(|step| !progress.is_completed(step.id) && !progress.is_skipped(step.id))
-    {
+    if has_unresolved_phase_three_engine_steps(progress) {
         return Err("persisted final benchmark has unresolved earlier Phase 3 work".into());
     }
-    if state.fps_cap != receipt.fps_cap
-        || state.avg_fps != receipt.avg_fps
-        || state.p1_fps != Some(receipt.p1_fps)
-        || state.cap_date.as_deref() != Some(receipt.captured_utc.as_str())
-    {
+    if !persisted_fps_state_matches_receipt(state, receipt) {
         return Err("persisted FPS state does not match the final benchmark receipt".into());
     }
+    matching_final_record(receipt, history)?;
+    Ok(receipt.clone())
+}
+
+fn persisted_final_benchmark_progress_is_complete(
+    progress: &Progress,
+    receipt: &FinalBenchmarkReceipt,
+) -> bool {
+    let driver_install_is_complete = progress.is_completed(PHASE_THREE_DRIVER_INSTALL);
+    let final_step_is_complete = progress.is_completed(PHASE_THREE_FINAL_BENCHMARK);
+    let final_step_is_not_skipped = !progress.is_skipped(PHASE_THREE_FINAL_BENCHMARK);
+    let timestamp_matches = progress.timestamps.get("3-13") == Some(&receipt.captured_utc);
+    driver_install_is_complete
+        && final_step_is_complete
+        && final_step_is_not_skipped
+        && timestamp_matches
+}
+
+fn persisted_fps_state_matches_receipt(state: &State, receipt: &FinalBenchmarkReceipt) -> bool {
+    let cap_matches = state.fps_cap == receipt.fps_cap;
+    let average_matches = state.avg_fps == receipt.avg_fps;
+    let percentile_matches = state.p1_fps == Some(receipt.p1_fps);
+    let capture_date_matches = state.cap_date.as_deref() == Some(receipt.captured_utc.as_str());
+    cap_matches && average_matches && percentile_matches && capture_date_matches
+}
+
+fn matching_final_record<'a>(
+    receipt: &FinalBenchmarkReceipt,
+    history: &'a [BenchmarkRecord],
+) -> Result<&'a BenchmarkRecord, String> {
     let matching = history
         .iter()
-        .filter(|record| {
-            record.receipt_id.as_ref() == Some(&receipt.receipt_id)
-                || record.transaction_id.as_ref() == Some(&receipt.transaction_id)
-        })
+        .filter(|record| record_matches_receipt_or_transaction(record, receipt))
         .collect::<Vec<_>>();
     if matching.len() != 1 || !receipt.matches_history_record(matching[0]) {
         return Err("persisted benchmark history is missing, duplicated, or inconsistent".into());
     }
-    Ok(receipt.clone())
+    Ok(matching[0])
+}
+
+fn record_matches_receipt_or_transaction(
+    record: &&BenchmarkRecord,
+    receipt: &FinalBenchmarkReceipt,
+) -> bool {
+    let receipt_matches = record.receipt_id.as_ref() == Some(&receipt.receipt_id);
+    let transaction_matches = record.transaction_id.as_ref() == Some(&receipt.transaction_id);
+    receipt_matches || transaction_matches
 }
 
 fn valid_capture_timestamp(value: &str) -> bool {
@@ -481,6 +519,8 @@ pub struct BenchmarkRecord {
     #[serde(default = "one_run")]
     pub runs: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_evidence: Option<BenchmarkRunEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_id: Option<TransactionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction_id: Option<TransactionId>,
@@ -499,6 +539,33 @@ pub fn decode_benchmark_history(value: Value) -> Vec<BenchmarkRecord> {
         Value::Object(_) => serde_json::from_value(value).into_iter().collect(),
         _ => Vec::new(),
     }
+}
+
+/// Adapter-facing compatible decoder. Malformed legacy records retain the
+/// historical drop behavior, while an explicitly present run-evidence field
+/// must decode and validate instead of disappearing before a rewrite.
+pub fn decode_benchmark_history_checked(value: Value) -> Result<Vec<BenchmarkRecord>, String> {
+    let values = match value {
+        Value::Array(records) => records,
+        Value::Object(_) => vec![value],
+        _ => return Ok(Vec::new()),
+    };
+    let mut history = Vec::new();
+    for value in values {
+        let has_run_evidence = value
+            .as_object()
+            .and_then(|record| record.get("runEvidence"))
+            .is_some_and(|evidence| !evidence.is_null());
+        match serde_json::from_value(value) {
+            Ok(record) => history.push(record),
+            Err(error) if has_run_evidence => {
+                return Err(format!("benchmark run evidence is malformed: {error}"));
+            }
+            Err(_) => {}
+        }
+    }
+    validate_benchmark_run_evidence(&history)?;
+    Ok(history)
 }
 
 const fn one_run() -> u32 {

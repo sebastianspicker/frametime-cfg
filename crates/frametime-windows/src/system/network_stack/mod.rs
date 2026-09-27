@@ -4,9 +4,12 @@ use crate::*;
 // stops the transaction.
 
 use frametime_domain::{
-    NETWORK_STACK_TRANSACTION_STEP, NetworkAdapterBinding, NetworkStackNlaBackup,
-    NetworkStackPolicy, NetworkStackPolicySnapshot, NetworkStackSetting, NetworkStackSettingBackup,
-    NetworkStackTransaction, NetworkStackValue,
+    backup::{
+        NETWORK_STACK_TRANSACTION_STEP, NetworkStackNlaBackup, NetworkStackPolicy,
+        NetworkStackPolicySnapshot, NetworkStackSetting, NetworkStackSettingBackup,
+        NetworkStackTransaction, NetworkStackValue,
+    },
+    binding::NetworkAdapterBinding,
 };
 
 #[cfg(windows)]
