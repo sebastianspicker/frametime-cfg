@@ -70,7 +70,9 @@ fn migration_confirmation_requires_yes_but_refusals_cannot_be_overridden() {
     );
     assert!(
         require_migration_decision(
-            MigrationDecision::Refuse(frametime_domain::LegacyHandoff::IncompleteRuntime),
+            MigrationDecision::Refuse(
+                frametime_domain::migration::LegacyHandoff::IncompleteRuntime
+            ),
             true,
         )
         .is_err()
@@ -98,16 +100,16 @@ fn phase_three_engine_stops_before_the_standalone_final_benchmark_receipt() {
     let steps = phase_three_engine_steps();
     assert_eq!(
         steps.first().map(|step| step.id),
-        Some(frametime_domain::PHASE_THREE_DRIVER_INSTALL)
+        Some(frametime_domain::catalog::PHASE_THREE_DRIVER_INSTALL)
     );
     assert!(steps.iter().all(|step| {
         step.id.phase == Phase::Three
-            && step.orchestration_role == frametime_domain::OrchestrationRole::Engine
+            && step.orchestration_role == frametime_domain::catalog::OrchestrationRole::Engine
     }));
     assert!(
         !steps
             .iter()
-            .any(|step| { step.id == frametime_domain::PHASE_THREE_FINAL_BENCHMARK })
+            .any(|step| { step.id == frametime_domain::catalog::PHASE_THREE_FINAL_BENCHMARK })
     );
 }
 
@@ -119,12 +121,12 @@ fn phase_one_engine_stops_before_the_protected_runtime_handoff() {
         .collect::<Vec<_>>();
     assert!(steps.iter().all(|step| {
         step.id.phase == Phase::One
-            && step.orchestration_role == frametime_domain::OrchestrationRole::Engine
+            && step.orchestration_role == frametime_domain::catalog::OrchestrationRole::Engine
     }));
     assert!(
         !steps
             .iter()
-            .any(|step| { step.id == frametime_domain::PHASE_ONE_SAFE_MODE_HANDOFF })
+            .any(|step| { step.id == frametime_domain::catalog::PHASE_ONE_SAFE_MODE_HANDOFF })
     );
 }
 

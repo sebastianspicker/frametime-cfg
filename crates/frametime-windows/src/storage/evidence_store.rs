@@ -1,12 +1,12 @@
 use crate::*;
 pub(crate) fn load_evidence_file(
     trusted: &TrustedWorkDir,
-) -> Result<frametime_domain::EvidenceFile, String> {
+) -> Result<frametime_domain::evidence::EvidenceFile, String> {
     if trusted.path().join(EVIDENCE_FILE).exists() {
         read_json_trusted(trusted, EVIDENCE_FILE)
             .map_err(|error| format!("read prerequisite evidence: {error}"))
     } else {
-        Ok(frametime_domain::EvidenceFile {
+        Ok(frametime_domain::evidence::EvidenceFile {
             entries: Vec::new(),
             created: timestamp(),
             unknown: BTreeMap::new(),
@@ -16,7 +16,7 @@ pub(crate) fn load_evidence_file(
 
 pub(crate) fn persist_observation_receipt(
     trusted: &TrustedWorkDir,
-    receipt: &frametime_domain::ObservationReceipt,
+    receipt: &frametime_domain::evidence::ObservationReceipt,
 ) -> Result<(), String> {
     receipt
         .validate_for(&receipt.step)
@@ -28,8 +28,9 @@ pub(crate) fn persist_observation_receipt(
     file.replace_observation(receipt.clone());
     write_json_atomic_trusted(trusted, EVIDENCE_FILE, &file)
         .map_err(|error| format!("persist prerequisite evidence: {error}"))?;
-    let verified: frametime_domain::EvidenceFile = read_json_trusted(trusted, EVIDENCE_FILE)
-        .map_err(|error| format!("read back prerequisite evidence: {error}"))?;
+    let verified: frametime_domain::evidence::EvidenceFile =
+        read_json_trusted(trusted, EVIDENCE_FILE)
+            .map_err(|error| format!("read back prerequisite evidence: {error}"))?;
     if verified != file
         || verified
             .observation_for(&receipt.step)
@@ -44,7 +45,7 @@ pub(crate) fn persist_observation_receipt(
 pub(crate) fn load_observation_receipt(
     trusted: &TrustedWorkDir,
     step: &str,
-) -> Result<Option<frametime_domain::ObservationReceipt>, String> {
+) -> Result<Option<frametime_domain::evidence::ObservationReceipt>, String> {
     let file = load_evidence_file(trusted)?;
     if !file.unknown.is_empty() {
         return Err("evidence document has unrecognized root fields".into());

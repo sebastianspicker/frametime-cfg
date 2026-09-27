@@ -17,14 +17,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use frametime_domain::NetworkAdapterBinding as CoreNetworkAdapterBinding;
+use frametime_domain::binding::NetworkAdapterBinding as CoreNetworkAdapterBinding;
 use frametime_domain::{
-    ActionIntent, Backend, BackupEntry, BackupFile, CS2_OPTIONAL_CONFIG_TRANSACTION_STEP,
-    CleanupReport, Config, Cs2ConfigController, Cs2ConfigRequest, Cs2Install, EvidenceRequirement,
-    FinalBenchmarkCommit, FinalBenchmarkReceipt, GpuApplicability, GpuBranch, Inspection,
-    ObservationReceipt, ObservationSubject, Operation, OperationKind, OptionalCfgAsset,
-    OrchestrationRole, Profile, Progress, RebootStage, State, Step, StepId, TransactionId,
-    VerificationItem, VerificationReport, VerificationStatus, VideoRow,
+    backup::{BackupEntry, BackupFile, CS2_OPTIONAL_CONFIG_TRANSACTION_STEP},
     benchmark::{
         BenchmarkRecord, FINAL_BENCHMARK_LABEL, MAX_BENCHMARK_HISTORY,
         prepare_baseline_benchmark_commit_with_evidence, prepare_final_benchmark_commit,
@@ -32,13 +27,27 @@ use frametime_domain::{
         validate_benchmark_run_evidence, validate_persisted_baseline_benchmark,
         validate_persisted_final_benchmark,
     },
+    benchmark::{FinalBenchmarkCommit, FinalBenchmarkReceipt},
+    catalog::{ActionIntent, GpuApplicability, OperationKind, OrchestrationRole, Step, StepId},
+    cleanup::CleanupReport,
+    config::Config,
+    cs2_config::{Cs2ConfigController, Cs2ConfigRequest, OptionalCfgAsset},
+    engine::{Backend, Inspection, Operation},
+    evidence::{EvidenceRequirement, ObservationReceipt, ObservationSubject},
     fps::{
         BenchmarkCapture, BenchmarkRunEvidence, MIN_CAP_AUTHORIZATION_RUNS,
         ValidatedBenchmarkCapture,
     },
+    handoff::{RebootStage, TransactionId},
+    operations::GpuBranch,
+    policy::Profile,
+    state::{Progress, State},
+    steam::Cs2Install,
+    verification::{VerificationItem, VerificationReport, VerificationStatus},
+    video::VideoRow,
 };
-use frametime_domain::{NetworkAdapterBinding, plan_for_step};
-use frametime_domain::{PciDeviceBinding as CorePciDeviceBinding, RuntimeRecord};
+use frametime_domain::{binding::NetworkAdapterBinding, operations::plan_for_step};
+use frametime_domain::{binding::PciDeviceBinding as CorePciDeviceBinding, handoff::RuntimeRecord};
 use serde_json::Value;
 
 /// The only location a live backend may read or persist transaction state.

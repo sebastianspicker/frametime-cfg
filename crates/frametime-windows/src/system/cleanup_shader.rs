@@ -1,6 +1,6 @@
 //! Fixed cache-family selection for standalone cleanup.
 
-use frametime_domain::Config;
+use frametime_domain::config::Config;
 
 use crate::{known_folders, resolve_cache_template, shader_cache_delete_qualified};
 

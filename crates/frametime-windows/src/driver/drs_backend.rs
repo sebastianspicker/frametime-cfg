@@ -25,7 +25,7 @@ impl LiveBackend<'_> {
                 application_bindings: backup
                     .applications
                     .iter()
-                    .map(|binding| frametime_domain::DrsApplicationBinding {
+                    .map(|binding| frametime_domain::backup::DrsApplicationBinding {
                         application: binding.application.clone(),
                         original_profile: binding.profile.clone(),
                         unknown: BTreeMap::new(),

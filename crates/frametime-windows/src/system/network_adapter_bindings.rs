@@ -61,7 +61,7 @@ mod windows_ip_helper {
                 continue;
             };
             let binding = CoreNetworkAdapterBinding {
-                schema_version: frametime_domain::NATIVE_BINDING_SCHEMA_VERSION,
+                schema_version: frametime_domain::binding::NATIVE_BINDING_SCHEMA_VERSION,
                 adapter_name: adapter.guid.clone(),
                 interface_guid: adapter.guid.clone(),
                 interface_luid: adapter.luid,

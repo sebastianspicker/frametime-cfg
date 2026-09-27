@@ -37,7 +37,7 @@ fn adapter(operation: &'static str, reason: impl Into<String>) -> AdapterFailure
 }
 
 fn exact_gpu(
-    binding: &frametime_domain::PciDeviceBinding,
+    binding: &frametime_domain::binding::PciDeviceBinding,
 ) -> Result<ExactGpuIdentity, AdapterFailure> {
     let vendor = match binding.vendor_id {
         0x10de => GpuVendor::Nvidia,
@@ -60,7 +60,7 @@ fn exact_gpu(
 }
 
 fn packages_for(
-    bindings: Vec<(PciDeviceClass, frametime_domain::PciDeviceBinding)>,
+    bindings: Vec<(PciDeviceClass, frametime_domain::binding::PciDeviceBinding)>,
     target: &ExactGpuIdentity,
 ) -> Result<Vec<PublishedDriverPackage>, AdapterFailure> {
     let mut packages = BTreeMap::new();
@@ -122,7 +122,7 @@ impl WindowsDriverInspection<WindowsSetupApiEnumerator> {
 impl<E> WindowsDriverInspection<E> {
     fn bindings(
         &self,
-    ) -> Result<Vec<(PciDeviceClass, frametime_domain::PciDeviceBinding)>, AdapterFailure>
+    ) -> Result<Vec<(PciDeviceClass, frametime_domain::binding::PciDeviceBinding)>, AdapterFailure>
     where
         E: PciDeviceEnumerator,
     {
@@ -134,8 +134,8 @@ impl<E> WindowsDriverInspection<E> {
         &self,
     ) -> Result<
         (
-            frametime_domain::PciDeviceBinding,
-            Vec<frametime_domain::PciDeviceBinding>,
+            frametime_domain::binding::PciDeviceBinding,
+            Vec<frametime_domain::binding::PciDeviceBinding>,
         ),
         AdapterFailure,
     >

@@ -4,7 +4,7 @@
 //! every operation.  It is never reconstructed from a class-key index, an
 //! adapter display name, or a registry path.
 
-use frametime_domain::{NetworkAdapterBinding, NetworkStackValue};
+use frametime_domain::{backup::NetworkStackValue, binding::NetworkAdapterBinding};
 use windows::{
     Win32::{
         Devices::DeviceAndDriverInstallation::{

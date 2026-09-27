@@ -5,7 +5,7 @@
 //! future separately acknowledged QoS experiment after the local network and
 //! congestion test demonstrate that DSCP is actually honored.
 
-use frametime_domain::{
+use frametime_domain::backup::{
     NetworkStackNlaBackup, NetworkStackPolicy, NetworkStackPolicySnapshot,
     NetworkStackRawRegistryValue,
 };

@@ -9,20 +9,49 @@ pub mod commands;
 mod outcomes;
 mod workflow;
 
+#[cfg(test)]
+mod test_support {
+    use frametime_domain::{benchmark::FinalBenchmarkReceipt, handoff::TransactionId};
+
+    pub(crate) fn final_benchmark_receipt() -> FinalBenchmarkReceipt {
+        FinalBenchmarkReceipt {
+            schema_version: 1,
+            receipt_id: TransactionId::parse("fedcba9876543210fedcba9876543210")
+                .expect("receipt id"),
+            transaction_id: TransactionId::parse("0123456789abcdef0123456789abcdef")
+                .expect("transaction id"),
+            captured_utc: "2026-08-10 12:34:56".into(),
+            avg_fps: 300.0,
+            p1_fps: 180.0,
+            runs: 3,
+            run_evidence: None,
+            fps_cap: 270,
+            label: "After all optimizations".into(),
+            unknown: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
 use std::{path::Path, sync::OnceLock};
 
 use frametime_domain::{
-    OptionalCfgAsset, Profile, Step,
+    catalog::Step,
+    cs2_config::OptionalCfgAsset,
     hardware::{DiagnosticCommand, DiagnosticEnvelope},
+    policy::Profile,
 };
 pub use frametime_windows::AuthenticatedPackage;
 use frametime_windows::authenticate_current_package;
 
-pub use actions::{run_driver_plan, run_dry, run_hardware_diagnostic, run_prepare_nvidia};
-pub use benchmark::{run_baseline_benchmark, run_fps_cap};
+pub use actions::{
+    run_build_nvidia_lab, run_driver_inspect, run_driver_plan, run_dry, run_hardware_diagnostic,
+    run_prepare_nvidia, run_prepare_nvidia_request, run_reconcile_nvidia_profiles,
+};
+pub use benchmark::{evaluate_fps_cap, read_fps_capture, run_baseline_benchmark, run_fps_cap};
 pub use commands::{
-    Branch, CleanupMode, Command, DriverCommand, FpsRequest, FpsStrategyValue, HardwareCommand,
-    VprofBenchmarkRequest,
+    Branch, BuildNvidiaLabRequest, CleanupMode, Command, DriverCommand, FpsRequest,
+    FpsStrategyValue, HardwareCommand, NvidiaInstallerSource, PrepareNvidiaRequest,
+    ValidatedFpsRequest, VprofBenchmarkRequest,
 };
 pub use outcomes::{
     BackupSummary, BackupSummaryEntry, BenchmarkOutcome, BenchmarkPersistence, CleanupSummary,
@@ -34,8 +63,8 @@ pub use workflow::{run_final_benchmark, run_live};
 
 #[derive(Debug, Clone, Default)]
 pub struct OverviewReadModel {
-    pub progress: frametime_domain::Progress,
-    pub state: frametime_domain::State,
+    pub progress: frametime_domain::state::Progress,
+    pub state: frametime_domain::state::State,
     pub history: Vec<frametime_domain::benchmark::BenchmarkRecord>,
 }
 
@@ -48,7 +77,13 @@ pub fn read_overview() -> Result<OverviewReadModel, ApplicationError> {
     })
 }
 
-pub fn read_recovery() -> Result<frametime_domain::BackupFile, ApplicationError> {
+/// Load history without loading workflow state or progress.
+pub fn read_benchmark_history()
+-> Result<Vec<frametime_domain::benchmark::BenchmarkRecord>, ApplicationError> {
+    frametime_windows::load_benchmark_history().map_err(ApplicationError::failed)
+}
+
+pub fn read_recovery() -> Result<frametime_domain::backup::BackupFile, ApplicationError> {
     frametime_windows::load_backup().map_err(ApplicationError::failed)
 }
 
@@ -72,7 +107,7 @@ pub fn read_log() -> Result<LogReadModel, ApplicationError> {
     })
 }
 
-pub fn preview_video(root: &Path, goal: frametime_domain::VideoGoal) -> VideoPreview {
+pub fn preview_video(root: &Path, goal: frametime_domain::video::VideoGoal) -> VideoPreview {
     match frametime_windows::preview_video(root, goal) {
         Ok(Some(preview)) => VideoPreview {
             discovery: format!(
@@ -95,9 +130,9 @@ pub fn preview_video(root: &Path, goal: frametime_domain::VideoGoal) -> VideoPre
             discovery: format!(
                 "No trusted numeric-userdata cs2_video.txt was found below {}. {} UI guidance item(s) are shown without a mutation path.",
                 root.display(),
-                frametime_domain::video_guidance(goal).len()
+                frametime_domain::video::video_guidance(goal).len()
             ),
-            rows: frametime_domain::video_guidance(goal)
+            rows: frametime_domain::video::video_guidance(goal)
                 .into_iter()
                 .map(|row| VideoPreviewRow {
                     setting: row.setting,
@@ -187,7 +222,7 @@ pub(crate) fn require_authenticated_package() -> Result<AuthenticatedPackage, Ap
 
 pub fn run_network_stack(
     package: &AuthenticatedPackage,
-) -> Result<frametime_domain::RunReport, ApplicationError> {
+) -> Result<frametime_domain::engine::RunReport, ApplicationError> {
     frametime_windows::run_network_stack_transaction(package).map_err(ApplicationError::failed)
 }
 
@@ -226,7 +261,7 @@ pub fn configure_profile(
     package: &AuthenticatedPackage,
     profile: Profile,
     dry_run: bool,
-) -> Result<frametime_domain::State, ApplicationError> {
+) -> Result<frametime_domain::state::State, ApplicationError> {
     frametime_windows::configure_profile(package, profile, dry_run)
         .map_err(ApplicationError::failed)
 }

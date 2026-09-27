@@ -1,16 +1,16 @@
 use crate::*;
-use frametime_domain::{
+use frametime_domain::audit::{
     AuditEntry as CoreAuditEntry, IrreversibleAudit, ManualRecoveryAudit,
     ManualRecoveryAuditOutcome, ManualRecoveryTarget, MixedRecoveryAudit, RecoveryRequirement,
 };
 
 pub(crate) fn load_audit_file(
     trusted: &TrustedWorkDir,
-) -> Result<frametime_domain::AuditFile, String> {
+) -> Result<frametime_domain::audit::AuditFile, String> {
     if trusted.path().join(AUDIT_FILE).exists() {
         read_json_trusted(trusted, AUDIT_FILE).map_err(|error| format!("read audit: {error}"))
     } else {
-        Ok(frametime_domain::AuditFile {
+        Ok(frametime_domain::audit::AuditFile {
             entries: Vec::new(),
             created: timestamp(),
             unknown: BTreeMap::new(),
@@ -20,11 +20,11 @@ pub(crate) fn load_audit_file(
 
 pub(crate) fn persist_audit_file(
     trusted: &TrustedWorkDir,
-    file: &frametime_domain::AuditFile,
+    file: &frametime_domain::audit::AuditFile,
 ) -> Result<(), String> {
     write_json_atomic_trusted(trusted, AUDIT_FILE, file)
         .map_err(|error| format!("persist audit: {error}"))?;
-    let verified: frametime_domain::AuditFile = read_json_trusted(trusted, AUDIT_FILE)
+    let verified: frametime_domain::audit::AuditFile = read_json_trusted(trusted, AUDIT_FILE)
         .map_err(|error| format!("read back audit: {error}"))?;
     if verified != *file {
         return Err("audit readback verification failed".into());
@@ -196,7 +196,7 @@ pub(crate) fn pending_entry_identity(entry: &CoreAuditEntry) -> Option<(&str, &s
 }
 
 pub(crate) fn pending_irreversible_audit(
-    file: &frametime_domain::AuditFile,
+    file: &frametime_domain::audit::AuditFile,
     step: &str,
 ) -> Result<Option<IrreversibleAudit>, String> {
     if !file.unknown.is_empty() {

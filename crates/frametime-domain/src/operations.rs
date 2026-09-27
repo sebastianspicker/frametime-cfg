@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{OperationKind, Step, StepId};
+use crate::catalog::{OperationKind, Step, StepId};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GpuBranch {
@@ -85,10 +85,12 @@ mod tests {
 
     #[test]
     fn mutually_exclusive_gpu_actions_are_explicit() {
-        let drs = step_by_id(crate::StepId::new(crate::Phase::Three, 4)).expect("DRS step");
+        let drs = step_by_id(crate::catalog::StepId::new(crate::catalog::Phase::Three, 4))
+            .expect("DRS step");
         assert!(plan_for_step(drs, GpuBranch::Nvidia).applicable);
         assert!(!plan_for_step(drs, GpuBranch::Amd).applicable);
-        let amd = step_by_id(crate::StepId::new(crate::Phase::Three, 8)).expect("AMD step");
+        let amd = step_by_id(crate::catalog::StepId::new(crate::catalog::Phase::Three, 8))
+            .expect("AMD step");
         assert!(plan_for_step(amd, GpuBranch::Amd).applicable);
         assert!(!plan_for_step(amd, GpuBranch::IntelArc).applicable);
         let nvidia_driver_install = step_by_id(PHASE_THREE_DRIVER_INSTALL).expect("driver step");

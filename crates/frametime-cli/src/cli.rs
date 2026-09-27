@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use frametime_domain::{OptionalCfgAsset, Profile};
+use frametime_domain::{cs2_config::OptionalCfgAsset, policy::Profile};
 
 #[derive(Debug, Parser)]
 #[command(name = "frametime", version, about = "Native frametime.cfg workflow")]

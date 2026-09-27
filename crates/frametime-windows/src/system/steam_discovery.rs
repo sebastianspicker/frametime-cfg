@@ -2,12 +2,15 @@
 
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use frametime_domain::{
-    Cs2Install, VideoDocument, app_manifest_is_cs2, library_paths_from_vdf, parse_video_document,
+    steam::{Cs2Install, app_manifest_is_cs2, library_paths_from_vdf},
+    video::{VideoDocument, parse_video_document},
 };
+
+use super::trusted_path::{has_unsafe_components, metadata_is_reparse};
 
 const CS2_DIRECTORY: &str = "Counter-Strike Global Offensive";
 const USERDATA_DIR: &str = "userdata";
@@ -195,24 +198,6 @@ fn reject_reparse_ancestors(path: &Path, stop: &Path) -> Result<(), String> {
         current = value.parent();
     }
     Err("Steam path escaped its trusted root".into())
-}
-fn has_unsafe_components(path: &Path) -> bool {
-    path.components()
-        .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
-}
-fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x0400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
 }
 fn native_path(value: &str) -> PathBuf {
     #[cfg(windows)]

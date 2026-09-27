@@ -11,7 +11,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use frametime_domain::{Cs2ConfigFs, Cs2Install, OptionalCfgAsset};
+use frametime_domain::{
+    cs2_config::{Cs2ConfigFs, OptionalCfgAsset},
+    steam::Cs2Install,
+};
+
+use crate::system::trusted_path::{has_unsafe_components, metadata_is_reparse};
 
 const CS2_DIRECTORY: &str = "Counter-Strike Global Offensive";
 const OPTIMIZATION_FILE: &str = "optimization.cfg";
@@ -232,11 +237,6 @@ fn reject_reparse_ancestors(candidate: &Path, root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn has_unsafe_components(path: &Path) -> bool {
-    path.components()
-        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
-}
-
 fn is_known_target_name(name: &str) -> bool {
     matches!(
         name,
@@ -244,21 +244,6 @@ fn is_known_target_name(name: &str) -> bool {
     ) || OptionalCfgAsset::ALL
         .into_iter()
         .any(|asset| asset.file_name() == name)
-}
-
-fn metadata_is_reparse(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x0400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
 }
 
 fn untrusted_path(path: &Path) -> io::Error {

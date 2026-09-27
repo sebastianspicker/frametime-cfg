@@ -1,9 +1,11 @@
 use super::*;
 use crate::{
-    ActionIntent, Depth, GpuApplicability, OperationKind, OrchestrationRole, PciDeviceBinding,
-    Phase, Risk, StepId,
     audit::{RebuildableAudit, RebuildableTarget},
-    catalog::STEPS,
+    binding::PciDeviceBinding,
+    catalog::{
+        ActionIntent, Depth, GpuApplicability, OperationKind, OrchestrationRole, Phase, Risk,
+        STEPS, StepId,
+    },
     evidence::{EvidenceRequirement, ObservationReceipt, ObservationSubject},
     operations::{GpuBranch, plan_for_step},
 };

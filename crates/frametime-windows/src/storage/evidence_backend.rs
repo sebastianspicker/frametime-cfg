@@ -83,51 +83,11 @@ pub(crate) fn verify_preparation_observation(
             }
         }
         ("P1:20", ObservationSubject::NvidiaDrsPreparation { .. }) => {
-            let current = capture_nvidia_drs_preparation_receipt()?;
-            if current.subject == receipt.subject {
-                Ok(())
-            } else {
-                Err("P1:20 NVIDIA DRS evidence changed after persistence".into())
-            }
+            verify_selected_preparation(&key, receipt, PreparationCheck::Persisted)
         }
-        ("P1:21", ObservationSubject::MsiDeviceSet { devices }) => {
-            let current = sorted_msi_devices(&discover_native_msi_batches()?);
-            if same_device_observation_set(devices, &current) {
-                Ok(())
-            } else {
-                Err("P1:21 PCI device evidence changed after persistence".into())
-            }
-        }
-        (
-            "P1:22",
-            ObservationSubject::NicAffinityProposal {
-                adapter,
-                processor_group,
-                logical_processor_count,
-                target_processor,
-                assignment_mask,
-            },
-        ) => {
-            let current = discover_native_nic_affinity()?;
-            let same = *processor_group == 0
-                && *logical_processor_count == u16::from(current.final_logical_processor) + 1
-                && *target_processor == u16::from(current.final_logical_processor)
-                && *assignment_mask == u64::from_le_bytes(current.assignment_set_override)
-                && adapter.device.same_pnp_device(&current.adapter.device)
-                && adapter
-                    .adapter_name
-                    .eq_ignore_ascii_case(&current.adapter.adapter_name)
-                && adapter
-                    .interface_guid
-                    .eq_ignore_ascii_case(&current.adapter.interface_guid)
-                && adapter.interface_luid == current.adapter.interface_luid
-                && adapter.interface_index == current.adapter.interface_index
-                && adapter.physical_address == current.adapter.physical_address;
-            if same {
-                Ok(())
-            } else {
-                Err("P1:22 NIC or processor-topology evidence changed after persistence".into())
-            }
+        ("P1:21", ObservationSubject::MsiDeviceSet { .. })
+        | ("P1:22", ObservationSubject::NicAffinityProposal { .. }) => {
+            verify_selected_preparation(&key, receipt, PreparationCheck::Persisted)
         }
         _ => Err(format!(
             "{key} prerequisite evidence has the wrong typed subject"
@@ -151,8 +111,8 @@ pub(crate) fn capture_driver_cleanup_preparation_receipt() -> Result<Observation
 
 pub(crate) fn inspect_driver_cleanup_preparation() -> Result<
     (
-        frametime_domain::PciDeviceBinding,
-        Vec<frametime_domain::PciDeviceBinding>,
+        frametime_domain::binding::PciDeviceBinding,
+        Vec<frametime_domain::binding::PciDeviceBinding>,
     ),
     String,
 > {
@@ -174,7 +134,7 @@ pub(crate) fn inspect_driver_cleanup_preparation_action() -> Result<Inspection, 
 }
 
 pub(crate) fn driver_cleanup_preparation_inspection(
-    target_gpu: &frametime_domain::PciDeviceBinding,
+    target_gpu: &frametime_domain::binding::PciDeviceBinding,
 ) -> Inspection {
     if target_gpu.vendor_id == 0x10de {
         Inspection::Satisfied
@@ -184,10 +144,10 @@ pub(crate) fn driver_cleanup_preparation_inspection(
 }
 
 pub(crate) fn same_driver_cleanup_preparation(
-    target: &frametime_domain::PciDeviceBinding,
-    packages: &[frametime_domain::PciDeviceBinding],
-    current_target: &frametime_domain::PciDeviceBinding,
-    current_packages: &[frametime_domain::PciDeviceBinding],
+    target: &frametime_domain::binding::PciDeviceBinding,
+    packages: &[frametime_domain::binding::PciDeviceBinding],
+    current_target: &frametime_domain::binding::PciDeviceBinding,
+    current_packages: &[frametime_domain::binding::PciDeviceBinding],
 ) -> bool {
     same_driver_cleanup_binding(target, current_target)
         && packages.len() == current_packages.len()
@@ -198,8 +158,8 @@ pub(crate) fn same_driver_cleanup_preparation(
 }
 
 pub(crate) fn same_driver_cleanup_binding(
-    expected: &frametime_domain::PciDeviceBinding,
-    current: &frametime_domain::PciDeviceBinding,
+    expected: &frametime_domain::binding::PciDeviceBinding,
+    current: &frametime_domain::binding::PciDeviceBinding,
 ) -> bool {
     expected.same_pnp_device(current)
         && expected.driver_provider == current.driver_provider
@@ -218,22 +178,30 @@ pub(crate) fn require_stored_preparation(
     receipt
         .validate_for(step)
         .map_err(|error| format!("validate {step} prerequisite evidence: {error}"))?;
-    match (step, &receipt.subject) {
+    verify_selected_preparation(step, &receipt, PreparationCheck::Durable)
+}
+
+#[derive(Clone, Copy)]
+enum PreparationCheck {
+    Persisted,
+    Durable,
+}
+
+fn verify_selected_preparation(
+    step: &str,
+    receipt: &ObservationReceipt,
+    check: PreparationCheck,
+) -> Result<(), String> {
+    let mismatch = match (step, &receipt.subject) {
         ("P1:20", ObservationSubject::NvidiaDrsPreparation { .. }) => {
-            let current = capture_nvidia_drs_preparation_receipt()?;
-            if current.subject == receipt.subject {
-                Ok(())
-            } else {
-                Err("P1:20 durable NVIDIA DRS evidence changed before P3:4".into())
-            }
+            !nvidia_drs_preparation_matches(receipt)?
         }
         ("P1:21", ObservationSubject::MsiDeviceSet { devices }) => {
-            let current = sorted_msi_devices(&discover_native_msi_batches()?);
-            if same_stable_device_set(devices, &current) {
-                Ok(())
-            } else {
-                Err("P1:21 durable PCI device identities changed before P3:2".into())
-            }
+            let compare = match check {
+                PreparationCheck::Persisted => same_device_observation_set,
+                PreparationCheck::Durable => same_stable_device_set,
+            };
+            !msi_device_set_matches(devices, compare)?
         }
         (
             "P1:22",
@@ -244,37 +212,107 @@ pub(crate) fn require_stored_preparation(
                 target_processor,
                 assignment_mask,
             },
-        ) => {
-            let current = discover_native_nic_affinity()?;
-            let same = *processor_group == 0
-                && *logical_processor_count == u16::from(current.final_logical_processor) + 1
-                && *target_processor == u16::from(current.final_logical_processor)
-                && *assignment_mask == u64::from_le_bytes(current.assignment_set_override)
-                && adapter.device.same_pnp_device(&current.adapter.device)
-                && adapter
-                    .adapter_name
-                    .eq_ignore_ascii_case(&current.adapter.adapter_name)
-                && adapter
-                    .interface_guid
-                    .eq_ignore_ascii_case(&current.adapter.interface_guid)
-                && adapter.interface_luid == current.adapter.interface_luid
-                && adapter.interface_index == current.adapter.interface_index
-                && adapter.physical_address == current.adapter.physical_address;
-            if same {
-                Ok(())
-            } else {
-                Err("P1:22 durable NIC or processor-topology evidence changed before P3:3".into())
-            }
+        ) => !nic_affinity_proposal_matches(
+            adapter,
+            *processor_group,
+            *logical_processor_count,
+            *target_processor,
+            *assignment_mask,
+        )?,
+        _ => {
+            let qualifier = match check {
+                PreparationCheck::Persisted => "prerequisite evidence",
+                PreparationCheck::Durable => "durable prerequisite evidence",
+            };
+            return Err(format!("{step} {qualifier} has the wrong typed subject"));
         }
-        _ => Err(format!(
-            "{step} durable prerequisite evidence has the wrong typed subject"
-        )),
+    };
+    if !mismatch {
+        return Ok(());
     }
+    let error = match (step, check) {
+        ("P1:20", PreparationCheck::Persisted) => {
+            "P1:20 NVIDIA DRS evidence changed after persistence"
+        }
+        ("P1:21", PreparationCheck::Persisted) => {
+            "P1:21 PCI device evidence changed after persistence"
+        }
+        ("P1:22", PreparationCheck::Persisted) => {
+            "P1:22 NIC or processor-topology evidence changed after persistence"
+        }
+        ("P1:20", PreparationCheck::Durable) => {
+            "P1:20 durable NVIDIA DRS evidence changed before P3:4"
+        }
+        ("P1:21", PreparationCheck::Durable) => {
+            "P1:21 durable PCI device identities changed before P3:2"
+        }
+        ("P1:22", PreparationCheck::Durable) => {
+            "P1:22 durable NIC or processor-topology evidence changed before P3:3"
+        }
+        _ => unreachable!("typed preparation check has a supported step"),
+    };
+    Err(error.into())
+}
+
+fn nvidia_drs_preparation_matches(receipt: &ObservationReceipt) -> Result<bool, String> {
+    Ok(capture_nvidia_drs_preparation_receipt()?.subject == receipt.subject)
+}
+
+fn msi_device_set_matches(
+    devices: &[frametime_domain::binding::PciDeviceBinding],
+    compare: fn(
+        &[frametime_domain::binding::PciDeviceBinding],
+        &[frametime_domain::binding::PciDeviceBinding],
+    ) -> bool,
+) -> Result<bool, String> {
+    let current = sorted_msi_devices(&discover_native_msi_batches()?);
+    Ok(compare(devices, &current))
+}
+
+fn nic_affinity_proposal_matches(
+    adapter: &frametime_domain::binding::NetworkAdapterBinding,
+    processor_group: u16,
+    logical_processor_count: u16,
+    target_processor: u16,
+    assignment_mask: u64,
+) -> Result<bool, String> {
+    Ok(same_nic_affinity_proposal(
+        adapter,
+        processor_group,
+        logical_processor_count,
+        target_processor,
+        assignment_mask,
+        &discover_native_nic_affinity()?,
+    ))
+}
+
+fn same_nic_affinity_proposal(
+    expected: &frametime_domain::binding::NetworkAdapterBinding,
+    processor_group: u16,
+    logical_processor_count: u16,
+    target_processor: u16,
+    assignment_mask: u64,
+    observed: &NicAffinityBinding,
+) -> bool {
+    processor_group == 0
+        && logical_processor_count == u16::from(observed.final_logical_processor) + 1
+        && target_processor == u16::from(observed.final_logical_processor)
+        && assignment_mask == u64::from_le_bytes(observed.assignment_set_override)
+        && expected.device.same_pnp_device(&observed.adapter.device)
+        && expected
+            .adapter_name
+            .eq_ignore_ascii_case(&observed.adapter.adapter_name)
+        && expected
+            .interface_guid
+            .eq_ignore_ascii_case(&observed.adapter.interface_guid)
+        && expected.interface_luid == observed.adapter.interface_luid
+        && expected.interface_index == observed.adapter.interface_index
+        && expected.physical_address == observed.adapter.physical_address
 }
 
 pub(crate) fn sorted_msi_devices(
     batches: &[MsiDeviceBatch],
-) -> Vec<frametime_domain::PciDeviceBinding> {
+) -> Vec<frametime_domain::binding::PciDeviceBinding> {
     let mut devices = batches
         .iter()
         .map(|batch| batch.device.clone())
@@ -285,8 +323,8 @@ pub(crate) fn sorted_msi_devices(
 }
 
 pub(crate) fn same_device_observation_set(
-    left: &[frametime_domain::PciDeviceBinding],
-    right: &[frametime_domain::PciDeviceBinding],
+    left: &[frametime_domain::binding::PciDeviceBinding],
+    right: &[frametime_domain::binding::PciDeviceBinding],
 ) -> bool {
     left.len() == right.len()
         && left.iter().zip(right).all(|(left, right)| {
@@ -298,8 +336,8 @@ pub(crate) fn same_device_observation_set(
 }
 
 pub(crate) fn same_stable_device_set(
-    left: &[frametime_domain::PciDeviceBinding],
-    right: &[frametime_domain::PciDeviceBinding],
+    left: &[frametime_domain::binding::PciDeviceBinding],
+    right: &[frametime_domain::binding::PciDeviceBinding],
 ) -> bool {
     left.len() == right.len()
         && left

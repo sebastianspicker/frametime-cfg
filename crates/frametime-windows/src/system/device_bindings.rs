@@ -1,6 +1,6 @@
 #[cfg(windows)]
 use crate::*;
-use frametime_domain::{
+use frametime_domain::binding::{
     NetworkAdapterBinding as CoreNetworkAdapterBinding, PciDeviceBinding as CorePciDeviceBinding,
 };
 
@@ -373,7 +373,7 @@ pub(crate) mod windows_setupapi {
         let (vendor_id, device_id, subsystem_vendor_id, subsystem_device_id, revision_id) =
             parse_pci_identity(&instance_id)?;
         let binding = CorePciDeviceBinding {
-            schema_version: frametime_domain::NATIVE_BINDING_SCHEMA_VERSION,
+            schema_version: frametime_domain::binding::NATIVE_BINDING_SCHEMA_VERSION,
             instance_id,
             container_id: guid_property(set, data, &DEVPKEY_Device_ContainerId, "container ID")?,
             class_guid,

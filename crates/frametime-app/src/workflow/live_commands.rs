@@ -94,11 +94,11 @@ pub fn run_live(command: Command) -> Result<CommandOutcome, ApplicationError> {
 
 fn read_only_host_verification() -> VerificationSummary {
     VerificationSummary {
-        state: frametime_domain::State::default(),
-        progress: frametime_domain::Progress::default(),
-        report: frametime_domain::VerificationReport {
-            items: vec![frametime_domain::VerificationItem {
-                status: frametime_domain::VerificationStatus::Info,
+        state: frametime_domain::state::State::default(),
+        progress: frametime_domain::state::Progress::default(),
+        report: frametime_domain::verification::VerificationReport {
+            items: vec![frametime_domain::verification::VerificationItem {
+                status: frametime_domain::verification::VerificationStatus::Info,
                 name: "platform".into(),
                 detail:
                     "Native Windows settings are unavailable on this host; no changes were made."
