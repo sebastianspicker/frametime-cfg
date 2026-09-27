@@ -8,7 +8,7 @@ use crate::*;
 /// ancestor handles, preventing replacement before a caller launches it.
 #[derive(Debug)]
 pub struct VerifiedPublishedRuntime {
-    pub(crate) record: frametime_domain::RuntimeRecord,
+    pub(crate) record: frametime_domain::handoff::RuntimeRecord,
     pub(crate) executable_path: std::path::PathBuf,
     #[cfg(windows)]
     pub(crate) _retained: publisher::PublicationRetention,
@@ -16,7 +16,7 @@ pub struct VerifiedPublishedRuntime {
 
 impl VerifiedPublishedRuntime {
     #[must_use]
-    pub fn record(&self) -> &frametime_domain::RuntimeRecord {
+    pub fn record(&self) -> &frametime_domain::handoff::RuntimeRecord {
         &self.record
     }
 

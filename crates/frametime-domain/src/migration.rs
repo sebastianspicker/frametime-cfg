@@ -1,4 +1,7 @@
-use crate::{Phase, Progress, State};
+use crate::{
+    catalog::Phase,
+    state::{Progress, State},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegacyHandoff {
@@ -14,6 +17,10 @@ pub enum LegacyHandoff {
 /// an unavailable query is represented as `incomplete_runtime` by callers
 /// that cannot establish a safe clean start.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the public cross-crate migration observation layout must retain its four named compatibility fields"
+)]
 pub struct MigrationInventory {
     pub phase_two_run_once_armed: bool,
     pub phase_three_run_armed: bool,
@@ -64,48 +71,74 @@ pub fn assess_inventory(
     progress: Option<&Progress>,
     inventory: MigrationInventory,
 ) -> MigrationDecision {
-    if inventory.phase_two_run_once_armed {
-        return MigrationDecision::Refuse(LegacyHandoff::PhaseTwoArmed);
+    if let Some(handoff) = armed_inventory_handoff(inventory) {
+        return MigrationDecision::Refuse(handoff);
     }
-    if inventory.phase_three_run_armed {
-        return MigrationDecision::Refuse(LegacyHandoff::PhaseThreeArmed);
-    }
-    if inventory.safe_boot_armed {
-        return MigrationDecision::Refuse(LegacyHandoff::SafeBootArmed);
-    }
-    if inventory.incomplete_runtime {
-        return MigrationDecision::Refuse(LegacyHandoff::IncompleteRuntime);
-    }
-    if state.is_none() && progress.is_none() {
+    if no_migration_state_exists(state, progress) {
         return MigrationDecision::NotNeeded;
     }
-    let p2_or_p3 = progress.is_some_and(|progress| {
-        progress.has_resolved_in_phase(Phase::Two) || progress.has_resolved_in_phase(Phase::Three)
-    });
-    let phase_one_armed = state.is_some_and(|state| {
-        state.phase1_safe_mode_ready
-            || state.active_reboot_transaction.is_some()
-            || state.unknown.contains_key("activeRebootTransaction")
-    });
-    if p2_or_p3 || phase_one_armed {
+    if has_incomplete_runtime_state(state, progress) {
         return MigrationDecision::Refuse(LegacyHandoff::IncompleteRuntime);
     }
     let Some(progress) = progress else {
         return MigrationDecision::ConfirmIdle;
     };
-    let completed = crate::step_catalog()
-        .iter()
-        .filter(|step| step.id.phase == Phase::One && progress.is_completed(step.id))
-        .count();
-    let skipped = crate::step_catalog()
-        .iter()
-        .filter(|step| step.id.phase == Phase::One && progress.is_skipped(step.id))
-        .count();
+    let (completed, skipped) = phase_one_progress_counts(progress);
     if completed + skipped == 0 {
         MigrationDecision::ConfirmIdle
     } else {
         MigrationDecision::ConfirmPartialPhaseOne { completed, skipped }
     }
+}
+
+fn armed_inventory_handoff(inventory: MigrationInventory) -> Option<LegacyHandoff> {
+    if inventory.phase_two_run_once_armed {
+        return Some(LegacyHandoff::PhaseTwoArmed);
+    }
+    if inventory.phase_three_run_armed {
+        return Some(LegacyHandoff::PhaseThreeArmed);
+    }
+    if inventory.safe_boot_armed {
+        return Some(LegacyHandoff::SafeBootArmed);
+    }
+    inventory
+        .incomplete_runtime
+        .then_some(LegacyHandoff::IncompleteRuntime)
+}
+
+fn no_migration_state_exists(state: Option<&State>, progress: Option<&Progress>) -> bool {
+    state.is_none() && progress.is_none()
+}
+
+fn has_incomplete_runtime_state(state: Option<&State>, progress: Option<&Progress>) -> bool {
+    let has_later_phase_progress = progress.is_some_and(has_resolved_later_phase_progress);
+    let has_armed_phase_one_state = state.is_some_and(state_has_armed_phase_one_handoff);
+    has_later_phase_progress || has_armed_phase_one_state
+}
+
+fn has_resolved_later_phase_progress(progress: &Progress) -> bool {
+    let phase_two_is_resolved = progress.has_resolved_in_phase(Phase::Two);
+    let phase_three_is_resolved = progress.has_resolved_in_phase(Phase::Three);
+    phase_two_is_resolved || phase_three_is_resolved
+}
+
+fn state_has_armed_phase_one_handoff(state: &State) -> bool {
+    let safe_mode_is_ready = state.phase1_safe_mode_ready;
+    let has_typed_transaction = state.active_reboot_transaction.is_some();
+    let has_tolerated_legacy_transaction = state.unknown.contains_key("activeRebootTransaction");
+    safe_mode_is_ready || has_typed_transaction || has_tolerated_legacy_transaction
+}
+
+fn phase_one_progress_counts(progress: &Progress) -> (usize, usize) {
+    let completed = crate::catalog::step_catalog()
+        .iter()
+        .filter(|step| step.id.phase == Phase::One && progress.is_completed(step.id))
+        .count();
+    let skipped = crate::catalog::step_catalog()
+        .iter()
+        .filter(|step| step.id.phase == Phase::One && progress.is_skipped(step.id))
+        .count();
+    (completed, skipped)
 }
 
 #[cfg(test)]
@@ -215,6 +248,24 @@ mod tests {
     }
 
     #[test]
+    fn inventory_preserves_armed_handoff_refusal_precedence() {
+        let inventory = MigrationInventory {
+            phase_two_run_once_armed: true,
+            phase_three_run_armed: true,
+            safe_boot_armed: true,
+            incomplete_runtime: true,
+        };
+        assert_eq!(
+            assess_inventory(
+                Some(&State::default()),
+                Some(&Progress::default()),
+                inventory
+            ),
+            MigrationDecision::Refuse(LegacyHandoff::PhaseTwoArmed)
+        );
+    }
+
+    #[test]
     fn phase_one_readiness_flag_refuses_migration() {
         let state = State {
             phase1_safe_mode_ready: true,
@@ -233,7 +284,7 @@ mod tests {
     #[test]
     fn typed_reboot_transaction_refuses_migration() {
         let state = State {
-            active_reboot_transaction: Some(crate::RebootTransaction::default()),
+            active_reboot_transaction: Some(crate::handoff::RebootTransaction::default()),
             ..State::default()
         };
         assert_eq!(

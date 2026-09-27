@@ -2,8 +2,11 @@
 
 use super::{qos, windows};
 use frametime_domain::{
-    NetworkAdapterBinding, NetworkStackNlaBackup, NetworkStackPolicy, NetworkStackPolicySnapshot,
-    NetworkStackSetting, NetworkStackValue,
+    backup::{
+        NetworkStackNlaBackup, NetworkStackPolicy, NetworkStackPolicySnapshot, NetworkStackSetting,
+        NetworkStackValue,
+    },
+    binding::NetworkAdapterBinding,
 };
 
 pub(crate) fn registry_name(setting: NetworkStackSetting) -> Option<&'static str> {

@@ -150,7 +150,7 @@ pub(crate) fn p1_34_fixed_request_contains_the_complete_legacy_asset_set() {
         LEGACY_CS2_CONFIG_ASSETS.len()
     );
     assert_eq!(
-        frametime_domain::Cs2ConfigTarget::for_request(&request).len(),
+        frametime_domain::cs2_config::Cs2ConfigTarget::for_request(&request).len(),
         LEGACY_CS2_CONFIG_ASSETS.len() + 1
     );
     assert!(

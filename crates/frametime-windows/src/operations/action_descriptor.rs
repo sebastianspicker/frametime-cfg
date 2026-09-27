@@ -25,7 +25,7 @@ pub(crate) struct ActionDescriptor {
     pub(crate) action: Action,
     pub(crate) capability: Capability,
     pub(crate) required_inputs: &'static [RequiredInput],
-    pub(crate) recovery_requirement: frametime_domain::RecoveryRequirement,
+    pub(crate) recovery_requirement: frametime_domain::audit::RecoveryRequirement,
     pub(crate) evidence_requirement: EvidenceRequirement,
 }
 
@@ -46,9 +46,9 @@ impl ActionDescriptor {
         };
         let recovery_requirement = match &action {
             Action::NvidiaDriverRemoval | Action::NvidiaDriverInstall => {
-                frametime_domain::RecoveryRequirement::ManualRecoveryAudit
+                frametime_domain::audit::RecoveryRequirement::ManualRecoveryAudit
             }
-            _ => frametime_domain::RecoveryRequirement::LosslessBackup,
+            _ => frametime_domain::audit::RecoveryRequirement::LosslessBackup,
         };
         let evidence_requirement = match &action {
             Action::GpuDriverCleanPreparation
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn each_catalog_intent_has_one_descriptor_with_its_domain_contract() {
-        for step in frametime_domain::step_catalog() {
+        for step in frametime_domain::catalog::step_catalog() {
             let descriptor = descriptor_for(step).expect("current intent maps to descriptor");
             assert_eq!(descriptor.id, step.id);
             assert_eq!(descriptor.intent, step.intent);

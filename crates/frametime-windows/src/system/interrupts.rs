@@ -1,5 +1,5 @@
 use crate::*;
-use frametime_domain::{
+use frametime_domain::binding::{
     NetworkAdapterBinding as InterruptNetworkAdapterBinding,
     PciDeviceBinding as InterruptPciDeviceBinding,
 };

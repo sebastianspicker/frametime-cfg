@@ -3,7 +3,7 @@ use crate::*;
 // owns only the fixed BCD/registry/state/progress boundary; Engine actions
 // remain responsible for the driver work between these durable checkpoints.
 
-use frametime_domain::RebootTransaction;
+use frametime_domain::handoff::RebootTransaction;
 
 pub(crate) const RUNONCE_KEY: &str = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce";
 pub(crate) const RUN_KEY: &str = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
@@ -43,7 +43,10 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
     next_state.active_reboot_transaction = Some(transaction);
     persist_state_readback(work_dir, &next_state, "P1:38")?;
     let mut next_progress = progress;
-    next_progress.complete_step(frametime_domain::PHASE_ONE_SAFE_MODE_HANDOFF, timestamp());
+    next_progress.complete_step(
+        frametime_domain::catalog::PHASE_ONE_SAFE_MODE_HANDOFF,
+        timestamp(),
+    );
     persist_progress_readback(work_dir, &next_progress, "P1:38")
 }
 
@@ -77,7 +80,10 @@ pub fn complete_phase_two_safe_boot_clear(runtime: &VerifiedSelectedRuntime) -> 
         .map_err(|error| format!("P2:1 stage: {error}"))?;
     persist_state_readback(work_dir, &state, "P2:1")?;
     let mut next_progress = progress;
-    next_progress.complete_step(frametime_domain::PHASE_TWO_SAFE_BOOT_CLEAR, timestamp());
+    next_progress.complete_step(
+        frametime_domain::catalog::PHASE_TWO_SAFE_BOOT_CLEAR,
+        timestamp(),
+    );
     persist_progress_readback(work_dir, &next_progress, "P2:1")
 }
 
@@ -119,7 +125,10 @@ pub fn arm_phase_three_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), 
         .map_err(|error| format!("P2:3 stage: {error}"))?;
     persist_state_readback(work_dir, &state, "P2:3")?;
     let mut next_progress = progress;
-    next_progress.complete_step(frametime_domain::PHASE_TWO_PHASE_THREE_HANDOFF, timestamp());
+    next_progress.complete_step(
+        frametime_domain::catalog::PHASE_TWO_PHASE_THREE_HANDOFF,
+        timestamp(),
+    );
     persist_progress_readback(work_dir, &next_progress, "P2:3")
 }
 

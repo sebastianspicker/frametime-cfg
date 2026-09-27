@@ -142,10 +142,13 @@ impl Backend for LiveBackend<'_> {
         self.transaction_lock = Some(WorkLock::acquire(&self.work_dir)?);
         self.capture_backups_for_action(&action, key)
     }
-    fn recovery_requirement(&self, operation: Operation) -> frametime_domain::RecoveryRequirement {
+    fn recovery_requirement(
+        &self,
+        operation: Operation,
+    ) -> frametime_domain::audit::RecoveryRequirement {
         descriptor_for(&operation.step)
             .map(|descriptor| descriptor.recovery_requirement)
-            .unwrap_or(frametime_domain::RecoveryRequirement::LosslessBackup)
+            .unwrap_or(frametime_domain::audit::RecoveryRequirement::LosslessBackup)
     }
     fn evidence_requirement(&self, operation: Operation) -> EvidenceRequirement {
         backend_evidence_requirement(operation)
@@ -171,24 +174,24 @@ impl Backend for LiveBackend<'_> {
     fn capture_pending_irreversible_audit(
         &mut self,
         operation: Operation,
-    ) -> Result<frametime_domain::IrreversibleAudit, String> {
+    ) -> Result<frametime_domain::audit::IrreversibleAudit, String> {
         self.capture_irreversible_audit(operation)
     }
     fn persist_pending_irreversible_audit(
         &mut self,
-        audit: &frametime_domain::IrreversibleAudit,
+        audit: &frametime_domain::audit::IrreversibleAudit,
     ) -> Result<(), String> {
         self.persist_irreversible_audit(audit)
     }
     fn finalize_irreversible_audit(
         &mut self,
-        audit: &frametime_domain::IrreversibleAudit,
+        audit: &frametime_domain::audit::IrreversibleAudit,
     ) -> Result<(), String> {
         self.replace_irreversible_audit(audit, false)
     }
     fn fail_irreversible_audit(
         &mut self,
-        audit: &frametime_domain::IrreversibleAudit,
+        audit: &frametime_domain::audit::IrreversibleAudit,
     ) -> Result<(), String> {
         let result = self.replace_irreversible_audit(audit, true);
         self.clear_transaction_state();

@@ -596,7 +596,7 @@ pub fn cleanup_quick(package: &AuthenticatedPackage) -> Result<CleanupReport, St
     let trusted = TrustedWorkDir::acquire_fixed()?;
     require_elevation()?;
     Ok(cleanup_native::run(
-        frametime_domain::CleanupMode::Quick,
+        frametime_domain::cleanup::CleanupMode::Quick,
         trusted.path(),
         package.config(),
     ))
@@ -608,7 +608,7 @@ pub fn cleanup_full(package: &AuthenticatedPackage) -> Result<CleanupReport, Str
     let trusted = TrustedWorkDir::acquire_fixed()?;
     require_elevation()?;
     Ok(cleanup_native::run(
-        frametime_domain::CleanupMode::Full,
+        frametime_domain::cleanup::CleanupMode::Full,
         trusted.path(),
         package.config(),
     ))

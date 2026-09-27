@@ -1,6 +1,7 @@
 use crate::*;
 use frametime_domain::{
-    InterruptPolicyBackup, InterruptPolicyKind, InterruptPolicyValue, PciDeviceBinding,
+    backup::{InterruptPolicyBackup, InterruptPolicyKind, InterruptPolicyValue},
+    binding::PciDeviceBinding,
 };
 
 pub(crate) trait InterruptRegistryStore: InterruptRegistryReader {

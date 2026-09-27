@@ -5,8 +5,12 @@ use frametime_domain::hardware::{
     DiagnosticCommand, DiagnosticStatus, EtwFrameCaptureRequest, WheaEventsRequest,
 };
 use frametime_domain::{
-    Engine, Event, Phase, Profile, Progress, VerificationItem, VerificationStatus,
-    requires_irreversible_acknowledgement, step_catalog,
+    catalog::{Phase, step_catalog},
+    cleanup::requires_irreversible_acknowledgement,
+    engine::{Engine, Event},
+    policy::Profile,
+    state::Progress,
+    verification::{VerificationItem, VerificationStatus},
 };
 use frametime_windows::WindowsHardwareDiagnostics;
 use frametime_windows::{
@@ -154,9 +158,9 @@ pub(crate) fn require_cleanup_confirmation(
 ) -> Result<(), ApplicationError> {
     require_yes(yes, "cleanup")?;
     let contract_mode = match mode {
-        CleanupMode::Quick => frametime_domain::CleanupMode::Quick,
-        CleanupMode::Full => frametime_domain::CleanupMode::Full,
-        CleanupMode::Driver => frametime_domain::CleanupMode::Driver,
+        CleanupMode::Quick => frametime_domain::cleanup::CleanupMode::Quick,
+        CleanupMode::Full => frametime_domain::cleanup::CleanupMode::Full,
+        CleanupMode::Driver => frametime_domain::cleanup::CleanupMode::Driver,
     };
     if requires_irreversible_acknowledgement(contract_mode) && !acknowledge_irreversible {
         return Err(ApplicationError::Invalid(

@@ -277,7 +277,7 @@ fn create_cs2_cfg_controls(
         WS_CHILD | WS_TABSTOP | WINDOW_STYLE(CBS_DROPDOWNLIST as u32),
         CS2_CFG_ASSET,
     )?;
-    for asset in frametime_domain::OptionalCfgAsset::ALL {
+    for asset in frametime_domain::cs2_config::OptionalCfgAsset::ALL {
         let label = utf16(asset.display_label());
         unsafe {
             SendMessageW(

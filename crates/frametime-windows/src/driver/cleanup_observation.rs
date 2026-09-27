@@ -3,7 +3,7 @@
 use frametime_domain::driver::{AdapterFailure, ExactGpuIdentity};
 
 use crate::PciDeviceClass;
-use frametime_domain::PciDeviceBinding;
+use frametime_domain::binding::PciDeviceBinding;
 
 pub(crate) fn from_bindings(
     bindings: Vec<(PciDeviceClass, PciDeviceBinding)>,

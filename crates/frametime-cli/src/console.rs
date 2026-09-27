@@ -1,6 +1,6 @@
 use std::io::{self, IsTerminal, Write};
 
-use frametime_domain::{OptionalCfgAsset, Step};
+use frametime_domain::{catalog::Step, cs2_config::OptionalCfgAsset};
 
 use crate::{
     cli::{Branch, CleanupMode, Command, FpsStrategyValue, HardwareCommand},

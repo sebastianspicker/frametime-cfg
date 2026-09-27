@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::NetworkAdapterBinding;
+use crate::binding::NetworkAdapterBinding;
 
 pub const NETWORK_STACK_TRANSACTION_STEP: &str = "P1:16";
 
@@ -297,7 +297,7 @@ impl NetworkStackTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{NATIVE_BINDING_SCHEMA_VERSION, PciDeviceBinding};
+    use crate::binding::{NATIVE_BINDING_SCHEMA_VERSION, PciDeviceBinding};
 
     fn transaction() -> NetworkStackTransaction {
         NetworkStackTransaction {

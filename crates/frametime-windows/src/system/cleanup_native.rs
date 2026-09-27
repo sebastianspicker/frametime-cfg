@@ -6,8 +6,11 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use frametime_domain::{
-    CleanupAction, CleanupActionOutcome, CleanupActionResult, CleanupMode, CleanupReport,
-    cleanup_actions, require_phase_one_handoff_ready,
+    cleanup::{
+        CleanupAction, CleanupActionOutcome, CleanupActionResult, CleanupMode, CleanupReport,
+        cleanup_actions,
+    },
+    orchestration::require_phase_one_handoff_ready,
 };
 
 #[cfg(windows)]

@@ -45,7 +45,8 @@ pub(crate) fn capture_nvidia_drs_preparation_receipt() -> Result<ObservationRece
 }
 
 #[cfg(windows)]
-pub(crate) fn nvidia_display_binding() -> Result<frametime_domain::PciDeviceBinding, String> {
+pub(crate) fn nvidia_display_binding() -> Result<frametime_domain::binding::PciDeviceBinding, String>
+{
     let candidates = enumerate_present_status_ok_pci(&WindowsSetupApiEnumerator)
         .map_err(|error| format!("enumerate NVIDIA display adapters: {error}"))?
         .into_iter()

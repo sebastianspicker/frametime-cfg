@@ -13,15 +13,15 @@ pub struct HardwareInfo {
 pub struct VideoPreview {
     pub steam_root: PathBuf,
     pub video_path: PathBuf,
-    pub document_root: frametime_domain::VideoDocumentRoot,
-    pub goal: frametime_domain::VideoGoal,
+    pub document_root: frametime_domain::video::VideoDocumentRoot,
+    pub goal: frametime_domain::video::VideoGoal,
     pub rows: Vec<VideoRow>,
 }
 
 /// Performs trusted discovery and read-only parsing in one host-owned call.
 pub fn preview_video(
     steam_root: &Path,
-    goal: frametime_domain::VideoGoal,
+    goal: frametime_domain::video::VideoGoal,
 ) -> Result<Option<VideoPreview>, String> {
     let Some(path) = discover_video_txt(steam_root)? else {
         return Ok(None);

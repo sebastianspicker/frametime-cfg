@@ -38,9 +38,9 @@ pub(crate) fn restore_hags_entry(
 }
 
 pub(crate) fn hags_pending_verification(
-    entry: &frametime_domain::BackupEntry,
+    entry: &frametime_domain::backup::BackupEntry,
 ) -> Option<VerificationItem> {
-    let frametime_domain::BackupEntry::Hags {
+    let frametime_domain::backup::BackupEntry::Hags {
         adapter_ids,
         effective_verification_pending,
         ..
@@ -85,7 +85,7 @@ pub(crate) fn hags_pending_verification_items(
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let backup: frametime_domain::BackupFile = read_json_trusted(trusted, BACKUP_FILE)
+    let backup: frametime_domain::backup::BackupFile = read_json_trusted(trusted, BACKUP_FILE)
         .map_err(|error| format!("read P1:7 HAGS receipt: {error}"))?;
     Ok(backup
         .entries
