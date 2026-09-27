@@ -1,0 +1,102 @@
+name: GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/assets/**"
+      - "crates/frametime-app/**"
+      - "crates/frametime-cli/**"
+      - "crates/frametime-domain/**"
+      - "crates/frametime-windows/**"
+      - "repo-checks/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "README.md"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    paths:
+      - "site/**"
+      - "docs/assets/**"
+      - "crates/frametime-app/**"
+      - "crates/frametime-cli/**"
+      - "crates/frametime-domain/**"
+      - "crates/frametime-windows/**"
+      - "repo-checks/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "README.md"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Assemble the static demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.96.0
+
+      - name: Verify the published register
+        run: |
+          cargo test -p repo-checks --test site_register --locked
+          cargo test -p frametime-cli --test dry_run_output --locked
+
+      - name: Assemble the Pages content
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s site/index.html
+          test -s site/styles.css
+          test -s site/site.js
+          test -s site/register.js
+          test -s docs/assets/concepts/benchmark-workbench.png
+          test -s docs/assets/concepts/guided-session-flow.png
+          test -s docs/assets/concepts/guided-session.png
+          rm -rf _site
+          cp -R site _site
+          mkdir -p _site/assets/concepts
+          cp docs/assets/concepts/*.png _site/assets/concepts/
+
+      - name: Configure Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+
+      - name: Upload the Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

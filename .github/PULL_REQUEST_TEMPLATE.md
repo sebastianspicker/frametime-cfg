@@ -12,9 +12,8 @@
 
 - [ ] `cargo fmt --all -- --check` passes.
 - [ ] Root Clippy and test gates pass.
-- [ ] `cargo run -p frametime-cli -- dry-run all` was run when workflow behavior changed.
+- [ ] `cargo run -p frametime-cli --locked -- dry-run all` was run when workflow behavior changed.
 - [ ] Windows target check was run for root workspace changes.
-- [ ] Independent `tools/` workspace gates were run when applicable.
 - [ ] Package, protected-root, retained-handle, and publisher-pin invariants remain intact.
 - [ ] State-changing changes include focused Windows evidence or explicitly retain the qualification gap.
 - [ ] Recovery coverage and documentation were updated when behavior changed.

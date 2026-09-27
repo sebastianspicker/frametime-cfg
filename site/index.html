@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>frametime.cfg — see every change first, keep the way back</title>
+  <meta name="description" content="An alpha, native Rust workflow for x64 Windows that previews, applies, verifies, and recovers selected Counter-Strike 2, driver, network, power, and Windows settings. 25 of its 54 steps are advice only." />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#101115" media="(prefers-color-scheme: dark)" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="masthead">
+    <div class="frame masthead__row">
+      <a class="wordmark" href="#top" aria-label="frametime.cfg, top of page">frametime<span>.cfg</span></a>
+      <nav class="masthead__nav" aria-label="Sections">
+        <a href="#register">Register</a>
+        <a href="#way-back">Way back</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#start">Preview</a>
+        <a href="#docs">Docs</a>
+        <a class="masthead__ext" href="https://github.com/sebastianspicker/frametime-cfg">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="opening frame" id="top" aria-labelledby="opening-title">
+      <div class="opening__text">
+        <p class="kicker">Counter-Strike 2 · x64 Windows · native Rust</p>
+        <h1 id="opening-title" class="display">See every change first. Keep the way back.</h1>
+        <p class="lead">
+          <strong>frametime.cfg</strong> inspects, plans, applies, verifies, and
+          recovers selected CS2, graphics-driver, network, power, and Windows
+          settings. It previews the whole sequence before it touches anything,
+          captures what it will change, reads the result back, and restores only
+          to the exact target it captured.
+        </p>
+        <p class="tally">
+          <span class="tally__num">25</span>
+          <span class="tally__text">of its 54 steps are advice only. They
+            leave Windows as it is and say when a change would be justified.</span>
+        </p>
+        <p class="opening__actions">
+          <a class="button" href="#register">Read the register</a>
+          <a class="textlink" href="https://github.com/sebastianspicker/frametime-cfg">Source on GitHub</a>
+        </p>
+      </div>
+
+      <dl class="titleblock" aria-label="Project facts">
+        <div class="titleblock__cell titleblock__cell--status">
+          <dt>Status</dt>
+          <dd><span class="stamp">Alpha</span> Not qualified on Windows hardware</dd>
+        </div>
+        <div class="titleblock__cell">
+          <dt>Runs on</dt>
+          <dd>x64 Windows 10 / 11</dd>
+        </div>
+        <div class="titleblock__cell">
+          <dt>Toolchain</dt>
+          <dd class="mono">Rust 1.96.0</dd>
+        </div>
+        <div class="titleblock__cell">
+          <dt>Entrypoints</dt>
+          <dd class="mono">frametime.exe<br />frametime-gui.exe</dd>
+        </div>
+        <div class="titleblock__cell">
+          <dt>Authority</dt>
+          <dd>Signed package only; source builds preview</dd>
+        </div>
+        <div class="titleblock__cell">
+          <dt>License</dt>
+          <dd>MIT</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="chapter" id="register" aria-labelledby="register-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">01</p>
+          <div>
+            <h2 id="register-title" class="heading">The register</h2>
+            <p class="chapter__lead">
+              Fifty-four steps across three boots. This is the real
+              <code>dry-run all</code> preview from a source build: pick a GPU
+              branch, and each row says what a live run would do. Open a row for
+              the exact preview line.
+            </p>
+          </div>
+        </header>
+
+        <div class="register" data-register hidden>
+          <div class="register__controls">
+            <fieldset class="choice">
+              <legend>GPU branch</legend>
+              <div class="choice__options" data-branches></div>
+            </fieldset>
+            <fieldset class="choice">
+              <legend>Show</legend>
+              <div class="choice__options" data-verdicts></div>
+            </fieldset>
+          </div>
+          <p class="register__summary" data-summary aria-live="polite"></p>
+          <div class="register__list" data-list></div>
+          <p class="register__source" data-source></p>
+        </div>
+
+        <noscript>
+          <p class="note">The interactive register needs JavaScript. Run
+            <code>cargo run -p frametime-cli --locked -- dry-run all</code> for
+            the same preview.</p>
+        </noscript>
+      </div>
+    </section>
+
+    <section class="chapter" id="way-back" aria-labelledby="way-back-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">02</p>
+          <div>
+            <h2 id="way-back-title" class="heading">Every change carries its way back</h2>
+            <p class="chapter__lead">
+              Each supported change follows the same four clauses. If one
+              fails, the change does not happen or is not reported as done.
+            </p>
+          </div>
+        </header>
+
+        <ol class="clauses">
+          <li>
+            <h3>Authenticate</h3>
+            <p>State-changing commands run only from an authenticated, signed
+              package. A source build, a copied executable, or an unsigned
+              package gets the preview and nothing else.</p>
+          </li>
+          <li>
+            <h3>Capture</h3>
+            <p>Supported state is recorded under the fixed protected root
+              <code>C:\FRAMETIME_CFG</code> before anything is written, with
+              audit and recovery evidence.</p>
+          </li>
+          <li>
+            <h3>Apply, then read back</h3>
+            <p>After a write, the target is read back. Success is reported only
+              when the readback matches.</p>
+          </li>
+          <li>
+            <h3>Restore to the same target</h3>
+            <p>Restore checks the exact target identity again. Incoherent state
+              is refused, not reconstructed on a best guess.</p>
+          </li>
+        </ol>
+
+        <h3 class="subheading">Three boots, one sequence</h3>
+        <ol class="phases">
+          <li class="phases__item">
+            <p class="phases__label"><span class="mono">Phase 1</span> Normal boot</p>
+            <p class="phases__count"><span class="mono">38</span> steps</p>
+            <p>Checks, guidance, the baseline benchmark, and preparation. Ends by
+              publishing the exact payload into a protected runtime and arming
+              Safe Mode.</p>
+          </li>
+          <li class="phases__item">
+            <p class="phases__label"><span class="mono">Phase 2</span> Safe Mode</p>
+            <p class="phases__count"><span class="mono">3</span> steps</p>
+            <p>Clean GPU-driver removal, then clears Safe Boot and hands off to
+              the same user's next normal boot.</p>
+          </li>
+          <li class="phases__item">
+            <p class="phases__label"><span class="mono">Phase 3</span> Normal boot</p>
+            <p class="phases__count"><span class="mono">13</span> steps</p>
+            <p>Driver install, profiles and guidance, the final checklist, and
+              the final benchmark with the FPS strategy.</p>
+          </li>
+        </ol>
+        <p class="note">
+          A pending handoff runs only through the selected authenticated
+          runtime. Read <a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/recovery.md">recovery</a>
+          before exercising a live package, and keep independent backups.
+        </p>
+      </div>
+    </section>
+
+    <section class="chapter" id="evidence" aria-labelledby="evidence-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">03</p>
+          <div>
+            <h2 id="evidence-title" class="heading">A cap needs five runs behind it</h2>
+            <p class="chapter__lead">
+              Import VProf output from CS2. A nonzero FPS cap is accepted only
+              with at least five complete runs, and only if every unrounded P1
+              value reaches it. For a VRR ceiling, the cap is refresh rate minus
+              margin.
+            </p>
+          </div>
+        </header>
+
+        <div class="evidence">
+          <figure class="evidence__table">
+            <table>
+              <caption>
+                <span class="mono">240 Hz − 3 Hz = 237 FPS</span>
+                <span class="evidence__verdict">Supported: 5 of 5 runs</span>
+              </caption>
+              <thead>
+                <tr><th scope="col">Run</th><th scope="col">Avg FPS</th><th scope="col">P1 FPS</th><th scope="col">P1 ≥ 237</th></tr>
+              </thead>
+              <tbody>
+                <tr><th scope="row">01</th><td>356.0</td><td>248.0</td><td>Yes</td></tr>
+                <tr><th scope="row">02</th><td>348.0</td><td>244.0</td><td>Yes</td></tr>
+                <tr><th scope="row">03</th><td>362.0</td><td>251.0</td><td>Yes</td></tr>
+                <tr><th scope="row">04</th><td>351.0</td><td>246.0</td><td>Yes</td></tr>
+                <tr><th scope="row">05</th><td>358.0</td><td>249.0</td><td>Yes</td></tr>
+              </tbody>
+            </table>
+            <figcaption>Illustrative data from the GUI design reference, not a measurement.</figcaption>
+          </figure>
+          <div class="evidence__rules">
+            <p>One weak run is enough to refuse the cap. The evaluation shows
+              each run's numbers, including the ones that fail.</p>
+            <p>Raw mode, the default, stays uncapped. The tool does not detect
+              or enable VRR, and the refresh rate starts empty instead of
+              guessing your monitor.</p>
+            <p>Saving a cap writes state and benchmark history, then reads both
+              back. It does not deploy CS2 configuration, and it does not predict
+              a performance gain.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="desktop" aria-labelledby="desktop-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">04</p>
+          <div>
+            <h2 id="desktop-title" class="heading">The desktop app</h2>
+            <p class="chapter__lead">
+              <code>frametime-gui.exe</code> runs the same application layer as
+              the terminal, built from real Win32 controls in a Windows
+              98-inspired skin. These are design references with illustrative
+              data, not screenshots of an installed build.
+            </p>
+          </div>
+        </header>
+
+        <div class="plates">
+          <figure class="plate plate--wide">
+            <button type="button" class="plate__zoom" data-full="assets/concepts/guided-session-flow.png" aria-label="Enlarge: the four-stage FPS strategy flow">
+              <img src="assets/concepts/guided-session-flow.png" width="1536" height="1024" alt="Four screens of the FPS strategy flow: Import, Evaluate, Review, and Save." loading="lazy" decoding="async" />
+            </button>
+            <figcaption>
+              <span class="plate__tag">Reference</span>
+              <strong>Import → Evaluate → Review → Save.</strong> The approved
+              implementation reference. Five runs, a 240 Hz refresh, and a 3 Hz
+              margin give a 237 FPS ceiling that every P1 value supports.
+            </figcaption>
+          </figure>
+          <figure class="plate">
+            <button type="button" class="plate__zoom" data-full="assets/concepts/guided-session.png" aria-label="Enlarge: concept A, a guided session">
+              <img src="assets/concepts/guided-session.png" width="1536" height="1024" alt="Concept A: a guided session with a run table and strategy panel." loading="lazy" decoding="async" />
+            </button>
+            <figcaption>
+              <span class="plate__tag">Concept A</span>
+              <strong>A guided session.</strong> Keeps the evidence rule and the
+              save boundary in the path, without asking anyone to read a log.
+            </figcaption>
+          </figure>
+          <figure class="plate">
+            <button type="button" class="plate__zoom" data-full="assets/concepts/benchmark-workbench.png" aria-label="Enlarge: concept B, a benchmark workbench">
+              <img src="assets/concepts/benchmark-workbench.png" width="1536" height="1024" alt="Concept B: a dense benchmark workbench with a P1 plot and result inspector." loading="lazy" decoding="async" />
+            </button>
+            <figcaption>
+              <span class="plate__tag">Concept B</span>
+              <strong>A benchmark workbench.</strong> Every run, a P1 plot, and
+              the verdict visible at once, for repeated analysis.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="chapter" id="start" aria-labelledby="start-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">05</p>
+          <div>
+            <h2 id="start-title" class="heading">Run the preview yourself</h2>
+            <p class="chapter__lead">
+              From the repository root. A source checkout builds, tests, and
+              runs the strict preview; it has no authority to change anything.
+            </p>
+          </div>
+        </header>
+
+        <div class="terminal">
+          <div class="terminal__bar">
+            <span class="mono">Rust 1.96.0 · repository root</span>
+            <button type="button" class="copy" data-copy="commands">Copy</button>
+          </div>
+          <pre id="commands" tabindex="0" aria-label="Build, test, and preview commands"><code>cargo build --workspace --locked
+cargo test --workspace --all-targets --all-features --locked
+cargo run -p frametime-cli --locked -- dry-run all</code></pre>
+        </div>
+
+        <dl class="branches">
+          <div><dt class="mono">dry-run 1</dt><dd>NVIDIA RTX 5000</dd></div>
+          <div><dt class="mono">dry-run 2</dt><dd>Other NVIDIA</dd></div>
+          <div><dt class="mono">dry-run 3</dt><dd>AMD Radeon</dd></div>
+          <div><dt class="mono">dry-run 4</dt><dd>Intel Arc</dd></div>
+          <div><dt class="mono">dry-run all</dt><dd>All four branches</dd></div>
+        </dl>
+        <p class="note">No persistence, no elevation, no Windows mutation.</p>
+      </div>
+    </section>
+
+    <section class="chapter chapter--limits" id="limits" aria-labelledby="limits-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">06</p>
+          <div>
+            <h2 id="limits-title" class="heading">What this does not claim</h2>
+          </div>
+        </header>
+        <ul class="limits">
+          <li>Source tests prove the Rust contracts and the fail-closed
+            behavior. They do not qualify UAC, Safe Mode, drivers, NVAPI,
+            Windows APIs, hardware, or a complete reboot sequence.</li>
+          <li>No universal FPS, frame-time, latency, image-quality, or
+            stability gain. Settings depend on the CS2 build, Windows version,
+            driver, hardware, display, and network.</li>
+          <li>Recovery covers only state the workflow captured and can bind to
+            the same target. It is not a system image or a general rollback
+            tool.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="chapter" id="docs" aria-labelledby="docs-title">
+      <div class="frame">
+        <header class="chapter__head">
+          <p class="chapter__no" aria-hidden="true">07</p>
+          <div>
+            <h2 id="docs-title" class="heading">Documentation</h2>
+            <p class="chapter__lead">Each document is the single source for its subject.</p>
+          </div>
+        </header>
+        <ol class="refs">
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/operations.md">Operations</a><span>Commands, live preconditions, and the three reboot phases</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/recovery.md">Recovery</a><span>What can be restored, and how to handle an incomplete phase</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/compatibility.md">Compatibility</a><span>What host tests prove, and what still needs Windows</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/package-security.md">Package security</a><span>The trust and retained-identity model</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/CONFIGURATION.md">Configuration</a><span>The TOML schema and its authority</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/architecture.md">Architecture</a><span>Component boundaries and runtime flow</span></li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer class="colophon">
+    <div class="frame colophon__row">
+      <p><span class="wordmark wordmark--small">frametime<span>.cfg</span></span> Released under the MIT License.</p>
+      <p><a href="https://github.com/sebastianspicker/frametime-cfg">github.com/sebastianspicker/frametime-cfg</a></p>
+    </div>
+  </footer>
+
+  <dialog class="lightbox" id="lightbox" aria-label="Enlarged design reference">
+    <form method="dialog" class="lightbox__bar">
+      <p class="lightbox__caption" data-caption></p>
+      <button type="submit" class="lightbox__close">Close</button>
+    </form>
+    <img src="" alt="" />
+  </dialog>
+
+  <script src="register.js"></script>
+  <script src="site.js"></script>
+</body>
+</html>

@@ -43,10 +43,8 @@ body:
         - Native GUI
         - Package authentication or trusted runtime
         - Windows adapter or reboot handoff
-        - Hardware diagnostics
-        - Driver preparation
+        - Root hardware diagnostics (independent)
         - Packaged CS2 configuration
-        - Northclock or Driver Foundry tool workspace
         - CI or repository maintenance
         - Documentation
         - Other

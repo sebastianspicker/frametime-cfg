@@ -7,6 +7,13 @@ dist/
 *.profdata
 /tools/northclock/fuzz/
 
+# Local scratch, generated previews, and ad-hoc analysis
+/output/
+/scratch/
+/_site/
+/.jekyll-cache/
+/.jekyll-metadata
+
 # Test and analysis output
 /.codacy/
 /coverage/
@@ -18,6 +25,11 @@ blob-report/
 .coverage
 .coverage.*
 *.coverage
+*.lcov
+lcov.info
+coverage*.json
+coverage*.xml
+cobertura.xml
 *.sarif
 junit*.xml
 test-results-*.xml
@@ -34,6 +46,7 @@ test-results-*.xml
 /benchmark_history.json
 /latency_history.json
 *.log
+*.log.*
 *.etl
 *.evtx
 *.wer
@@ -48,6 +61,8 @@ tmp-winstyle-check*
 !.env.*.example
 !.env.sample
 !.env.template
+.envrc
+.direnv/
 *.local.json
 *.local.yaml
 *.local.yml
@@ -57,6 +72,10 @@ tmp-winstyle-check*
 *.personal.yml
 *.pem
 *.key
+*.cer
+*.crt
+*.csr
+*.der
 *.p12
 *.pfx
 *.jks
@@ -69,6 +88,8 @@ tmp-winstyle-check*
 credentials.json
 secrets.json
 service-account*.json
+/.cargo/credentials
+/.cargo/credentials.toml
 
 # Editors and local tooling
 /.mcp.json
@@ -88,20 +109,33 @@ service-account*.json
 .agent/
 .agents/
 .ai/
+.aider*
+.augment/
 .claude/
 .codex/
 .codegraph/
+.continue/
 .cursor/
+.gemini/
 .kilo/
 .repowise/
+.opencode/
 .serena/
+.windsurf/
+.zed/
 AGENT.md
 AGENTS.md
 agent.md
 agents.md
+AGENT.local.md
+AGENTS.local.md
+AGENTS.override.md
 CLAUDE.md
 CODEX.md
 GEMINI.md
+CLAUDE.local.md
+CODEX.local.md
+GEMINI.local.md
 .cursorrules
 copilot-instructions.md
 agent-context*
@@ -121,6 +155,8 @@ AUDIT_LEDGER.md
 IMPLEMENTATION_LEDGER.md
 PROGRESS_LEDGER.md
 TASK_LEDGER.md
+*-ledger.md
+*_ledger.md
 /notes.md
 /plan.md
 /progress.md
@@ -132,6 +168,10 @@ TASK_LEDGER.md
 /.github/copilot-instructions.md
 /.github/instructions/
 /.github/prompts/
+/agent-prompts/
+/ai-prompts/
+/prompt/
+/prompts/
 /conversation-exports/
 /evaluation-results/
 /prompt-drafts/

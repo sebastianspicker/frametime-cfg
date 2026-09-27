@@ -1,27 +1,20 @@
-# Embedded helpers (local only)
+# Reserved embedded-helper directory
 
-Optional binaries used for 7z extract/SFX, package tooling, and try-sign probes. **Not checked into git.** The install path falls back to pure Rust zip when helpers are missing.
+> **Archived and unsupported.** This directory is preserved with the Driver
+> Foundry source, history, Cargo manifests, lockfiles, and
+> [security policy](../../SECURITY.md). It is not an active helper or packaging
+> surface.
 
-## Expected layout after you materialize
+Only this README is tracked. Other files below `data/embedded/` are ignored and
+must not be committed.
 
-```
-data/embedded/
-  README.md          # this file
-  7zr.exe            # 7-Zip standalone
-  7zSD.sfx           # SFX stub
-  installer.exe      # optional package tooling
-  SetupWrapper.exe
-  packages.xml
-  signing.zip        # or expanded signing/
-  signing/
-    Inf2Cat.exe
-    signtool.exe
-    *.dll
-    WindowsProtectedFiles.xml
-```
+The current application has no supported embedded-helper workflow. CLI
+materialization, external archive helpers, 7z/SFX creation, signing helpers, and
+helper execution all fail closed because no authenticated release manifest or
+signer policy exists. ZIP extraction is implemented in Rust and needs no helper.
 
-## Where to get them
-
-Supply `7zr.exe` from an authorized local 7-Zip distribution and obtain Inf2Cat or signtool from the Windows SDK. Do not commit proprietary closed-product dumps.
-
-Zip-only install workflows need none of this.
+Future helper support must define a fixed inventory, a provenance and license
+record, cryptographic identity, signer policy, an immutable materialization
+path, and focused Windows verification before any executable is accepted. Do not
+use PATH-resolved tools, or copy proprietary closed-product dumps, Windows SDK
+binaries, certificates, or private keys into this directory.

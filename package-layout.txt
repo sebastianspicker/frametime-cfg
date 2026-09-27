@@ -22,6 +22,8 @@ assets/cfgs/net_unstable.cfg
 assets/cfgs/optimization.cfg.template
 assets/cfgs/valve-latency-targets.json
 docs/native/compatibility.md
+docs/native/driver-lifecycle.md
+docs/native/driver-qualification.md
 docs/native/gui.md
 docs/native/integrations.md
 docs/native/nvidia-drs-settings.md
