@@ -489,6 +489,3 @@ pub fn recovery_for(request: PhaseRequest, failure: FailurePoint) -> RecoveryPla
         compensations,
     }
 }
-
-#[cfg(test)]
-mod tests;

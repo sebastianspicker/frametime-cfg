@@ -10,7 +10,7 @@ use crate::{
     console::{install_cancellation_handler, interactive_menu},
     error::AppError,
     package_auth::run_authentication_smoke,
-    render,
+    render, site_register,
 };
 
 pub(crate) fn main() -> ExitCode {
@@ -39,6 +39,7 @@ fn run(mut cli: Cli) -> Result<(), AppError> {
         Command::DryRun { branch } => {
             present(frametime_app::run_dry(map_branch(branch)), render::dry_run)
         }
+        Command::SiteRegister => site_register::print().map_err(AppError::Failed),
         Command::SmokeTest => {
             println!("SMOKE TEST OK: frametime");
             Ok(())
@@ -345,6 +346,7 @@ fn map_live_command(value: Command) -> frametime_app::Command {
         | Command::FinalBenchmark { .. }
         | Command::Driver { .. }
         | Command::Hardware { .. }
+        | Command::SiteRegister
         | Command::SmokeTest
         | Command::PackageAuthSmoke
         | Command::Exit => unreachable!("handled before the live command mapping"),

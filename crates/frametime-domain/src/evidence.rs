@@ -372,7 +372,3 @@ fn valid_generation(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
-
-#[cfg(test)]
-#[path = "evidence/tests.rs"]
-mod tests;

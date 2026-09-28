@@ -475,20 +475,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "repo-checks"
-version = "3.0.0-alpha.1"
-dependencies = [
- "frametime-app",
- "frametime-domain",
- "proc-macro2",
- "quote",
- "regex",
- "serde_json",
- "syn 2.0.119",
- "toml",
-]
-
-[[package]]
 name = "rustix"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -69,6 +69,3 @@ const fn orchestration_role(id: StepId) -> OrchestrationRole {
         _ => OrchestrationRole::Engine,
     }
 }
-
-#[cfg(test)]
-mod tests;

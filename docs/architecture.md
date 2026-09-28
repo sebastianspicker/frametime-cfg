@@ -2,20 +2,16 @@
 
 ## Scope
 
-The repository is one five-crate application plus two archived reference
-workspaces. The application turns authenticated configuration and user commands
-into typed plans, captures recoverable state, performs the supported Windows
-operations, and verifies the results. Root hardware diagnostics are independent
-read-only observations, not part of profile mutation or the archived tools.
+The repository is one five-crate application. It turns authenticated
+configuration and user commands into typed plans, captures recoverable state,
+performs the supported Windows operations, and verifies the results. Root
+hardware diagnostics are independent read-only observations, not part of
+profile mutation.
 
-Only the five-crate root workspace is actively supported. Northclock and Driver
-Foundry are archived: their READMEs describe the retained source and its limits,
-and they are excluded from CI, dependency automation, packaging, and the
-contributor workflow. The root profile policy covers five settings. Production
-signing stays with the vendor; lab signing is isolated, export-only, and
-unqualified. The [NVIDIA driver lifecycle](native/driver-lifecycle.md) defines
-the versioned transaction, component catalog, DRS merge policy, and
-qualification boundary.
+The root profile policy covers five settings. Production signing stays with the
+vendor; lab signing is isolated, export-only, and unqualified. The
+[NVIDIA driver lifecycle](native/driver-lifecycle.md) defines the versioned
+transaction, component catalog, DRS merge policy, and qualification boundary.
 
 ## System context
 
@@ -57,15 +53,9 @@ Public surfaces are deliberately narrow:
   `PRODUCT_VERSION`, nothing else.
 - `frametime-windows` publishes one explicit list in `src/lib.rs`, identical on
   every target. Off Windows the native operations are fail-closed stubs, so
-  the app, frontends, and source preview build and test on any host. Because
-  of those stubs, host builds allow dead code in this crate, and the
-  Windows-target Clippy run is the authority for it.
-
-The unpublished [`repo-checks`](../repo-checks) workspace member enforces the
-dependency direction (including rejecting reverse edges), domain purity, the
-frontend-to-app boundary, the native package surface, a 600-line file cap, and
-exact-clone detection. It runs as part of `cargo test --workspace` on every
-platform, including the Windows gate.
+  the app, frontends, and source preview build on any host. Because of those
+  stubs, host builds allow dead code in this crate, and the Windows-target
+  Clippy run is the authority for it.
 
 ## Primary runtime flow
 
@@ -159,12 +149,10 @@ guessing the next action.
 
 ## Build and deployment boundaries
 
-The root workspace has its own lockfile and validation gates. The archived
-workspaces keep their separate Cargo manifests and lockfiles as historical
-records, not active validation lanes. Root release packaging consumes prebuilt
-Windows CLI/GUI binaries and produces a portable directory and ZIP; it does not
-package `repo-checks` or either archived workspace. CI assembles only the structurally checked
-unsigned lane and never exercises authenticated signing.
+The root workspace has its own lockfile and validation gates. Release packaging
+consumes prebuilt Windows CLI/GUI binaries and produces a portable directory and
+ZIP. CI assembles only the structurally checked unsigned lane and never
+exercises authenticated signing.
 
 ## Invariants and non-goals
 
@@ -175,8 +163,7 @@ unsigned lane and never exercises authenticated signing.
   authorization.
 - Unsupported, unavailable, or unverified hardware behavior is reported as
   such, never as success.
-- Source tests, mocks, cross-compilation, and protocol validation are not
+- Host builds, linting, cross-compilation, and protocol inspection are not
   described as live Windows or hardware qualification.
 - Universal performance gains and a general-purpose system rollback facility
-  are not current capabilities. Archived Northclock and Driver Foundry content
-  is not an active product claim.
+  are not current capabilities.

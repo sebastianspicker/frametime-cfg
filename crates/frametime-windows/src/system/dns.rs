@@ -12,7 +12,7 @@ pub(crate) struct DnsBinding {
     pub(crate) physical_address: Vec<u8>,
 }
 
-/// Narrow seam for host tests. Production uses only IP Helper below.
+/// Narrow seam for deterministic adapter observations. Production uses only IP Helper below.
 pub(crate) trait DnsAdapter {
     fn discover_active_physical(&self) -> Result<Vec<DnsBinding>, String>;
     fn read_ipv4_servers(&self, binding: &DnsBinding) -> Result<Vec<String>, String>;

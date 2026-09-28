@@ -64,6 +64,7 @@ set "package_mode=release"
 
 :package_start
 if not exist "%source%\package-layout.txt" exit /b 2
+echo [package] Validating package-layout.txt.
 call :validate_layout || exit /b 1
 if /i "%package_mode%"=="release" (
     if "%verify_only%"=="1" (
@@ -74,6 +75,7 @@ if /i "%package_mode%"=="release" (
 )
 if "%verify_only%"=="1" goto verify_existing
 
+echo [package] Checking compiled entrypoints.
 if not exist "%source%\Cargo.toml" exit /b 2
 if not exist "%source%\target\x86_64-pc-windows-msvc\release\frametime.exe" exit /b 2
 if not exist "%source%\target\x86_64-pc-windows-msvc\release\frametime-gui.exe" exit /b 2
@@ -81,8 +83,10 @@ if exist "%staging%" rmdir /s /q "%staging%" || exit /b 1
 if not exist "%dist%" mkdir "%dist%" || exit /b 1
 mkdir "%staging%" || exit /b 1
 
+echo [package] Copying the declared payload.
 for /f "usebackq delims=" %%F in ("%source%\package-layout.txt") do call :copy_layout_entry "%%F" || exit /b 1
 
+echo [package] Validating the staged payload.
 call :validate_payload "%staging%" || exit /b 1
 call :scan_payload "%staging%" || exit /b 1
 if /i "%package_mode%"=="release" (
@@ -90,14 +94,17 @@ if /i "%package_mode%"=="release" (
     call :sign_file "%staging%\frametime-gui.exe" || exit /b 1
 )
 
+echo [package] Finalizing the package tree.
 if exist "%target%" rmdir /s /q "%target%" || exit /b 1
 move "%staging%" "%target%" >nul || exit /b 1
+echo [package] Writing the package manifest.
 call :write_manifest "%target%" "%package_manifest%" || exit /b 1
 if /i "%package_mode%"=="release" call :make_and_sign_catalog "%target%" "%catalog%" || exit /b 1
 call :validate_tree "%target%" || exit /b 1
 call :scan_payload "%target%" || exit /b 1
 if /i "%package_mode%"=="release" call :verify_release_authentication "%target%" || exit /b 1
 
+echo [package] Creating transport artifacts.
 if exist "%zip%" del /f /q "%zip%" || exit /b 1
 pushd "%dist%" || exit /b 1
 tar.exe -a -c -f "%zip%" "%package_name%" >nul 2>&1
@@ -107,6 +114,7 @@ if not "!tar_error!"=="0" exit /b 1
 call :hash_file "%zip%" || exit /b 1
 >"%checksum%" echo !hash!  %archive_name%.zip
 call :write_transport_manifest "%transport_manifest%" || exit /b 1
+echo [package] Verifying package artifacts.
 call :verify_artifacts || exit /b 1
 call :verify_zip || exit /b 1
 echo %package_mode% package assembled at %target%
@@ -116,6 +124,7 @@ echo ZIP SHA-256: %checksum%
 exit /b 0
 
 :verify_existing
+echo [package] Verifying existing package artifacts.
 if not exist "%target%" exit /b 2
 if not exist "%zip%" exit /b 2
 if not exist "%checksum%" exit /b 2
@@ -140,12 +149,21 @@ echo Existing %package_mode% package verified at %target%
 exit /b 0
 
 :copy_one
-if not exist "%source%\%~1" (
+set "copy_source=%~1"
+set "copy_destination=%~2"
+set "copy_source=!copy_source:/=\!"
+set "copy_destination=!copy_destination:/=\!"
+if not exist "%source%\!copy_source!" (
     echo Missing required release input: %~1 1>&2
     exit /b 1
 )
-for %%D in ("%staging%\%~dp2") do if not exist "%%~fD" mkdir "%%~fD" || exit /b 1
-copy /b /y "%source%\%~1" "%staging%\%~2" >nul || exit /b 1
+for %%D in ("%staging%\!copy_destination!") do set "copy_destination_dir=%%~dpD"
+if not exist "!copy_destination_dir!" (
+    mkdir "!copy_destination_dir!"
+    if errorlevel 1 exit /b 1
+)
+copy /b /y "%source%\!copy_source!" "%staging%\!copy_destination!" >nul
+if errorlevel 1 exit /b 1
 exit /b 0
 
 :copy_layout_entry
@@ -234,8 +252,8 @@ exit /b !errorlevel!
 :is_allowed
 set "candidate=%~1"
 set "candidate=!candidate:\=/!"
-findstr /l /i /x /c:"!candidate!" "%source%\package-layout.txt" >nul
-exit /b !errorlevel!
+for /f "usebackq delims=" %%F in ("%source%\package-layout.txt") do if /i "%%F"=="!candidate!" exit /b 0
+exit /b 1
 
 :scan_payload
 for /r "%~1" %%F in (*) do call :scan_file "%%~fF" || exit /b 1
@@ -420,6 +438,14 @@ if exist "%zip_temp%" rmdir /s /q "%zip_temp%" >nul 2>&1
 if exist "%zip_temp%" set "zip_error=1"
 if not "!zip_error!"=="0" exit /b 1
 exit /b 0
+
+:hash_file
+set "hash="
+if not exist "%~1" exit /b 1
+for /f "skip=1 tokens=* delims=" %%H in ('certutil -hashfile "%~1" SHA256 2^>nul') do if not defined hash set "hash=%%H"
+set "hash=!hash: =!"
+call :valid_sha256 "!hash!"
+exit /b !errorlevel!
 
 :require_release_inputs
 call :require_release_verification_inputs || exit /b 1

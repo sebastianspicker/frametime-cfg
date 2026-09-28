@@ -31,10 +31,3 @@ below is the focused source of truth for one subject.
 - [Compatibility and qualification](native/compatibility.md) — the evidence
   table.
 - [Evidence policy](research/README.md)
-
-## Archived reference workspaces
-
-[Northclock](../tools/northclock/README.md) and
-[Driver Foundry](../tools/driver-foundry/README.md) are archived and
-unsupported. Their READMEs describe the retained source, the security-reporting
-route, and the limits of the preserved work.

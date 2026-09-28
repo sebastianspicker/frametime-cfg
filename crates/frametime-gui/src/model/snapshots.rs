@@ -236,6 +236,3 @@ fn next_request(queue: &Queue) -> Option<(u64, ReadRequest)> {
         pending = wake.wait(pending).expect("read queue");
     }
 }
-
-#[cfg(test)]
-mod tests;

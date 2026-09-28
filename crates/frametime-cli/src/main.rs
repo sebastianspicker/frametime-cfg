@@ -4,6 +4,7 @@ mod console;
 mod error;
 mod package_auth;
 mod render;
+mod site_register;
 
 fn main() -> std::process::ExitCode {
     #[cfg(windows)]

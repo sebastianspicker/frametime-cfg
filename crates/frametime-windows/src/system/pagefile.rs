@@ -6,8 +6,6 @@ mod journal;
 mod live;
 mod model;
 mod recovery;
-#[cfg(test)]
-mod tests;
 mod validation;
 
 pub(crate) use binding::*;

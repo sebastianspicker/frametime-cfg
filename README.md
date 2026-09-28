@@ -11,11 +11,10 @@ network, power, and Windows settings. It is built for x64 Windows machines
 managed by an administrator who wants to see the change, understand it, and
 have a way back.
 
-> **Status: alpha, and not yet qualified on Windows hardware.** Source tests
-> prove the Rust contracts and the fail-closed behavior; they do not qualify
-> UAC, Safe Mode, drivers, NVAPI, Windows APIs, hardware, or a complete reboot
-> sequence. The project makes no claim of universal FPS, frame-time, latency,
-> image-quality, or stability gains.
+> **Status: alpha, and not yet qualified on Windows hardware.** Host builds,
+> linting, and cross-compilation do not qualify UAC, Safe Mode, drivers, NVAPI,
+> Windows APIs, hardware, or a complete reboot sequence. The project makes no
+> claim of universal FPS, frame-time, latency, image-quality, or stability gains.
 
 ## What it does
 
@@ -68,13 +67,8 @@ boundary, or view the [live demo](https://sebastianspicker.github.io/frametime-c
 | `crates/frametime-app` | Shared command and use-case orchestration | Root workspace library |
 | `crates/frametime-cli` | `frametime.exe` terminal interface | Root workspace binary |
 | `crates/frametime-gui` | `frametime-gui.exe` desktop interface | Root workspace binary |
-| `repo-checks` | Repository policy tests (boundaries, package surface, file size, clones) | Root workspace member, never packaged |
-| [`tools/northclock`](tools/northclock/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
-| [`tools/driver-foundry`](tools/driver-foundry/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
 
-The five application crates and `repo-checks` form the root workspace. Northclock and Driver
-Foundry are not dependencies of it and are excluded from active CI, Dependabot,
-issue routing, packaging, and contributor workflows. Root hardware diagnostics
+These five application crates form the root workspace. Root hardware diagnostics
 are independent read-only observations, not part of the profile policy.
 
 ## Prerequisites
@@ -88,12 +82,11 @@ are independent read-only observations, not part of the profile policy.
 
 ## Build and preview from source
 
-Run these from the repository root. A source checkout can build, test, and run
-the strict preview, but it has no package authority.
+Run these from the repository root. A source checkout can build and run the
+strict preview, but it has no package authority.
 
 ```sh
 cargo build --workspace --locked
-cargo test --workspace --all-targets --all-features --locked
 cargo run -p frametime-cli --locked -- dry-run all
 ```
 
@@ -101,9 +94,9 @@ cargo run -p frametime-cli --locked -- dry-run all
 NVIDIA, `3` for AMD, `4` for Intel Arc, or `all`. It performs no persistence,
 elevation, or Windows mutation.
 
-The full contributor gate — formatting, Clippy, architecture checks, and the
-Windows target check — is in [CONTRIBUTING.md](CONTRIBUTING.md). Authenticated
-and unsigned package commands are in
+The full contributor gate — formatting, Clippy, preview, and the Windows target
+check — is in [CONTRIBUTING.md](CONTRIBUTING.md). Authenticated and unsigned
+package commands are in
 [release packaging](docs/DEPLOYMENT.md).
 
 ## Configuration and state

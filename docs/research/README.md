@@ -12,7 +12,7 @@ asset or policy here is a universal performance profile.
 - Keep primary sources with any proposed setting change, and record uncertainty
   and counterexamples.
 - Use repeated measurements on the target system before making a performance
-  claim; source structure and host tests are not hardware evidence.
+  claim; source structure and host checks are not hardware evidence.
 - Preserve image quality, accessibility, stability, and anti-cheat constraints.
 
 ## CFG assets

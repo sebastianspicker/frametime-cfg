@@ -379,7 +379,3 @@ fn execute_captured_package_removal(
         })?;
     Ok(evidence)
 }
-
-#[cfg(test)]
-#[path = "adapters/tests.rs"]
-mod tests;

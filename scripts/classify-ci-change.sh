@@ -112,8 +112,8 @@ for path in "${changed_paths[@]}"; do
     # Static documentation media and the GitHub Pages demo carry no Rust code
     # and cannot change the native gate.
     docs/assets/*) continue ;;
-    # The published register is executable-data derived from Rust catalog and
-    # planner behavior. Its repo-check contract must run before it can merge.
+    # The Pages build regenerates this executable data from the Rust catalog
+    # and planner behavior, then compares it with the checked-in copy.
     site/register.js) full ;;
     site/*) continue ;;
     .github/ISSUE_TEMPLATE/*.md | .github/ISSUE_TEMPLATE/*.yml | .github/ISSUE_TEMPLATE/*.yaml) continue ;;

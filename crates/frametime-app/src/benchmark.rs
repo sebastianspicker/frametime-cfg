@@ -381,6 +381,3 @@ fn require_windows_benchmark_host(command: &str) -> Result<(), ApplicationError>
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

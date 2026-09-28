@@ -1,8 +1,6 @@
 # NVIDIA driver lifecycle
 
-The root five-crate application owns the supported NVIDIA lifecycle. Archived
-Northclock and Driver Foundry code is not loaded, invoked, or used as a mutable
-catalog at runtime.
+The root five-crate application owns the supported NVIDIA lifecycle.
 
 Frametime uses NVIDIA's public NVAPI ABI. It does not import a hidden-setting
 database, decryption material, or an arbitrary setting editor.
@@ -147,6 +145,6 @@ certificate store. Private keys stay external. The result is marked unqualified
 and cannot be installed by Frametime. The command never changes BCD,
 test-signing, or Secure Boot.
 
-Source tests and cross-compilation are not live driver qualification. Use the
+Host builds and cross-compilation are not live driver qualification. Use the
 [qualification harness](driver-qualification.md) on a disposable Windows system
 and retain sanitized evidence before making release claims.

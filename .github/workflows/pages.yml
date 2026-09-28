@@ -10,7 +10,6 @@ on:
       - "crates/frametime-cli/**"
       - "crates/frametime-domain/**"
       - "crates/frametime-windows/**"
-      - "repo-checks/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "rust-toolchain.toml"
@@ -24,7 +23,6 @@ on:
       - "crates/frametime-cli/**"
       - "crates/frametime-domain/**"
       - "crates/frametime-windows/**"
-      - "repo-checks/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "rust-toolchain.toml"
@@ -41,22 +39,23 @@ concurrency:
 
 jobs:
   build:
-    name: Assemble the static demo
+    name: Build the static demo
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
         with:
           toolchain: 1.96.0
 
-      - name: Verify the published register
+      - name: Generate and verify the published register
+        shell: bash
         run: |
-          cargo test -p repo-checks --test site_register --locked
-          cargo test -p frametime-cli --test dry_run_output --locked
+          set -euo pipefail
+          cargo run --quiet -p frametime-cli --locked -- site-register > generated-register.js
+          cmp generated-register.js site/register.js
 
       - name: Assemble the Pages content
         shell: bash
@@ -71,6 +70,7 @@ jobs:
           test -s docs/assets/concepts/guided-session.png
           rm -rf _site
           cp -R site _site
+          cp generated-register.js _site/register.js
           mkdir -p _site/assets/concepts
           cp docs/assets/concepts/*.png _site/assets/concepts/
 

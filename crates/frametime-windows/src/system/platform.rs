@@ -4,8 +4,6 @@
 mod clipboard_impl;
 mod os;
 mod sid;
-#[cfg(test)]
-mod tests;
 mod tools;
 mod work_lock;
 

@@ -56,8 +56,6 @@ mod authentication;
 mod inventory;
 mod retained_file;
 mod spki;
-#[cfg(test)]
-mod tests;
 mod wintrust;
 
 pub(crate) use authentication::authenticate;

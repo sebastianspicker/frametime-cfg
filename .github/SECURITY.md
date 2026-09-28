@@ -13,10 +13,6 @@ configured publisher pin, the current PE role, and retained file handles. It
 persists runtime state only below `C:\FRAMETIME_CFG` through a
 protected-directory boundary.
 
-The independent tools carry additional scope statements in
-[`tools/northclock/SECURITY.md`](../tools/northclock/SECURITY.md) and
-[`tools/driver-foundry/SECURITY.md`](../tools/driver-foundry/SECURITY.md).
-
 ## Reporting
 
 Use GitHub private vulnerability reporting when it is available. Otherwise open

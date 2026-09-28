@@ -5,36 +5,13 @@ dist/
 *.dmp
 *.profraw
 *.profdata
-/tools/northclock/fuzz/
 
-# Local scratch, generated previews, and ad-hoc analysis
+# Runtime, diagnostic, and generated preview state
 /output/
 /scratch/
 /_site/
 /.jekyll-cache/
 /.jekyll-metadata
-
-# Test and analysis output
-/.codacy/
-/coverage/
-/htmlcov/
-/reports/
-test-results/
-playwright-report/
-blob-report/
-.coverage
-.coverage.*
-*.coverage
-*.lcov
-lcov.info
-coverage*.json
-coverage*.xml
-cobertura.xml
-*.sarif
-junit*.xml
-test-results-*.xml
-
-# Runtime and diagnostic state
 /state.json
 /state.json.corrupt*
 /progress.json
@@ -91,21 +68,20 @@ service-account*.json
 /.cargo/credentials
 /.cargo/credentials.toml
 
-# Editors and local tooling
+# Tool state and generated indexes
+/.cache/
+/.codacy/
+/.repowise/
+/.codegraph/
+/.serena/
+/.impeccable/
+/.continue/
+/.cursor/
+/.windsurf/
 /.mcp.json
-.vscode/
-.idea/
-.fleet/
-.history/
-.run/
-*.code-workspace
-*.suo
-*.user
-*.swp
-*.swo
-*~
+/openclaw.json
 
-# Local development assistants and generated indexes
+# Agent instructions, state, prompts, and work logs
 .agent/
 .agents/
 .ai/
@@ -113,15 +89,9 @@ service-account*.json
 .augment/
 .claude/
 .codex/
-.codegraph/
-.continue/
-.cursor/
 .gemini/
 .kilo/
-.repowise/
 .opencode/
-.serena/
-.windsurf/
 .zed/
 AGENT.md
 AGENTS.md
@@ -177,16 +147,85 @@ TASK_LEDGER.md
 /prompt-drafts/
 /task-reports/
 
-# Optional local Driver Foundry helpers
-/tools/driver-foundry/data/embedded/*
-!/tools/driver-foundry/data/embedded/README.md
+# Linked worktrees and nested checkouts
+/.worktrees/
+/worktrees/
+/.claude/worktrees/
+/.codex/worktrees/
+
+# Tests, fixtures, fuzzing, and analysis output
+/tests/
+/repo-checks/
+**/tests/
+**/tests.rs
+**/*_tests.rs
+**/*_tests/
+**/fuzz/
+/rust/fixtures/
+pytest.ini
+conftest.py
+jest.config.*
+/.coverage
+/.coverage.*
+/coverage/
+/htmlcov/
+/reports/
+test-results/
+playwright-report/
+blob-report/
+*.coverage
+*.lcov
+lcov.info
+coverage*.json
+coverage*.xml
+cobertura.xml
+*.sarif
+junit*.xml
+test-results-*.xml
+
+# Local-only helper scripts and configurations
+/.github/scripts/
+/PSScriptAnalyzerSettings.psd1
+/scripts/Invoke-LocalTests.ps1
+/scripts/check-architecture-boundaries.sh
+/scripts/check-domain-boundary.sh
+/scripts/test-ci-classifier.sh
+/scripts/Gui-Notes.ps1
+/scripts/Network-Notes.ps1
+
+# Work-in-progress specifications, notes, and audit records
+/docs/archive/
+/docs/*-followup.md
+/docs/*-notes.md
+/docs/*-cleanup.md
+/docs/collect-first.md
+/docs/dry-run-audit.md
+/docs/evidence-matrix.md
+/docs/product.md
+/docs/ui-design.md
+/DESIGN.md
+/DESIGN_BRIEF.md
+/PRODUCT.md
+/RELEASE_STATUS.md
+/.github/REPO_SETTINGS.md
 
 # Third-party Windows tuning artifacts
 FPSHEAVEN2026.pow
 *.nip
 *.pow
 
-# Temporary and operating-system files
+# Editors, temporary files, and operating-system metadata
+.vscode/
+.idea/
+.fleet/
+.history/
+.run/
+*.code-workspace
+*.suo
+*.user
+*.swp
+*.swo
+*~
 *.tmp
 *.bak
 *.orig

@@ -21,8 +21,8 @@ persistence rather than accepting arbitrary shell text or executable paths.
 
 ## Qualification
 
-The code builds and passes contract tests on a host, but live integration needs
-Windows qualification. UAC, Safe Mode, WinTrust, SetupAPI, registry permissions,
+The code builds on a host, but live integration needs Windows qualification.
+UAC, Safe Mode, WinTrust, SetupAPI, registry permissions,
 WMI, NVAPI, proxy and offline behavior, stalled or interrupted downloads,
 network-driver behavior, filesystem race resistance, driver installation, and
 device effectiveness all need disposable Windows VMs and representative

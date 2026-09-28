@@ -295,8 +295,8 @@
           <div>
             <h2 id="start-title" class="heading">Run the preview yourself</h2>
             <p class="chapter__lead">
-              From the repository root. A source checkout builds, tests, and
-              runs the strict preview; it has no authority to change anything.
+              From the repository root. A source checkout builds and runs the
+              strict preview; it has no authority to change anything.
             </p>
           </div>
         </header>
@@ -306,8 +306,7 @@
             <span class="mono">Rust 1.96.0 · repository root</span>
             <button type="button" class="copy" data-copy="commands">Copy</button>
           </div>
-          <pre id="commands" tabindex="0" aria-label="Build, test, and preview commands"><code>cargo build --workspace --locked
-cargo test --workspace --all-targets --all-features --locked
+          <pre id="commands" tabindex="0" aria-label="Build and preview commands"><code>cargo build --workspace --locked
 cargo run -p frametime-cli --locked -- dry-run all</code></pre>
         </div>
 
@@ -331,9 +330,9 @@ cargo run -p frametime-cli --locked -- dry-run all</code></pre>
           </div>
         </header>
         <ul class="limits">
-          <li>Source tests prove the Rust contracts and the fail-closed
-            behavior. They do not qualify UAC, Safe Mode, drivers, NVAPI,
-            Windows APIs, hardware, or a complete reboot sequence.</li>
+          <li>Host builds, linting, and cross-compilation do not qualify UAC,
+            Safe Mode, drivers, NVAPI, Windows APIs, hardware, or a complete
+            reboot sequence.</li>
           <li>No universal FPS, frame-time, latency, image-quality, or
             stability gain. Settings depend on the CS2 build, Windows version,
             driver, hardware, display, and network.</li>
@@ -356,7 +355,7 @@ cargo run -p frametime-cli --locked -- dry-run all</code></pre>
         <ol class="refs">
           <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/operations.md">Operations</a><span>Commands, live preconditions, and the three reboot phases</span></li>
           <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/recovery.md">Recovery</a><span>What can be restored, and how to handle an incomplete phase</span></li>
-          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/compatibility.md">Compatibility</a><span>What host tests prove, and what still needs Windows</span></li>
+          <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/native/compatibility.md">Compatibility</a><span>What host checks cover, and what still needs Windows</span></li>
           <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/package-security.md">Package security</a><span>The trust and retained-identity model</span></li>
           <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/CONFIGURATION.md">Configuration</a><span>The TOML schema and its authority</span></li>
           <li><a href="https://github.com/sebastianspicker/frametime-cfg/blob/main/docs/architecture.md">Architecture</a><span>Component boundaries and runtime flow</span></li>

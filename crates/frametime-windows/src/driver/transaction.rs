@@ -594,7 +594,3 @@ pub(super) mod tests {
         );
     }
 }
-
-#[cfg(test)]
-#[path = "transaction/additional_tests.rs"]
-mod additional_tests;

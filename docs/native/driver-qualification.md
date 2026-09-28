@@ -1,7 +1,7 @@
 # Driver lifecycle qualification
 
 Run qualification only on a disposable Windows x64 VM or a representative test
-machine with independent recovery media. Source tests and cross-compilation do
+machine with independent recovery media. Host builds and cross-compilation do
 not substitute for this evidence.
 
 Use

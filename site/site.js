@@ -174,8 +174,8 @@
       if (focused) focused.focus();
     });
 
-    source.textContent = "Captured from the source build's " + data.command.replace(/^frametime /, "") +
-      " output on " + data.captured + ". A preview changes nothing; the verdict describes what a live run from an authenticated package would do.";
+    source.textContent = "Generated from this source build's " + data.command.replace(/^frametime /, "") +
+      " output and step catalog. A preview changes nothing; the verdict describes what a live run from an authenticated package would do.";
     root.hidden = false;
     render();
   }

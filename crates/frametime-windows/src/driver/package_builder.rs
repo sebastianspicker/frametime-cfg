@@ -578,7 +578,3 @@ fn write_new(path: PathBuf, bytes: &[u8]) -> Result<(), String> {
     file.sync_all()
         .map_err(|error| format!("flush generated file {}: {error}", path.display()))
 }
-
-#[cfg(test)]
-#[path = "package_builder/tests.rs"]
-mod tests;

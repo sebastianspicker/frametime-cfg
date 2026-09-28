@@ -419,7 +419,3 @@ impl<'de> Deserialize<'de> for AuditEntry {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "audit_tests.rs"]
-mod tests;

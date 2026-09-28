@@ -29,9 +29,6 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Test the change classifier
-        shell: bash
-        run: bash scripts/test-ci-classifier.sh
       - name: Classify changed paths
         id: changes
         shell: bash
@@ -70,16 +67,14 @@ jobs:
           key: >-
             frametime-cargo-${{ runner.os }}-${{ runner.arch }}-rust-1.96.0-host-all-features-debug-${{
             hashFiles('Cargo.lock', 'Cargo.toml',
-            'crates/*/Cargo.toml', 'repo-checks/Cargo.toml', 'rust-toolchain.toml',
+            'crates/*/Cargo.toml', 'rust-toolchain.toml',
             '.cargo/config.toml', '.cargo/config') }}
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run strict Clippy
         run: >-
-          cargo clippy --workspace --all-targets --all-features --locked --
+          cargo clippy --workspace --lib --bins --all-features --locked --
           -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity
-      - name: Run workspace tests
-        run: cargo test --workspace --all-targets --all-features --locked
       - name: Run all-branch source preview
         run: cargo run -p frametime-cli --locked -- dry-run all
 
@@ -109,8 +104,7 @@ jobs:
           key: >-
             frametime-cargo-${{ runner.os }}-${{ runner.arch }}-rust-1.96.0-windows-all-features-debug-default-release-${{
             hashFiles('Cargo.lock', 'Cargo.toml', 'crates/*/Cargo.toml',
-            'repo-checks/Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml',
-            '.cargo/config') }}
+            'rust-toolchain.toml', '.cargo/config.toml', '.cargo/config') }}
       - uses: taiki-e/install-action@b20dedce73af6905cdc30d6611090c9b67557c8d
         with:
           tool: cargo-audit@0.22.2

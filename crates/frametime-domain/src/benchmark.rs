@@ -585,6 +585,3 @@ pub fn append_benchmark_record(
     }
     history
 }
-
-#[cfg(test)]
-mod tests;

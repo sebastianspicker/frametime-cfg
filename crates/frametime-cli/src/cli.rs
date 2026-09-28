@@ -139,6 +139,9 @@ pub(crate) enum Command {
     },
     /// Print the current log.
     ShowLog,
+    /// Emit the canonical JavaScript data used by the public static demo.
+    #[command(hide = true)]
+    SiteRegister,
     /// Load the public entrypoint without initialization or elevation.
     SmokeTest,
     /// Verify the complete signed package, catalog, retained identities, and publisher pin.

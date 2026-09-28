@@ -100,7 +100,7 @@ pub(crate) use trust::trusted_work_dir;
 
 // The public API is the same on every target. Native operations compile on
 // non-Windows hosts as fail-closed stubs so the app and frontends can be
-// built, tested, and previewed there.
+// built and previewed there.
 pub use self::backend::{
     BackupSummary, BackupSummaryEntry, LiveBackend, PlannerBackend, clear_backup,
     deploy_optional_cs2_cfgs, export_backup, read_backup_summary, read_log,

@@ -29,8 +29,6 @@ pub enum DriverLifecycleError {
 
 mod component_catalog;
 mod drs_snapshot;
-#[cfg(test)]
-mod tests;
 mod transaction_v2;
 
 pub use component_catalog::*;

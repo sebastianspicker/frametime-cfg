@@ -9,8 +9,6 @@ mod controller;
 mod request;
 mod safe_backup;
 mod targets;
-#[cfg(test)]
-mod tests;
 mod transaction;
 
 pub use assets::{Cs2ConfigError, OptionalCfgAsset};

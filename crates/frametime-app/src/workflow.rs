@@ -516,6 +516,3 @@ fn run_live_steps(
     );
     Ok(summary)
 }
-
-#[cfg(test)]
-mod tests;

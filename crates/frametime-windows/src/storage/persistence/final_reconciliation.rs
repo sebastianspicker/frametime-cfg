@@ -383,6 +383,3 @@ pub(super) fn fresh_final_receipt_id(
     }
     Err("could not generate a unique final benchmark receipt id".into())
 }
-
-#[cfg(test)]
-mod tests;

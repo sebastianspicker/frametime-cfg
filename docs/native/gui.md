@@ -8,10 +8,9 @@ The GUI does not make an unauthenticated package trusted and does not bypass
 command, phase, recovery, or elevation checks. When authority is unavailable, it
 stays a read-only or unavailable surface as appropriate.
 
-Host builds and model tests do not establish keyboard navigation, screen-reader
-output, High Contrast, scaling, window behavior, elevation, or live Windows
-integration. Record UI Automation and manual evidence on Windows for changes to
-those areas.
+Host builds do not establish keyboard navigation, screen-reader output, High
+Contrast, scaling, window behavior, elevation, or live Windows integration.
+Record UI Automation and manual evidence on Windows for changes to those areas.
 
 ## Read model and refresh
 
@@ -98,7 +97,7 @@ recovery capabilities are preserved outside the guided calculation.
 The approved visual reference is
 [`guided-session-flow.png`](../assets/concepts/guided-session-flow.png). The
 implementation uses actual Win32 controls and text, not that bitmap as a screen.
-Host tests exercise evidence validation, stale-result invalidation, review/save
+The source defines evidence validation, stale-result invalidation, review/save
 transitions, partial-save errors, and source byte limits. Windows
 cross-compilation checks the native code but does not execute it.
 

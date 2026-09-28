@@ -11,7 +11,7 @@
 ## Checklist
 
 - [ ] `cargo fmt --all -- --check` passes.
-- [ ] Root Clippy and test gates pass.
+- [ ] Root formatting, Clippy, preview, and Windows-target gates pass.
 - [ ] `cargo run -p frametime-cli --locked -- dry-run all` was run when workflow behavior changed.
 - [ ] Windows target check was run for root workspace changes.
 - [ ] Package, protected-root, retained-handle, and publisher-pin invariants remain intact.

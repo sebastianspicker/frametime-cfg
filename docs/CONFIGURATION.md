@@ -58,8 +58,9 @@ The path strings are policy values, not arbitrary filesystem inputs.
 - `nvidia_gl_cache` must equal `%LOCALAPPDATA%\NVIDIA\GLCache`.
 - `directx_shader_cache` must equal `%LOCALAPPDATA%\D3DSCache`.
 
-Changing these values requires changing the compiled allowlist and its tests. An
-operator cannot widen the allowed filesystem surface by editing TOML.
+Changing these values requires changing the compiled allowlist and its
+validation logic. An operator cannot widen the allowed filesystem surface by
+editing TOML.
 
 ## Other configuration surfaces
 

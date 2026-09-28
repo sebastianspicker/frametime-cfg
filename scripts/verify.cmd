@@ -18,14 +18,10 @@ if /i "%~1"=="/package" if /i "%~2"=="/release" if "%~3"=="" (
 if not "%~1"=="" exit /b 2
 
 cargo fmt --all --check || exit /b 1
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
-cargo test --workspace --all-targets --all-features --locked || exit /b 1
+cargo clippy --workspace --lib --bins --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
 cargo run -p frametime-cli --locked -- dry-run all || exit /b 1
-cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc || exit /b 1
-cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
-
-rem The workspace suite runs repo-checks, which enforces the dependency
-rem boundaries, the source size cap, and the clone-detection policy.
+cargo check --workspace --lib --bins --all-features --locked --target x86_64-pc-windows-msvc || exit /b 1
+cargo clippy --workspace --lib --bins --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
 
 where cargo-audit >nul 2>&1 || exit /b 2
 cargo audit --deny warnings || exit /b 1

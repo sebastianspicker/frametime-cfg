@@ -1,4 +1,4 @@
-//! Platform-neutral Driver Foundry domain contracts.
+//! Platform-neutral driver lifecycle domain contracts.
 //!
 //! This module creates and validates read-only plans only. It contains no host
 //! inspection, acquisition, or mutation implementation and makes no live

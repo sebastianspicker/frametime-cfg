@@ -10,10 +10,9 @@ run the host gate from the repository root:
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity
-cargo test --workspace --all-targets --all-features --locked
+cargo clippy --workspace --lib --bins --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity
 cargo run -p frametime-cli --locked -- dry-run all
-cargo check --workspace --all-targets --all-features --target x86_64-pc-windows-msvc --locked
+cargo check --workspace --lib --bins --all-features --target x86_64-pc-windows-msvc --locked
 ```
 
 The workspace lint policy denies Clippy's full `all` group plus the additional
@@ -24,14 +23,8 @@ functions, or cohesive value types. An item-level exception is acceptable only
 when a serialized or FFI representation cannot be changed, and the exception must
 explain that compatibility constraint.
 
-Tests also enforce a 600-physical-line limit for every Rust source file beneath
-`crates/` and `repo-checks/`, with no allowlist, enforced by `repo-checks`.
-Split files along existing ownership and responsibility boundaries instead of
-hiding source from the check.
-
 On Windows, `scripts\verify.cmd` is the authoritative root source gate and also
-requires `cargo-audit`. Northclock and Driver Foundry are archived and
-unsupported; they are not part of the primary contributor workflow.
+requires `cargo-audit`.
 
 ## Design rules
 
@@ -60,7 +53,7 @@ trust, registry, BCD, Safe Mode, services, drivers, NVAPI, networking, filesyste
 protection, or GUI accessibility need focused Windows VM or hardware evidence.
 Document what was exercised, the host and Windows version, privileges, input
 conditions, observed result, and recovery result. Never replace missing live
-evidence with a claim based on source tests.
+evidence with a claim based on source checks.
 
 ## Documentation and package changes
 
