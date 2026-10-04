@@ -66,6 +66,9 @@ fn migration_confirmation_requires_yes_but_refusals_cannot_be_overridden() {
     );
 }
 
+// Only non-Windows hosts lack the trusted Windows work directory; on Windows the inventory
+// legitimately reports complete when no runtime is selected.
+#[cfg(not(windows))]
 #[test]
 fn unavailable_runtime_boundary_is_incomplete() {
     assert!(runtime_inventory_incomplete());
