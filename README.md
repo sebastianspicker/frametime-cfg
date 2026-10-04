@@ -68,7 +68,7 @@ boundary, or view the [live demo](https://sebastianspicker.github.io/frametime-c
 | `crates/frametime-app` | Shared command and use-case orchestration | Root workspace library |
 | `crates/frametime-cli` | `frametime.exe` terminal interface | Root workspace binary |
 | `crates/frametime-gui` | `frametime-gui.exe` desktop interface | Root workspace binary |
-| `repo-checks` | Repository policy tests (boundaries, package surface, file size, clones) | Root workspace member, never packaged |
+| `repo-checks` | Repository policy check helpers | Root workspace member, never packaged |
 | [`tools/northclock`](tools/northclock/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
 | [`tools/driver-foundry`](tools/driver-foundry/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
 

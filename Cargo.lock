@@ -478,13 +478,6 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 name = "repo-checks"
 version = "3.0.0-alpha.1"
 dependencies = [
- "frametime-app",
- "frametime-domain",
- "proc-macro2",
- "quote",
- "regex",
- "serde_json",
- "syn 2.0.119",
  "toml",
 ]
 

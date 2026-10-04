@@ -61,11 +61,9 @@ Public surfaces are deliberately narrow:
   of those stubs, host builds allow dead code in this crate, and the
   Windows-target Clippy run is the authority for it.
 
-The unpublished [`repo-checks`](../repo-checks) workspace member enforces the
-dependency direction (including rejecting reverse edges), domain purity, the
-frontend-to-app boundary, the native package surface, a 600-line file cap, and
-exact-clone detection. It runs as part of `cargo test --workspace` on every
-platform, including the Windows gate.
+The unpublished [`repo-checks`](../repo-checks) workspace member holds the
+helpers for repository policy checks (dependency direction, domain purity, the
+frontend-to-app boundary, the native package surface, a 600-line file cap).
 
 ## Primary runtime flow
 

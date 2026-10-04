@@ -24,9 +24,8 @@ functions, or cohesive value types. An item-level exception is acceptable only
 when a serialized or FFI representation cannot be changed, and the exception must
 explain that compatibility constraint.
 
-Tests also enforce a 600-physical-line limit for every Rust source file beneath
-`crates/` and `repo-checks/`, with no allowlist, enforced by `repo-checks`.
-Split files along existing ownership and responsibility boundaries instead of
+Keep every Rust source file beneath `crates/` and `repo-checks/` within 600
+physical lines, with no allowlist. Split files along existing ownership and responsibility boundaries instead of
 hiding source from the check.
 
 On Windows, `scripts\verify.cmd` is the authoritative root source gate and also

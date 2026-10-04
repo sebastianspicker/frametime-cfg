@@ -6,6 +6,7 @@
 *.yaml text eol=lf
 *.json text eol=lf
 *.cfg text eol=lf
+*.template text eol=lf
 *.cfg.example text eol=lf
 *.txt text eol=lf
 *.rs text eol=lf

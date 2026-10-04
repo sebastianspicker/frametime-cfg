@@ -1,34 +1,9 @@
-//! Repository policy checks.
+//! Repository policy check helpers.
 //!
-//! This crate holds no runtime code. Its tests are the single home for
-//! repository-wide policy checks. `cargo test --workspace` runs them on
-//! every platform, including Windows, where the bash equivalents these
-//! replace used to be skipped by `scripts\verify.cmd`. The checks are:
-//!
-//! - `tests/source_size.rs`: a 600-physical-line cap for every `.rs` file
-//!   under `crates/` and `repo-checks/`, plus exact-clone detection of
-//!   production function bodies across both trees.
-//! - `tests/domain_purity.rs`: `frametime-domain` production code stays free
-//!   of host side effects (filesystem, environment, process, Windows APIs,
-//!   and wall-clock reads), and its `Cargo.toml` carries no `time` or
-//!   `windows` dependency.
-//! - `tests/dependency_direction.rs`: the required
-//!   `domain <- windows <- app <- cli/gui` path dependencies are present,
-//!   and no crate depends against that direction.
-//! - `tests/presentation_boundaries.rs`: `frametime-app` and
-//!   `frametime-windows` contain no ad hoc console output, `frametime-cli`
-//!   and `frametime-gui` do not reach `frametime_windows` outside their
-//!   `main.rs`, and `frametime-gui` does not hardcode benchmark phase
-//!   totals.
-//! - `tests/package_surface.rs`: the repository root and the package layout
-//!   contain only the native Rust product surface (no PowerShell, batch, or
-//!   XAML remnants), and `scripts/package.cmd` still enforces that boundary
-//!   at package time.
-//!
-//! This module also holds the small helpers shared by those test binaries:
-//! locating the repository root, reading a file as UTF-8, parsing a
-//! `Cargo.toml` as a TOML table, recursively collecting `.rs` sources, and
-//! separating production lines from `cfg(test)` items.
+//! This crate holds no runtime code. It provides the small helpers for
+//! repository-wide policy checks: locating the repository root, reading a file
+//! as UTF-8, parsing a `Cargo.toml` as a TOML table, recursively collecting
+//! `.rs` sources, and separating production lines from `cfg(test)` items.
 
 use std::{
     fs,

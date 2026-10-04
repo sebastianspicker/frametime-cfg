@@ -194,3 +194,9 @@ FPSHEAVEN2026.pow
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Internal design brief and test directories (not published)
+/DESIGN_BRIEF.md
+/crates/frametime-cli/tests/
+/crates/frametime-domain/tests/
+/repo-checks/tests/
