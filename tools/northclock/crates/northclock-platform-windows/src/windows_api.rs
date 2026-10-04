@@ -318,17 +318,18 @@ fn loadable_system_library(name: windows::core::PCWSTR) -> bool {
 fn active_power_scheme() -> Result<GUID> {
     let mut pointer = std::ptr::null_mut::<GUID>();
     let status = unsafe { PowerGetActiveScheme(None, &raw mut pointer) };
-    if status != ERROR_SUCCESS || pointer.is_null() {
+    if status != ERROR_SUCCESS {
         return Err(win32_error("PowerGetActiveScheme", status.0));
     }
-    let guid = unsafe { *pointer };
+    // SAFETY: on success the pointer is either null or points at a GUID owned by the OS allocator.
+    let guid = unsafe { pointer.as_ref() }.copied();
     let remaining = unsafe { LocalFree(Some(HLOCAL(pointer.cast()))) };
     if !remaining.is_invalid() {
         return Err(NorthclockError::Internal(
             "LocalFree did not release the active power-scheme GUID".into(),
         ));
     }
-    Ok(guid)
+    guid.ok_or_else(|| win32_error("PowerGetActiveScheme", status.0))
 }
 
 fn power_scheme_name(guid: &GUID) -> Result<String> {

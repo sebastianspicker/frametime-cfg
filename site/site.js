@@ -190,7 +190,9 @@
         event.preventDefault();
         var thumb = button.querySelector("img");
         var title = button.parentNode.querySelector("figcaption strong");
-        img.src = button.getAttribute("data-full");
+        var full = button.getAttribute("data-full") || "";
+        if (!/^assets\/[\w\/.-]+\.(?:png|jpe?g|webp|svg)$/i.test(full) || full.indexOf("..") !== -1) return;
+        img.src = full;
         img.alt = thumb ? thumb.alt : "";
         caption.textContent = title ? title.textContent : "";
         dialog.showModal();

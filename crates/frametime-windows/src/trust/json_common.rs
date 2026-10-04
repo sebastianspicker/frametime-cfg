@@ -98,12 +98,13 @@ mod tests {
 
     #[test]
     fn temporary_leaf_is_bound_to_an_allowlisted_parent() {
-        let leaf = temporary_leaf("state.json", 0x12ab).expect("allowlisted parent");
-        assert_eq!(leaf, ".frametime-state.json-00000000000012ab.tmp");
+        let suffix = u64::from(std::process::id());
+        let leaf = temporary_leaf("state.json", suffix).expect("allowlisted parent");
+        assert_eq!(leaf, format!(".frametime-state.json-{suffix:016x}.tmp"));
         assert!(is_temporary_leaf(&leaf));
-        assert!(!is_temporary_leaf(
-            ".frametime-other.json-00000000000012ab.tmp"
-        ));
+        assert!(!is_temporary_leaf(&format!(
+            ".frametime-other.json-{suffix:016x}.tmp"
+        )));
         assert!(!is_temporary_leaf(".frametime-state.json-not-hex.tmp"));
     }
 
