@@ -1,5 +1,6 @@
-// frametime.cfg - August 2026 CS2 competitive baseline
-// Research cutoff: 19 August 2026, Steam build 24828357.
+// frametime.cfg - October 2026 CS2 competitive baseline
+// Research cutoff: 18 October 2026. CVar names, defaults, and ranges checked
+// against the CS2 convar dump at GameTracking-CS2 dad1537 (14 October 2026).
 //
 // Deterministic starter configuration for a current client that may contain
 // stale or misconfigured values. It uses a balanced competitive baseline and
@@ -11,10 +12,10 @@
 // -----------------------------------------------------------------------------
 
 con_enable "1"
-fps_max "400"                     // Current configured baseline; set before joining
-fps_max_ui "200"                  // Current configured menu cap
-fps_max_tools "120"               // Current tools/non-match cap
-engine_no_focus_sleep "20"        // Reduce background work while unfocused
+fps_max "400"                     // Starting cap; pros use 400-999 or 0, no consensus
+fps_max_ui "200"                  // Project menu cap; Valve default 0 (no limit)
+fps_max_tools "120"               // Valve default; tools mode only
+engine_no_focus_sleep "20"        // Valve default; reduces work while unfocused
 r_player_visibility_mode "1"      // Boost Player Contrast
 r_drawtracers_firstperson "0"     // Avoid misleading first-person tracer feedback
 r_fullscreen_gamma "2.2"          // Neutral PC starting point; calibrate the display
@@ -25,14 +26,14 @@ cl_showfps "0"                    // Use conditional telemetry below
 // Current Source 2 networking and matchmaking
 // -----------------------------------------------------------------------------
 
-rate "786432"                     // Current configured receive-rate reset
+rate "786432"                     // In-game "Unrestricted"; Valve default 80000
 cl_net_buffer_ticks "0"           // None: no manual packet-delay buffer
-mm_dedicated_search_maxping "50"  // Competitive search preference; may extend queues
+mm_dedicated_search_maxping "150" // Valve default; lower only if you keep getting high-ping servers
 cl_timeout "30"                   // Normal disconnect tolerance
 
 // Conditional normal-play telemetry: 0 never, 1 poor only, 2 always.
-// The 8 ms / 60 ms / 1% thresholds are frametime.cfg competitive policy,
-// not Valve defaults. Adjust them to the target display and region.
+// The 8 ms / 60 ms / 1% thresholds are frametime.cfg competitive policy;
+// Valve defaults are 100 ms / 100 ms / 2%. Adjust to the display and region.
 cl_hud_telemetry_frametime_show "1"
 cl_hud_telemetry_frametime_poor "8"
 cl_hud_telemetry_ping_show "1"
@@ -40,7 +41,7 @@ cl_hud_telemetry_ping_poor "60"
 cl_hud_telemetry_net_misdelivery_show "1"
 cl_hud_telemetry_net_misdelivery_poor "1"
 cl_hud_telemetry_net_quality_graph_show "0"
-cl_hud_telemetry_net_detailed "0"
+cl_hud_telemetry_net_detailed "1"  // Loss/late/jitter breakdown only when poor
 cl_hud_telemetry_serverrecvmargin_graph_show "0"
 
 // -----------------------------------------------------------------------------
@@ -58,45 +59,20 @@ option_duck_method "0"            // Hold to duck
 option_speed_method "0"           // Hold to walk
 
 // -----------------------------------------------------------------------------
-// Static high-contrast starter crosshair
+// Crosshair
 // -----------------------------------------------------------------------------
 
-cl_crosshairstyle "4"
-cl_crosshairsize "2"
-cl_crosshairthickness "0.5"
-cl_crosshairgap "-3"
-cl_crosshairdot "0"
-cl_crosshair_t "0"
-cl_crosshair_drawoutline "0"
-cl_crosshairusealpha "1"
-cl_crosshairalpha "255"
-cl_crosshaircolor "1"             // Green preset; custom RGB requires color 5
-cl_crosshairgap_useweaponvalue "0"
-cl_crosshair_recoil "0"
-cl_crosshair_friendly_warning "1"
-cl_crosshair_sniper_width "1"
-
-// -----------------------------------------------------------------------------
-// Grenade crosshair
-// -----------------------------------------------------------------------------
-
-cl_grenadecrosshair_decoy "1"
-cl_grenadecrosshair_explosive "1"
-cl_grenadecrosshair_fire "1"
-cl_grenadecrosshair_flash "1"
-cl_grenadecrosshair_smoke "1"
-cl_grenadecrosshair_keepusercrosshair "1"
-cl_grenadecrosshairdelay_decoy "0"
-cl_grenadecrosshairdelay_explosive "0"
-cl_grenadecrosshairdelay_fire "0"
-cl_grenadecrosshairdelay_flash "0"
-cl_grenadecrosshairdelay_smoke "0"
+// Crosshair settings (cl_crosshair*, cl_grenadecrosshair*, observer
+// crosshair) are owned by Small Indie Crosshair Company, which converts old
+// settings to the pixel system of 22 September 2026:
+// https://github.com/sebastianspicker/small-indie-crosshair-company
+// This file sets none of them, so it never overrides your converted crosshair.
 
 // -----------------------------------------------------------------------------
 // Maximum-clearance starter viewmodel
 // -----------------------------------------------------------------------------
 
-viewmodel_presetpos "0"
+viewmodel_presetpos "1"           // 1 Desktop, 2 Classic; the offsets below override it
 viewmodel_fov "68"
 viewmodel_offset_x "2.5"
 viewmodel_offset_y "0"
@@ -107,7 +83,7 @@ cl_prefer_lefthanded "0"
 // Radar, HUD, teammate information, and visual noise
 // -----------------------------------------------------------------------------
 
-cl_radar_always_centered "0"
+cl_radar_always_centered "1"
 cl_radar_rotate "1"
 cl_radar_scale "0.4"
 cl_radar_scale_alternate "1.0"
@@ -118,11 +94,11 @@ cl_hud_radar_scale "1.0"
 cl_hud_radar_background_alpha "1.0"
 cl_hud_radar_map_additive "1"
 
-hud_scaling "0.9"
+hud_scaling "1.0"
 safezonex "1.0"
 safezoney "1.0"
 hud_showtargetid "1"
-cl_hud_color "12"
+cl_hud_color "0"                  // Team color; pure preference
 cl_showloadout "1"
 cl_teamid_overhead_mode "3"
 cl_teamid_overhead_colors_show "1"
@@ -151,8 +127,6 @@ cl_inventory_radial_tap_to_cycle "1"
 cl_sniper_auto_rezoom "0"
 cl_sniper_delay_unscope "0"
 cl_sniper_show_inaccuracy "0"
-cl_show_observer_crosshair "2"
-cl_observed_bot_crosshair "0"
 cl_spec_show_bindings "0"
 cl_radial_radio_tap_to_ping "1"
 cl_ragdoll_limit "0"              // Low-clutter preference, not a proven FPS gain
@@ -164,15 +138,16 @@ cl_ragdoll_limit "0"              // Low-clutter preference, not a proven FPS ga
 // Select the real output device in CS2. Never set speaker_config or a device ID.
 volume "0.70"                      // Safe listening still depends on OS/device gain
 snd_headphone_eq "0"              // Natural: no additional coloration
-snd_spatialize_lerp "0"           // Physically accurate L/R default
-snd_autodetect_latency "1"        // Current automatic-latency reset
-snd_mixahead "0.001"              // Current pinned mixer-buffer reset
+snd_spatialize_lerp "0"           // Valve default; link to the UI L/R Isolation slider unverified
 snd_mute_losefocus "1"            // Mute the game when it loses focus
 snd_voipvolume "0.70"
 voice_modenable "1"               // Push-to-talk enabled; bind remains player-owned
 voice_always_sample_mic "0"
 voice_loopback "0"
 
+// Unsuffixed music CVars: no _competitive set exists, so these are expected to
+// cover Competitive and Premier (confirm by in-game readback).
+snd_menumap_volume "0"
 snd_menumusic_volume "0"
 snd_roundstart_volume "0"
 snd_roundaction_volume "0"
@@ -182,6 +157,41 @@ snd_deathcamera_volume "0"
 snd_mvp_volume "0"
 snd_tensecondwarning_volume "0.10"
 snd_mute_mvp_music_live_players "1"
+
+// Per-mode music sets (added 22 September 2026; Valve defaults play music in
+// these modes). snd_music_mode picks the live set and is left to the game.
+snd_menumusic_volume_casual "0"
+snd_roundstart_volume_casual "0"
+snd_roundaction_volume_casual "0"
+snd_roundend_volume_casual "0"
+snd_mapobjective_volume_casual "0"
+snd_deathcamera_volume_casual "0"
+snd_mvp_volume_casual "0"
+snd_tensecondwarning_volume_casual "0.10"
+snd_menumusic_volume_deathmatch "0"
+snd_roundstart_volume_deathmatch "0"
+snd_roundaction_volume_deathmatch "0"
+snd_roundend_volume_deathmatch "0"
+snd_mapobjective_volume_deathmatch "0"
+snd_deathcamera_volume_deathmatch "0"
+snd_mvp_volume_deathmatch "0"
+snd_tensecondwarning_volume_deathmatch "0.10"
+snd_menumusic_volume_armsrace "0"
+snd_roundstart_volume_armsrace "0"
+snd_roundaction_volume_armsrace "0"
+snd_roundend_volume_armsrace "0"
+snd_mapobjective_volume_armsrace "0"
+snd_deathcamera_volume_armsrace "0"
+snd_mvp_volume_armsrace "0"
+snd_tensecondwarning_volume_armsrace "0.10"
+snd_menumusic_volume_rush "0"
+snd_roundstart_volume_rush "0"
+snd_roundaction_volume_rush "0"
+snd_roundend_volume_rush "0"
+snd_mapobjective_volume_rush "0"
+snd_deathcamera_volume_rush "0"
+snd_mvp_volume_rush "0"
+snd_tensecondwarning_volume_rush "0.10"
 
 // -----------------------------------------------------------------------------
 // Lobby, privacy, and non-match UI
@@ -203,13 +213,14 @@ cl_server_graphic2_enable "0"
 
 // Run add-ons manually; the baseline does not auto-execute them:
 //   exec competitive_2026         - complete opt-in pro-consensus match profile
+//   exec meta_october_2026        - complete October 2026 CVar meta (manual copy)
 //   exec frame_raw_uncapped        - fps_max 0, before joining a server
 //   exec frame_baseline_400        - restore the 400 FPS baseline
 //   exec audio_eq_crisp            - optional mid/high emphasis
 //   exec audio_eq_smooth           - optional reduced mid/high energy
 //   exec audio_legacy_lr_isolation - legacy hard L/R trial
 //   exec audio_stable              - restore Natural/physical/automatic audio
-//   exec audio_lowlatency_025      - larger-buffer stability experiment
+//   exec audio_lowlatency_025      - unproven larger-buffer experiment
 //   exec net_stable                - buffering None / reset
 //   exec net_unstable              - 1 Packet trial for measured delivery misses
 //   exec net_bad                   - 2 Packets only when misses persist at 1
@@ -219,28 +230,25 @@ cl_server_graphic2_enable "0"
 //   Display mode: Fullscreen; refresh: highest stable
 //   Resolution: native clarity, or 1280x960 4:3 stretched preference
 //   Boost Player Contrast: Enabled
-//   MSAA/CMAA2: CMAA2 or 2x; 4x only with measured GPU headroom
+//   Anti-aliasing: CMAA2 or 2x; 4x MSAA only with measured GPU headroom
 //   Global Shadows: Low; Dynamic Shadows: All
 //   Model/Texture: Medium; Texture Filtering: AF4x
 //   Shader: Low; Particle: Low; Ambient Occlusion: Disabled
 //   HDR: Quality; FSR: Disabled unless genuinely GPU-bound
 //
+// These are pro-guide values, not measurements.
 // Raw latency: V-Sync Off, tearing accepted, Reflex/Anti-Lag 2 Enabled, and
 // exec frame_raw_uncapped (or a separately measured sustainable cap).
 // NVIDIA VRR: G-SYNC On + V-Sync On + Reflex On; keep driver ULLM at default.
 // AMD VRR: FreeSync On + Anti-Lag 2 when supported; measure V-Sync/cap behavior.
-// Use the current game/driver UI: cs2_video.txt numeric enums are not stable CVars.
+// Use the current game/driver UI. assets/videosettings.txt maps these labels to
+// the cs2_video.txt keys of the 14 October 2026 build; they can change.
 
-echo "[frametime-cfg] August 2026 competitive baseline loaded"
+echo "[frametime-cfg] October 2026 competitive baseline loaded"
 
-// Intentionally absent because removed, read-only, internal, cheat, server-owned,
-// superseded, or ineffective under the selected controller: speaker_config,
-// lobby_default_privacy_bits2, tv_nochat, inactive outline/custom-RGB/style-1/
-// style-2 crosshair fields, cl_cmdrate, cl_updaterate, cl_interp,
-// cl_interp_ratio, cl_net_buffer_ticks_use_interp,
-// cl_tickpacket_desired_queuelength, net_client_steamdatagram_enable_override,
-// engine_low_latency_sleep_after_client_tick, r_low_latency, m_rawinput,
-// m_customaccel, m_mouseaccel1/2, cl_righthand, viewmodel_recoil,
-// cl_disable_ragdolls, cl_ragdoll_physics_enable, old bob/shift CVars,
-// net_graph, mat_queue_mode, r_dynamic, cl_forcepreload, and sv_*/mp_*.
+// Deprecated and legacy CVars (old rate/interp packs, raw-input and bob
+// tweaks, pre-September crosshair names) are left out on purpose; the
+// repo-checks name snapshot rejects any of them that the current build does
+// not accept. cl_interp_ratio is driven by cl_net_buffer_ticks, and Reflex /
+// Anti-Lag 2 are set in the video menu (r_low_latency is development-only).
 // Leave Steam Launch Options empty by default.

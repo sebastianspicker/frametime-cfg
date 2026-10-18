@@ -30,12 +30,12 @@ pub fn render_optimization_cfg_at(timestamp: &str) -> String {
          //   exec debug_hud_off  - restore normal conditional telemetry\n\
          //   exec frame_baseline_400 - restore the configured 400 FPS baseline\n\
          //   exec frame_raw_uncapped - raw-latency branch; run before connecting\n\
-         //   exec audio_stable   - restore Natural EQ and automatic audio\n\
+         //   exec audio_stable   - restore audio defaults (Natural EQ)\n\
          //   exec audio_eq_crisp - optional mid/high emphasis\n\
          //   exec audio_eq_smooth - optional reduced mid/high energy\n\
          //   exec audio_legacy_lr_isolation - legacy hard L/R trial\n\
-         //   exec audio_lowlatency_025 - manual larger-buffer compatibility test\n\
-         //   exec audio_lowlatency_001 - compatibility alias for current defaults\n\n"
+         //   exec audio_lowlatency_025 - unproven larger-buffer experiment\n\
+         //   exec audio_lowlatency_001 - restore mixer defaults\n\n"
     );
     output.push_str(OPTIMIZATION_TEMPLATE);
     if !output.ends_with('\n') {

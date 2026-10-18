@@ -1,0 +1,94 @@
+// frametime.cfg - videosettings.txt
+// October 2026 meta video settings for Counter-Strike 2.
+//
+// Keys and value meanings are pinned to the CS2 build of 14 October 2026
+// (GameTracking-CS2 dad1537, video_version 16):
+//   - every "setting.*" name appears in the shipped engine2/client binaries;
+//   - value meanings come from the shipped video menu layout
+//     (panorama/layout/settings/settings_video.xml) and the four shipped
+//     quality tiers (cfg/video_defaults_0..3.txt).
+// Two mappings are inferred, not stated by Valve, and marked below.
+//
+// This is a reference, not a file to drop in. The tool never writes CS2 video
+// files. The safe way is the in-game menu: Settings > Video, using the labels
+// below. To edit by hand instead, close CS2, back up
+// Steam\userdata\<id>\730\local\cfg\cs2_video.txt, change only the matching
+// lines there, and keep its own header, version, and GPU/monitor fields.
+// A new video_version can reset or rename these keys.
+//
+// Evidence: values are the September 2026 ProSettings guide and pro aggregate
+// (947 pros) plus SteamDB (July 2026). They are guide opinion, not measured,
+// except that resolution shares are real usage data.
+
+"videosettings"
+{
+	// Display ---------------------------------------------------------------
+	// Display Mode: Fullscreen. The pair below is inferred from the
+	// Windowed / Fullscreen / Fullscreen Windowed menu entries.
+	"setting.fullscreen"					"1"
+	"setting.nowindowborder"				"0"
+
+	// Resolution: 1280x960 4:3 (53% of pros; 1024x768 15%, native 1920x1080
+	// 13%). Stretching is a GPU-driver scaling choice, not a CS2 setting.
+	"setting.defaultres"					"1280"
+	"setting.defaultresheight"				"960"
+	"setting.aspectratiomode"				"0"		// 0 Normal 4:3, 1 16:9, 2 16:10
+
+	// Refresh Rate: the highest your monitor runs; set it in the menu, the
+	// stored numerator/denominator are monitor-specific.
+
+	// V-Sync: Disabled for raw latency (NVIDIA VRR users: G-SYNC + V-Sync on).
+	"setting.mat_vsync"						"0"
+
+	// NVIDIA Reflex Low Latency: Enabled (0 Disabled, 1 Enabled, 2 Enabled +
+	// Boost). Boost is optional with spare frames; no test separates them.
+	// On AMD this menu entry is Anti-Lag 2.
+	"setting.r_low_latency"					"1"
+
+	// Advanced --------------------------------------------------------------
+	// Anti-Aliasing Mode: CMAA2 (meta). Inferred pair: CMAA2 is
+	// msaa_samples 0 with r_csgo_cmaa_enable 1; 2x/4x/8x MSAA use
+	// msaa_samples 2/4/8 with cmaa 0. 4x MSAA only with measured headroom.
+	"setting.msaa_samples"					"0"
+	"setting.r_csgo_cmaa_enable"			"1"
+
+	// Global Shadow Quality: Low (0 Low, 1 Medium, 2 High, 3 Very High).
+	"setting.videocfg_shadow_quality"		"0"
+
+	// Dynamic Shadows: All (0 Sun Only, 1 All); Sun Only saves a few frames
+	// but drops shadows from other lights.
+	"setting.videocfg_dynamic_shadows"		"1"
+
+	// Model / Texture Detail: Medium (0 Low, 1 Medium, 2 High).
+	"setting.videocfg_texture_detail"		"1"
+
+	// Texture Filtering Mode: Anisotropic 4X (0 Bilinear, 1 Trilinear,
+	// 2 AF 2X, 3 AF 4X, 4 AF 8X, 5 AF 16X).
+	"setting.r_texturefilteringquality"		"3"
+
+	// Shader Detail: Low (0 Low, 1 High).
+	"setting.shaderquality"					"0"
+
+	// Particle Detail: Low (0 Low, 1 Medium, 2 High, 3 Very High).
+	"setting.videocfg_particle_detail"		"0"
+
+	// Ambient Occlusion: Disabled (0 Disabled, 2 Medium, 3 High).
+	"setting.videocfg_ao_detail"			"0"
+
+	// High Dynamic Range: Quality (-1 Quality, 3 Performance).
+	"setting.videocfg_hdr_detail"			"-1"
+
+	// FidelityFX Super Resolution: Disabled (0 Disabled, 1 Ultra Quality,
+	// 2 Quality, 3 Balanced, 4 Performance). Use only when truly GPU-bound.
+	"setting.videocfg_fsr_detail"			"0"
+}
+
+// Set in the cfg or menu, not in the video file:
+//   Boost Player Contrast: Enabled  (CVar r_player_visibility_mode 1)
+//   Brightness: default             (CVar r_fullscreen_gamma 2.2)
+//   Max FPS in game / menu          (CVars fps_max / fps_max_ui)
+// assets/cfgs/meta_october_2026.cfg sets all three.
+//
+// Low-end GPU variant: keep everything above, but use Dynamic Shadows Sun Only
+// (videocfg_dynamic_shadows 0), Anti-Aliasing None (cmaa 0), and FSR Quality
+// (videocfg_fsr_detail 2) only if still GPU-bound; re-measure after each step.

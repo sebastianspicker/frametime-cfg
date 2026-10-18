@@ -101,6 +101,10 @@ cargo run -p frametime-cli --locked -- dry-run all
 NVIDIA, `3` for AMD, `4` for Intel Arc, or `all`. It performs no persistence,
 elevation, or Windows mutation.
 
+In this alpha the Safe Mode driver workflow (P1:38, Phase 2 and Phase 3) is
+NVIDIA-only: on AMD and Intel Arc, `optimize` completes Phase 1 and stops
+without arming Safe Mode, and `dry-run` shows those steps as stopped.
+
 The full contributor gate — formatting, Clippy, architecture checks, and the
 Windows target check — is in [CONTRIBUTING.md](CONTRIBUTING.md). Authenticated
 and unsigned package commands are in

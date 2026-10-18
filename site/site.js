@@ -7,7 +7,7 @@
     { key: "inspect", label: "Inspects" },
     { key: "keep", label: "Advises only" },
     { key: "evidence", label: "Needs capture" },
-    { key: "skip", label: "Not for this GPU" }
+    { key: "skip", label: "Not run for this GPU" }
   ];
   var PHASES = { 1: "Normal boot", 2: "Safe Mode", 3: "Normal boot, same user" };
 

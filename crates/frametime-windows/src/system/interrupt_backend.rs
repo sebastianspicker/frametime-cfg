@@ -23,7 +23,9 @@ impl LiveBackend<'_> {
                 if satisfied {
                     Inspection::Satisfied
                 } else {
-                    Inspection::NeedsApply
+                    Inspection::Advisory {
+                        reason: "P3:2: MSI is not enabled for every supported device; this guidance step does not change interrupt policy. Follow the P1:21 guidance and verify negotiated mode after a reboot.",
+                    }
                 }
             }
             Action::NicInterruptAffinity => {
@@ -39,7 +41,9 @@ impl LiveBackend<'_> {
                 if satisfied {
                     Inspection::Satisfied
                 } else {
-                    Inspection::NeedsApply
+                    Inspection::Advisory {
+                        reason: "P3:3: the NIC interrupt-affinity policy differs from the guided target; this guidance step does not change it. Follow the P1:22 guidance before changing affinity.",
+                    }
                 }
             }
             _ => return Ok(None),

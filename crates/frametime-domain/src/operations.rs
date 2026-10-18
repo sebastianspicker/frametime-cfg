@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{OperationKind, Step, StepId};
+use crate::catalog::{OperationKind, PHASE_ONE_SAFE_MODE_HANDOFF, Phase, Step, StepId};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GpuBranch {
@@ -62,6 +62,20 @@ pub fn plan_for_step(step: &Step, branch: GpuBranch) -> PlannedAction {
     }
 }
 
+/// The alpha's Safe Mode driver workflow (P1:38, Phase 2, Phase 3) exists only
+/// for NVIDIA: P2:2 and P2:3 require a prepared NVIDIA driver transaction. An
+/// unknown branch fails closed.
+#[must_use]
+pub fn reboot_workflow_supported(branch: Option<GpuBranch>) -> bool {
+    branch.is_some_and(GpuBranch::is_nvidia)
+}
+
+/// Steps from P1:38 onward belong to the Safe Mode driver workflow.
+#[must_use]
+pub fn step_requires_reboot_workflow(step: &Step) -> bool {
+    step.id == PHASE_ONE_SAFE_MODE_HANDOFF || step.id.phase != Phase::One
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +110,25 @@ mod tests {
         let nvidia_driver_install = step_by_id(PHASE_THREE_DRIVER_INSTALL).expect("driver step");
         assert!(plan_for_step(nvidia_driver_install, GpuBranch::Nvidia).applicable);
         assert!(!plan_for_step(nvidia_driver_install, GpuBranch::Amd).applicable);
+    }
+
+    #[test]
+    fn the_reboot_workflow_is_nvidia_only_and_starts_at_the_safe_mode_handoff() {
+        assert!(reboot_workflow_supported(Some(GpuBranch::NvidiaRtx5000)));
+        assert!(reboot_workflow_supported(Some(GpuBranch::Nvidia)));
+        assert!(!reboot_workflow_supported(Some(GpuBranch::Amd)));
+        assert!(!reboot_workflow_supported(Some(GpuBranch::IntelArc)));
+        assert!(!reboot_workflow_supported(None));
+        let gated = STEPS
+            .iter()
+            .filter(|step| step_requires_reboot_workflow(step))
+            .map(|step| step.id)
+            .collect::<Vec<_>>();
+        assert_eq!(gated.first(), Some(&PHASE_ONE_SAFE_MODE_HANDOFF));
+        assert!(
+            gated[1..]
+                .iter()
+                .all(|id| id.phase != crate::catalog::Phase::One)
+        );
     }
 }

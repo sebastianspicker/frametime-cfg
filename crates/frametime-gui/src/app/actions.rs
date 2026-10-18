@@ -206,8 +206,13 @@ fn start_phase_one(window: HWND) {
     start_native_recovery(window, model::NativeAccess::ElevatedWrite, |_| {
         frametime_app::run_live(frametime_app::Command::Optimize { yes: true })
             .map_err(|error| error.to_string())
-            .map(|_| {
-                "Phase 1 completed or handed off through the shared application service.".into()
+            .map(|outcome| match outcome {
+                frametime_app::CommandOutcome::Run(summary) if !summary.messages.is_empty() => {
+                    summary.messages.join(" ")
+                }
+                _ => {
+                    "Phase 1 completed or handed off through the shared application service.".into()
+                }
             })
     });
 }

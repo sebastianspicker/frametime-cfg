@@ -18,10 +18,22 @@ pub(crate) fn service_restore_binding(step: &str, name: &str) -> bool {
     }
 }
 
-pub(crate) fn inspect_action(action: &Action) -> Result<Inspection, String> {
-    if let Some(inspection) = inspect_guidance_action(action) {
-        return inspection;
-    }
+/// True exactly for the actions `inspect_action` can answer without live context.
+pub(crate) fn generic_inspection_supported(action: &Action) -> bool {
+    guidance_message(action).is_some()
+        || matches!(
+            action,
+            Action::NvidiaDriverDownloadPreparation
+                | Action::SafeModeHandoff
+                | Action::PhaseThreeHandoff
+                | Action::RegistryBatch(_)
+                | Action::Cs2Registry(_)
+                | Action::Tool(_)
+                | Action::Advisory(_)
+        )
+}
+
+fn unsupported_inspection_message(action: &Action) -> &'static str {
     match action {
         Action::ObserveConfigState
         | Action::ObserveGpuInventory
@@ -29,41 +41,44 @@ pub(crate) fn inspect_action(action: &Action) -> Result<Inspection, String> {
         | Action::ObserveMemoryTopology
         | Action::BaselineBenchmark
         | Action::FinalBenchmark
-        | Action::FpsCapInfo => Err("typed observations require live backend context".into()),
+        | Action::FpsCapInfo => "typed observations require live backend context",
+        Action::NvidiaDriverRemoval | Action::NvidiaDriverInstall => {
+            "driver execution requires the persisted P1:18/P1:19 NVIDIA transaction"
+        }
+        Action::NvidiaProfileApply => {
+            "NVIDIA DRS application requires its dedicated native transaction"
+        }
+        Action::NetworkStack => "P1:16 requires its native transaction binding",
+        Action::MsiInterrupts | Action::NicInterruptAffinity => {
+            "interrupt-policy inspection requires exact live device bindings"
+        }
+        Action::Pagefile => "P1:8 inspection requires native CIM inventory context",
+        Action::Cs2Config => "P1:34 inspection requires its dedicated CS2 config binding",
+        _ => "action requires dedicated live inspection context",
+    }
+}
+
+pub(crate) fn inspect_action(action: &Action) -> Result<Inspection, String> {
+    if let Some(inspection) = inspect_guidance_action(action) {
+        return inspection;
+    }
+    if !generic_inspection_supported(action) {
+        return Err(unsupported_inspection_message(action).into());
+    }
+    match action {
         Action::NvidiaDriverDownloadPreparation
         | Action::SafeModeHandoff
         | Action::PhaseThreeHandoff => Ok(Inspection::Satisfied),
-        Action::NvidiaDriverRemoval | Action::NvidiaDriverInstall => {
-            Err("driver execution requires the persisted P1:18/P1:19 NVIDIA transaction".into())
-        }
-        Action::NvidiaProfileApply => {
-            Err("NVIDIA DRS application requires its dedicated native transaction".into())
-        }
-        Action::NetworkStack => Err("P1:16 requires its native transaction binding".into()),
         Action::RegistryBatch(changes) => {
             for change in changes {
                 let _ = registry_read(change)?;
             }
             Ok(Inspection::NeedsApply)
         }
-        Action::MsiInterrupts | Action::NicInterruptAffinity => {
-            Err("interrupt-policy inspection requires exact live device bindings".into())
-        }
-        Action::Pagefile => Err("P1:8 inspection requires native CIM inventory context".into()),
         Action::Cs2Registry(action) => inspect_cs2_registry(*action),
-        Action::Cs2Config => {
-            Err("P1:34 inspection requires its dedicated CS2 config binding".into())
-        }
         Action::Tool(_) => Ok(Inspection::NeedsApply),
         Action::Advisory(reason) => Ok(Inspection::Advisory { reason }),
-        Action::GpuDriverCleanPreparation
-        | Action::NvidiaProfilePreparation
-        | Action::MsiPreparation
-        | Action::NicAffinityPreparation
-        | Action::Cs2LaunchVideoGuide
-        | Action::AmdRadeonGuide
-        | Action::VramUsageGuide
-        | Action::FinalChecklistGuide => unreachable!("guidance actions are handled above"),
+        _ => Err(unsupported_inspection_message(action).into()),
     }
 }
 

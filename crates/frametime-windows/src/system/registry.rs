@@ -55,18 +55,8 @@ mod native_registry {
         ok(unsafe { RegCreateKeyW(hkey(change.hive), PCWSTR(key.as_ptr()), &mut handle) })?;
         Ok(handle)
     }
-    pub(super) fn read(change: &RegistryChange) -> Result<Option<RegValue>, String> {
-        let handle = match open(change, KEY_QUERY_VALUE) {
-            Ok(value) => value,
-            Err(error) if error.contains("2") => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let value = read_opened_value(handle, change.name, false)?;
-        decode_value(value, false)
-    }
-    /// Reads a value for a contract which must distinguish absence from an
-    /// inaccessible key, malformed value, or unsupported registry type.
-    pub(super) fn read_exact(change: &RegistryChange) -> Result<Option<RegValue>, String> {
+    /// Opens the key for reading; `None` only when the key does not exist.
+    fn open_for_read(change: &RegistryChange) -> Result<Option<HKEY>, String> {
         let key = wide(change.key);
         let mut handle = HKEY::default();
         let opened = unsafe {
@@ -82,6 +72,21 @@ mod native_registry {
             return Ok(None);
         }
         ok(opened)?;
+        Ok(Some(handle))
+    }
+    pub(super) fn read(change: &RegistryChange) -> Result<Option<RegValue>, String> {
+        let Some(handle) = open_for_read(change)? else {
+            return Ok(None);
+        };
+        let value = read_opened_value(handle, change.name, false)?;
+        decode_value(value, false)
+    }
+    /// Reads a value for a contract which must distinguish absence from an
+    /// inaccessible key, malformed value, or unsupported registry type.
+    pub(super) fn read_exact(change: &RegistryChange) -> Result<Option<RegValue>, String> {
+        let Some(handle) = open_for_read(change)? else {
+            return Ok(None);
+        };
         let value = read_opened_value(handle, change.name, true)?;
         decode_value(value, true)
     }
@@ -265,7 +270,7 @@ pub(crate) fn capture_registry(
     change: &RegistryChange,
     step: String,
 ) -> Result<BackupEntry, String> {
-    let original = registry_read(change)?;
+    let original = registry_read_exact(change)?;
     let (value, original_type, existed) = match original {
         Some(RegValue::Dword(value)) => (Value::from(value), Some("DWord".into()), true),
         Some(RegValue::String(value)) => (Value::String(value.into()), Some("String".into()), true),

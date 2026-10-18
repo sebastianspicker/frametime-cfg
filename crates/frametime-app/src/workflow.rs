@@ -6,6 +6,7 @@ use frametime_domain::{
     },
     engine::Engine,
     migration::{MigrationDecision, MigrationInventory, assess_inventory},
+    operations::reboot_workflow_supported,
     orchestration::{
         BootEnvironment, Evidence, HandoffEvidence, PhaseFacts, PhaseRequest, RuntimeBinding,
         Transition, authorize, require_phase_one_handoff_ready,
@@ -20,7 +21,7 @@ use frametime_windows::{
     complete_phase_two_safe_boot_clear, current_boot_mode, final_benchmark_status,
     inspect_reboot_handoff_state, launch_published_safe_mode_handoff, load_progress, load_state,
     publish_current_packaged_runtime, relaunch_phase_three_handoff, retain_selected_runtime,
-    runtime_inventory_incomplete as native_runtime_inventory_incomplete,
+    runtime_inventory_incomplete as native_runtime_inventory_incomplete, selected_gpu_branch,
 };
 
 use crate::{
@@ -61,6 +62,13 @@ fn run_phase_one(
             "runtime publication refused because Phase 1 is unresolved: {error:?}"
         ))
     })?;
+    let (state, _) = load_session()?;
+    if !reboot_workflow_supported(selected_gpu_branch(&state).map_err(ApplicationError::failed)?) {
+        summary.messages.push(
+            "Phase 1 is complete. The Safe Mode driver workflow (P1:38, Phase 2, Phase 3) is NVIDIA-only in this alpha, so P1:38 was not armed.".into(),
+        );
+        return Ok(summary);
+    }
     let handoff = step_by_id(PHASE_ONE_SAFE_MODE_HANDOFF)
         .ok_or_else(|| ApplicationError::failed("P1:38 is absent from the compiled catalog"))?;
     if !yes && !prompt_for_step(handoff) {
@@ -127,24 +135,50 @@ fn run_phase_two(yes: bool) -> Result<RunSummary, ApplicationError> {
     )? {
         Transition::RunPhaseTwoStepOne => {
             complete_phase_two_safe_boot_clear(&runtime).map_err(ApplicationError::failed)?;
-            Ok(RunSummary::default())
+            // Windows deletes the `!`-prefixed RunOnce value only after this
+            // process exits and never relaunches it, so P2:2 and P2:3 must run
+            // in this invocation. Re-authorize against fresh native evidence.
+            let (state, progress) = load_session()?;
+            match authorize_live(
+                PhaseRequest::PhaseTwo,
+                &state,
+                &progress,
+                BootMode::SafeMode,
+                RuntimeBinding::VerifiedSelectedExecutable,
+            )? {
+                Transition::RunRemainingPhaseTwo => {
+                    run_remaining_phase_two(state.profile, progress, yes, &runtime)
+                }
+                _ => Err(ApplicationError::failed(
+                    "P2:1 completed but the remaining Phase 2 steps were not authorized",
+                )),
+            }
         }
         Transition::RunRemainingPhaseTwo => {
-            let summary = run_live_steps(
-                |step| step.id == PHASE_TWO_DRIVER_CLEANUP,
-                state.profile,
-                progress,
-                yes,
-                LiveMutationAuthority::Runtime(&runtime),
-            )?;
-            let (_, updated_progress) = load_session()?;
-            if updated_progress.is_completed(PHASE_TWO_DRIVER_CLEANUP) {
-                arm_phase_three_handoff(&runtime).map_err(ApplicationError::failed)?;
-            }
-            Ok(summary)
+            run_remaining_phase_two(state.profile, progress, yes, &runtime)
         }
         _ => unreachable!("core returned an unexpected Phase 2 transition"),
     }
+}
+
+fn run_remaining_phase_two(
+    profile: Profile,
+    progress: Progress,
+    yes: bool,
+    runtime: &frametime_windows::VerifiedSelectedRuntime,
+) -> Result<RunSummary, ApplicationError> {
+    let summary = run_live_steps(
+        |step| step.id == PHASE_TWO_DRIVER_CLEANUP,
+        profile,
+        progress,
+        yes,
+        LiveMutationAuthority::Runtime(runtime),
+    )?;
+    let (_, updated_progress) = load_session()?;
+    if updated_progress.is_completed(PHASE_TWO_DRIVER_CLEANUP) {
+        arm_phase_three_handoff(runtime).map_err(ApplicationError::failed)?;
+    }
+    Ok(summary)
 }
 
 fn run_phase_three(yes: bool) -> Result<RunSummary, ApplicationError> {

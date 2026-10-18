@@ -48,11 +48,57 @@ Phase 2 clears Safe Boot only after the runtime, transaction stage, and handoff
 verify. If the selected runtime cannot start, or the evidence is damaged, the
 machine can require recovery outside this application.
 
-The repository does not provide an unauthenticated break-glass status tool, a
-WinRE helper, or a tested generic command sequence for clearing an incomplete
-boot transaction by hand. Use an independently prepared, environment-specific
-Windows recovery procedure and preserve `C:\FRAMETIME_CFG` for diagnosis. Do not
-improvise registry, BCD, driver, or filesystem changes from these source docs.
+The repository does not provide an unauthenticated break-glass status tool or a
+WinRE helper. Outside the alpha escape procedure below, use an independently
+prepared, environment-specific Windows recovery procedure and preserve
+`C:\FRAMETIME_CFG` for diagnosis. Do not improvise other registry, BCD, driver,
+or filesystem changes from these source docs.
+
+## Alpha escape from a stuck reboot handoff
+
+This procedure is for alpha testers only. It has not been qualified on Windows
+hardware yet; qualify it on the VM before relying on it. It removes exactly the
+three boot-time values the workflow sets and nothing else. Use it only when the
+guarded phase command has failed and the machine keeps starting in Safe Mode, or
+a handoff keeps failing at every sign-in.
+
+1. Sign in (Safe Mode included) and open an elevated `cmd.exe`.
+2. Copy the whole `C:\FRAMETIME_CFG` directory and the failing command's output
+   somewhere outside the machine for the bug report. Do not edit its JSON. The
+   copy holds account and hardware identifiers; review it before sharing.
+3. Remove Safe Boot from the current boot entry, then confirm `safeboot` no
+   longer appears:
+
+   ```bat
+   bcdedit /deletevalue {current} safeboot
+   bcdedit /enum {current}
+   ```
+
+   System Configuration (`msconfig`), Boot tab, "Safe boot" unticked, changes
+   the same setting.
+4. Remove the handoff values if they are still present. "Unable to find the
+   specified registry key or value" means it was already gone:
+
+   ```bat
+   reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "*!FRAMETIME_Phase2" /f
+   reg delete "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "FRAMETIME_CFG_FRAMETIME_Phase3" /f
+   ```
+
+   Run the `HKCU` line as the user who started `optimize`; an elevated prompt
+   of that same user is fine. From another account it targets that account's
+   own key, so "Unable to find" there proves nothing about the initiating user.
+5. Restart normally. From the authenticated package, run `verify` and
+   `backup-summary`, then `restore --yes` if they show captured entries. The
+   active reboot transaction may make these commands refuse; that refusal is
+   expected evidence, not something to work around.
+
+After this procedure the workflow state still records the unfinished
+transaction, so `optimize` refuses to start again. Starting over means moving
+the live `C:\FRAMETIME_CFG` directory aside. That discards its captured backups
+for `restore`, and a fresh `optimize` would record the already-changed settings
+as the new originals, so a later `restore` could not return to the state before
+the first run. Do it only after step 5, after the bug report has the copy, and
+preferably after a successful `restore --yes`.
 
 ## Limits
 

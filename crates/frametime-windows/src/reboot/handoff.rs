@@ -1,3 +1,4 @@
+use super::{NativeArmingHost, roll_back_partial_arming};
 use crate::*;
 // Native, retry-safe reboot handoff transactions. This module deliberately
 // owns only the fixed BCD/registry/state/progress boundary; Engine actions
@@ -17,6 +18,9 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
     let work_dir = trusted.path();
     let _lock = WorkLock::acquire(work_dir)?;
     let (state, progress) = read_handoff_session(work_dir)?;
+    if !reboot_workflow_supported(selected_gpu_branch(&state)?) {
+        return Err("P1:38 is NVIDIA-only in this alpha; Safe Mode was not armed".into());
+    }
     let transaction = match &state.active_reboot_transaction {
         Some(existing)
             if existing.is_authorized_at(&RebootStage::PhaseOneSafeModeArmed)
@@ -30,18 +34,43 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
         }
         None => new_transaction(runtime.record().clone(), sid)?,
     };
+    // Until state is persisted nothing records the arming, so a failure rolls
+    // back exactly what this call wrote; otherwise retry and `optimize` refuse.
+    let wrote_handoff =
+        read_handoff_value(Hive::LocalMachine, RUNONCE_KEY, PHASE2_HANDOFF)?.is_none();
+    let set_safe_boot = match safeboot_evidence() {
+        SafebootEvidence::Absent => true,
+        SafebootEvidence::Configured(value) if value == "minimal" => false,
+        SafebootEvidence::Configured(value) => {
+            return Err(format!(
+                "P1:38 refuses to replace the existing safeboot {value} setting"
+            ));
+        }
+        SafebootEvidence::Unavailable => {
+            return Err("P1:38 cannot read the current safeboot setting".into());
+        }
+    };
+    let mut next_state = state;
+    next_state.phase1_safe_mode_ready = true;
+    next_state.active_reboot_transaction = Some(transaction);
     ensure_handoff_value(
         Hive::LocalMachine,
         RUNONCE_KEY,
         PHASE2_HANDOFF,
         &phase2,
         "P1:38",
-    )?;
-    set_safeboot_minimal()?;
-    let mut next_state = state;
-    next_state.phase1_safe_mode_ready = true;
-    next_state.active_reboot_transaction = Some(transaction);
-    persist_state_readback(work_dir, &next_state, "P1:38")?;
+    )
+    .and_then(|()| set_safeboot_minimal())
+    .and_then(|()| persist_state_readback(work_dir, &next_state, "P1:38"))
+    .map_err(|error| {
+        roll_back_partial_arming(
+            &NativeArmingHost,
+            error,
+            &phase2,
+            wrote_handoff,
+            set_safe_boot,
+        )
+    })?;
     let mut next_progress = progress;
     next_progress.complete_step(
         frametime_domain::catalog::PHASE_ONE_SAFE_MODE_HANDOFF,

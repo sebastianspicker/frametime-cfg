@@ -10,6 +10,19 @@
 //   - AMD FreeSync: validate FreeSync/VRR and supported AMD game features.
 //   - GPU-constrained: reduce the measured bottleneck one UI setting at a time.
 //
+// October 2026 pro-guide starting points (UI labels; guide opinion, not
+// measured). assets/videosettings.txt lists the same values with their
+// pinned cs2_video.txt keys:
+//   Display mode: Fullscreen; refresh: highest stable
+//   Resolution: 1280x960 4:3 stretched (about 53% of pros) or native
+//   V-Sync: Off for raw latency; Boost Player Contrast: Enabled
+//   NVIDIA Reflex: Enabled (Boost optional, unmeasured); AMD: Anti-Lag 2
+//   Anti-aliasing: CMAA2; 4x MSAA only with measured GPU headroom
+//   Global Shadows: Low; Dynamic Shadows: All
+//   Model/Texture: Medium; Texture Filtering: Anisotropic 4x
+//   Shader: Low; Particle: Low; Ambient Occlusion: Disabled
+//   HDR: Quality; FidelityFX Super Resolution: Disabled
+//
 // Capture the same map and workload before and after each change. The Rust
 // application can discover one trusted numeric-userdata cs2_video.txt for
 // read-only inspection, but never writes, backs up, clears attributes on, or

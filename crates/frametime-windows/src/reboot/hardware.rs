@@ -196,7 +196,8 @@ pub(crate) fn run_value_evidence(
         name,
         value: RegValue::String(""),
     };
-    match registry_read(&change) {
+    // Exact read: a wrong-typed or unreadable handoff value is Unavailable, never Absent.
+    match registry_read_exact(&change) {
         Ok(Some(RegValue::String(value))) if !value.is_empty() => HandoffEvidence::Verified,
         Ok(None) => HandoffEvidence::Absent,
         _ => HandoffEvidence::Unavailable,

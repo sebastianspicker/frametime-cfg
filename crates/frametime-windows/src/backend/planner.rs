@@ -28,7 +28,9 @@ impl Backend for PlannerBackend {
     }
     fn inspect(&mut self, operation: Operation) -> Result<Inspection, String> {
         let branch = GpuBranch::try_from(self.gpu_branch)?;
-        if !plan_for_step(&operation.step, branch).applicable {
+        if !plan_for_step(&operation.step, branch).applicable
+            || stops_before_reboot_workflow(&operation.step, branch)
+        {
             return Ok(Inspection::Inapplicable);
         }
         let descriptor = descriptor_for(&operation.step)?;
@@ -71,6 +73,14 @@ impl Backend for PlannerBackend {
         if !action.applicable {
             return Ok(vec![format!(
                 "Would skip inapplicable {} ({}) for {}; no files or system settings will be changed.",
+                Self::key(operation),
+                operation.step.title,
+                branch.label()
+            )]);
+        }
+        if stops_before_reboot_workflow(&operation.step, branch) {
+            return Ok(vec![format!(
+                "Would stop before {} ({}) for {}: the Safe Mode driver workflow is NVIDIA-only in this alpha; no files or system settings will be changed.",
                 Self::key(operation),
                 operation.step.title,
                 branch.label()
@@ -148,6 +158,10 @@ impl Backend for PlannerBackend {
     }
 }
 
+fn stops_before_reboot_workflow(step: &Step, branch: GpuBranch) -> bool {
+    step_requires_reboot_workflow(step) && !reboot_workflow_supported(Some(branch))
+}
+
 fn dry_run_guide(action: &Action) -> Option<&'static str> {
     match action {
         Action::GpuDriverCleanPreparation => Some(
@@ -181,5 +195,40 @@ fn dry_run_guide(action: &Action) -> Option<&'static str> {
             "Would present the final checklist without requiring optional hardware observations; no files or system settings will be changed.",
         ),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use frametime_domain::catalog::{
+        PHASE_ONE_SAFE_MODE_HANDOFF, PHASE_TWO_SAFE_BOOT_CLEAR, step_by_id,
+    };
+
+    fn inspect(branch: u8, id: frametime_domain::catalog::StepId) -> Inspection {
+        let step = *step_by_id(id).expect("catalog step");
+        PlannerBackend::new(branch)
+            .inspect(Operation { step })
+            .expect("planner inspection")
+    }
+
+    #[test]
+    fn non_nvidia_previews_stop_before_the_safe_mode_workflow() {
+        for branch in [3, 4] {
+            assert_eq!(
+                inspect(branch, PHASE_ONE_SAFE_MODE_HANDOFF),
+                Inspection::Inapplicable
+            );
+            assert_eq!(
+                inspect(branch, PHASE_TWO_SAFE_BOOT_CLEAR),
+                Inspection::Inapplicable
+            );
+        }
+        for branch in [1, 2] {
+            assert_eq!(
+                inspect(branch, PHASE_ONE_SAFE_MODE_HANDOFF),
+                Inspection::Satisfied
+            );
+        }
     }
 }

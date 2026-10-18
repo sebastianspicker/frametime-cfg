@@ -46,7 +46,10 @@ use frametime_domain::{
     verification::{VerificationItem, VerificationReport, VerificationStatus},
     video::VideoRow,
 };
-use frametime_domain::{binding::NetworkAdapterBinding, operations::plan_for_step};
+use frametime_domain::{
+    binding::NetworkAdapterBinding,
+    operations::{plan_for_step, reboot_workflow_supported, step_requires_reboot_workflow},
+};
 use frametime_domain::{binding::PciDeviceBinding as CorePciDeviceBinding, handoff::RuntimeRecord};
 use serde_json::Value;
 
@@ -106,6 +109,7 @@ pub use self::backend::{
     deploy_optional_cs2_cfgs, export_backup, read_backup_summary, read_log,
     read_presentable_step_messages, reset_progress, restore_all_from_package,
     restore_all_from_runtime, restore_selected_from_package, run_network_stack_transaction,
+    selected_gpu_branch,
 };
 pub use self::diagnostics::{WindowsHardwareDiagnostics, preview_video};
 pub use self::driver::{

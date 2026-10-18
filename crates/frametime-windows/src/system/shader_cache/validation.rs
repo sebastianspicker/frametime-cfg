@@ -289,7 +289,7 @@ mod tests {
         let error = parse_directory_buffer(&directory_record(&[], 0), &mut entries)
             .expect_err("zero-length names are hostile");
 
-        assert_eq!(error, "P1:3 directory entry has a hostile or alias name");
+        assert_eq!(error, "cleanup directory entry has a hostile or alias name");
         assert!(entries.is_empty());
     }
 
@@ -441,7 +441,7 @@ mod tests {
         let error = parse_directory_buffer(&buffer, &mut entries)
             .expect_err("an invalid later record must roll back the whole buffer");
 
-        assert_eq!(error, "P1:3 directory entry has a hostile or alias name");
+        assert_eq!(error, "cleanup directory entry has a hostile or alias name");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, 1);
         assert_eq!(entries[0].name, [u16::from(b's')]);

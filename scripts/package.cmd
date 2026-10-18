@@ -144,8 +144,15 @@ if not exist "%source%\%~1" (
     echo Missing required release input: %~1 1>&2
     exit /b 1
 )
-for %%D in ("%staging%\%~dp2") do if not exist "%%~fD" mkdir "%%~fD" || exit /b 1
-copy /b /y "%source%\%~1" "%staging%\%~2" >nul || exit /b 1
+rem Layout entries are relative with forward slashes. Derive the parent from
+rem the full destination; the dp modifier on the relative entry expands it
+rem against the current directory and embeds a second drive path in staging.
+set "copy_source=%source%\%~1"
+set "copy_destination=%staging%\%~2"
+set "copy_source=!copy_source:/=\!"
+set "copy_destination=!copy_destination:/=\!"
+for %%D in ("!copy_destination!") do if not exist "%%~dpD" mkdir "%%~dpD" || exit /b 1
+copy /b /y "!copy_source!" "!copy_destination!" >nul || exit /b 1
 exit /b 0
 
 :copy_layout_entry
@@ -175,6 +182,16 @@ exit /b 0
 :validate_layout_entry
 if "%~1"=="" (
     echo Package layout contains an empty path. 1>&2
+    exit /b 1
+)
+set "entry=%~1"
+set "entry_unsafe=0"
+if not "!entry:..=!"=="!entry!" set "entry_unsafe=1"
+if not "!entry::=!"=="!entry!" set "entry_unsafe=1"
+if "!entry:~0,1!"=="\" set "entry_unsafe=1"
+if "!entry:~0,1!"=="/" set "entry_unsafe=1"
+if "!entry_unsafe!"=="1" (
+    echo Package layout entry must be a relative path inside the repository: %~1 1>&2
     exit /b 1
 )
 if /i "%~1"=="frametime.exe" exit /b 0
@@ -458,6 +475,19 @@ exit /b 1
 :missing_release_input
 echo Authenticated release requires FRAMETIME_PUBLISHER_SPKI_SHA256, FRAMETIME_SIGNTOOL_PATH, FRAMETIME_MAKECAT_PATH, FRAMETIME_SIGNING_CERT_SHA1, and FRAMETIME_SIGNING_TIMESTAMP_URL. 1>&2
 exit /b 1
+
+:hash_file
+rem Sets hash to the file argument's SHA-256 as 64 lowercase hex digits. certutil prints
+rem the digest on its second line; older builds separate bytes with spaces. cmd
+rem substitution matches case-insensitively, so a-f replacing itself lowercases.
+set "hash="
+if not exist "%~1" exit /b 1
+for /f "skip=1 delims=" %%H in ('certutil -hashfile "%~1" SHA256 2^>nul') do if not defined hash set "hash=%%H"
+if not defined hash exit /b 1
+set "hash=!hash: =!"
+for %%C in (a b c d e f) do set "hash=!hash:%%C=%%C!"
+call :valid_sha256 "!hash!" || exit /b 1
+exit /b 0
 
 :valid_sha1
 set "candidate=%~1"

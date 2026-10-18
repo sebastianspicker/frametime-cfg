@@ -173,6 +173,40 @@ pub(crate) fn capture_network_stack<H: NetworkStackHost>(
     ))
 }
 
+// Never Satisfied: `LiveBackend::verify` needs the binding only capture_backups records.
+pub(crate) fn inspect_network_stack<H: NetworkStackHost>(host: &H) -> Result<Inspection, String> {
+    let mut adapters = host.discover_active_wired()?;
+    let adapter = match adapters.len() {
+        0 => return Ok(Inspection::Inapplicable),
+        1 => adapters.remove(0),
+        _ => {
+            return Ok(Inspection::Advisory {
+                reason: "P1:16 found more than one active wired adapter; RSS is left unchanged because the target adapter is ambiguous",
+            });
+        }
+    };
+    adapter.validate().map_err(|error| error.to_string())?;
+    let mut present = false;
+    for setting in SETTINGS {
+        if !matches!(desired(setting), DesiredSetting::Value(_)) {
+            continue;
+        }
+        if let Some(value) = host.read_setting(&adapter, setting)? {
+            if !accepted_type(setting, &value) {
+                return Err(format!(
+                    "P1:16 {setting:?} has an unsupported native value type"
+                ));
+            }
+            present = true;
+        }
+    }
+    Ok(if present {
+        Inspection::NeedsApply
+    } else {
+        Inspection::Inapplicable
+    })
+}
+
 pub(crate) fn reobserve<H: NetworkStackHost>(
     host: &H,
     captured: &NetworkAdapterBinding,
@@ -189,8 +223,10 @@ pub(crate) fn apply_network_stack<H: NetworkStackHost>(
             continue;
         };
         let adapter = reobserve(host, captured)?;
-        if host.read_setting(&adapter, setting)?.is_none() {
-            continue;
+        match host.read_setting(&adapter, setting)? {
+            None => continue,
+            Some(current) if current == value.into_value() => continue,
+            Some(_) => {}
         }
         host.write_setting(&adapter, setting, &value.into_value())?;
         if host.read_setting(&reobserve(host, captured)?, setting)? != Some(value.into_value()) {
@@ -376,6 +412,152 @@ impl NetworkStackHost for NativeNetworkStackHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    fn adapter(index: u32) -> NetworkAdapterBinding {
+        let guid = format!("{{{index:08x}-1111-1111-1111-111111111111}}");
+        NetworkAdapterBinding {
+            schema_version: 1,
+            adapter_name: guid.clone(),
+            interface_guid: guid,
+            interface_luid: u64::from(index),
+            interface_index: index,
+            friendly_name: "Ethernet".into(),
+            interface_description: "Test NIC".into(),
+            physical_address: vec![1, 2, 3, 4, 5, 6],
+            device: frametime_domain::binding::PciDeviceBinding {
+                schema_version: 1,
+                instance_id: format!("PCI\\VEN_1234&DEV_5678&SUBSYS_56781234&REV_01\\{index}"),
+                container_id: "{22222222-2222-2222-2222-222222222222}".into(),
+                class_guid: "{4d36e972-e325-11ce-bfc1-08002be10318}".into(),
+                vendor_id: 0x1234,
+                device_id: 0x5678,
+                subsystem_vendor_id: 0x1234,
+                subsystem_device_id: 0x5678,
+                revision_id: 1,
+                driver_provider: "Test".into(),
+                driver_version: "1.0".into(),
+                published_inf: "oem1.inf".into(),
+                observed_at_utc: "2026-08-13T00:00:00Z".into(),
+                unknown: Default::default(),
+            },
+            observed_at_utc: "2026-08-13T00:00:00Z".into(),
+            unknown: Default::default(),
+        }
+    }
+
+    struct FakeHost {
+        adapters: Vec<NetworkAdapterBinding>,
+        rss: RefCell<Option<NetworkStackValue>>,
+        writes: RefCell<usize>,
+    }
+
+    impl FakeHost {
+        fn new(adapters: Vec<NetworkAdapterBinding>, rss: Option<NetworkStackValue>) -> Self {
+            Self {
+                adapters,
+                rss: RefCell::new(rss),
+                writes: RefCell::new(0),
+            }
+        }
+    }
+
+    impl NetworkStackHost for FakeHost {
+        fn discover_active_wired(&self) -> Result<Vec<NetworkAdapterBinding>, String> {
+            Ok(self.adapters.clone())
+        }
+        fn read_setting(
+            &self,
+            _: &NetworkAdapterBinding,
+            _: NetworkStackSetting,
+        ) -> Result<Option<NetworkStackValue>, String> {
+            Ok(self.rss.borrow().clone())
+        }
+        fn write_setting(
+            &self,
+            _: &NetworkAdapterBinding,
+            _: NetworkStackSetting,
+            value: &NetworkStackValue,
+        ) -> Result<(), String> {
+            *self.writes.borrow_mut() += 1;
+            *self.rss.borrow_mut() = Some(value.clone());
+            Ok(())
+        }
+        fn read_nla(&self) -> Result<NetworkStackNlaBackup, String> {
+            Err("unused".into())
+        }
+        fn restore_nla(&self, _: &NetworkStackNlaBackup) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn read_policy(
+            &self,
+            _: NetworkStackPolicy,
+        ) -> Result<Option<NetworkStackPolicySnapshot>, String> {
+            Err("unused".into())
+        }
+        fn delete_policy(&self, _: NetworkStackPolicy) -> Result<(), String> {
+            Err("unused".into())
+        }
+        fn restore_policy(
+            &self,
+            _: NetworkStackPolicy,
+            _: &NetworkStackPolicySnapshot,
+        ) -> Result<(), String> {
+            Err("unused".into())
+        }
+    }
+
+    #[test]
+    pub(crate) fn inspection_without_an_adapter_is_inapplicable() {
+        let host = FakeHost::new(Vec::new(), Some(NetworkStackValue::Dword(0)));
+        assert_eq!(inspect_network_stack(&host), Ok(Inspection::Inapplicable));
+    }
+
+    #[test]
+    pub(crate) fn inspection_with_two_adapters_is_advisory() {
+        let host = FakeHost::new(
+            vec![adapter(1), adapter(2)],
+            Some(NetworkStackValue::Dword(0)),
+        );
+        assert!(matches!(
+            inspect_network_stack(&host),
+            Ok(Inspection::Advisory { .. })
+        ));
+    }
+
+    #[test]
+    pub(crate) fn inspection_with_present_rss_needs_apply_even_at_target() {
+        for value in [0, 1] {
+            let host = FakeHost::new(vec![adapter(1)], Some(NetworkStackValue::Dword(value)));
+            assert_eq!(inspect_network_stack(&host), Ok(Inspection::NeedsApply));
+        }
+    }
+
+    #[test]
+    pub(crate) fn inspection_with_absent_rss_is_inapplicable() {
+        let host = FakeHost::new(vec![adapter(1)], None);
+        assert_eq!(inspect_network_stack(&host), Ok(Inspection::Inapplicable));
+    }
+
+    #[test]
+    pub(crate) fn inspection_rejects_an_unsupported_value_type() {
+        let host = FakeHost::new(
+            vec![adapter(1)],
+            Some(NetworkStackValue::String("1".into())),
+        );
+        assert!(inspect_network_stack(&host).is_err());
+    }
+
+    #[test]
+    pub(crate) fn apply_skips_the_write_when_rss_is_already_at_target() {
+        let captured = adapter(1);
+        let host = FakeHost::new(vec![captured.clone()], Some(NetworkStackValue::Dword(1)));
+        apply_network_stack(&host, &captured).expect("apply");
+        assert_eq!(*host.writes.borrow(), 0);
+        let host = FakeHost::new(vec![captured.clone()], Some(NetworkStackValue::Dword(0)));
+        apply_network_stack(&host, &captured).expect("apply");
+        assert_eq!(*host.writes.borrow(), 1);
+    }
 
     #[test]
     pub(crate) fn automatic_transaction_only_targets_supported_rss() {

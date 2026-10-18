@@ -118,7 +118,7 @@ impl Area {
                 (
                     "Phase 1",
                     "Native CLI",
-                    "Publishes and arms the protected reboot handoff",
+                    "Publishes and arms the reboot handoff (NVIDIA only in this alpha)",
                 ),
                 ("Verification", "Read only", "Reports exact workflow state"),
                 ("Phase 2", "Safe Mode", "GUI intentionally prohibited"),

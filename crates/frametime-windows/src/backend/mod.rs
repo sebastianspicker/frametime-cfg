@@ -8,6 +8,7 @@ mod public;
 mod transaction;
 mod verification;
 
+pub use construction::selected_gpu_branch;
 pub use live::*;
 pub use planner::PlannerBackend;
 pub use public::*;

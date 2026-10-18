@@ -52,12 +52,7 @@ impl<'authority> LiveBackend<'authority> {
 
     #[must_use]
     pub fn configured_gpu_branch(&self) -> Option<GpuBranch> {
-        self.state
-            .gpu_input
-            .as_deref()
-            .and_then(|value| value.parse::<u8>().ok())
-            .and_then(|value| GpuBranch::try_from(value).ok())
-            .or(self.hardware.gpu_branch)
+        gpu_branch_for(&self.state, self.hardware.gpu_branch)
     }
 
     pub(crate) fn runtime_authority(&self) -> Result<&VerifiedSelectedRuntime, String> {
@@ -108,4 +103,19 @@ impl<'authority> LiveBackend<'authority> {
             .ok_or("GPU branch is unknown; select a validated branch before NVIDIA preparation")?;
         Ok(!plan_for_step(&operation.step, branch).applicable)
     }
+}
+
+/// The configured GPU branch, falling back to the detected one.
+pub(crate) fn gpu_branch_for(state: &State, detected: Option<GpuBranch>) -> Option<GpuBranch> {
+    state
+        .gpu_input
+        .as_deref()
+        .and_then(|value| value.parse::<u8>().ok())
+        .and_then(|value| GpuBranch::try_from(value).ok())
+        .or(detected)
+}
+
+/// The GPU branch a live run on this machine uses for `state`.
+pub fn selected_gpu_branch(state: &State) -> Result<Option<GpuBranch>, String> {
+    Ok(gpu_branch_for(state, discover_hardware()?.gpu_branch))
 }

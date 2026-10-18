@@ -34,6 +34,36 @@ pub(crate) enum MutationAuthority<'authority> {
     Runtime(&'authority VerifiedSelectedRuntime),
 }
 
+/// Every action `LiveBackend::inspect` answers itself instead of falling
+/// through to the context-free `inspect_action`.
+pub(crate) fn has_dedicated_live_inspection(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::NvidiaDriverDownloadPreparation
+            | Action::MsiPreparation
+            | Action::NicAffinityPreparation
+            | Action::MsiInterrupts
+            | Action::NicInterruptAffinity
+            | Action::ObserveConfigState
+            | Action::ObserveGpuInventory
+            | Action::BaselineBenchmark
+            | Action::FinalBenchmark
+            | Action::ObserveChipsetDriver
+            | Action::ObserveMemoryTopology
+            | Action::FpsCapInfo
+            | Action::Pagefile
+            | Action::Cs2Registry(_)
+            | Action::Cs2Config
+            | Action::GpuDriverCleanPreparation
+            | Action::NvidiaProfilePreparation
+            | Action::FinalChecklistGuide
+            | Action::NetworkStack
+            | Action::NvidiaProfileApply
+            | Action::NvidiaDriverRemoval
+            | Action::NvidiaDriverInstall
+    )
+}
+
 impl Backend for LiveBackend<'_> {
     fn is_dry_run(&self) -> bool {
         false
@@ -95,13 +125,7 @@ impl Backend for LiveBackend<'_> {
                 self.memory_topology = Some(captured);
                 return Ok(inspection);
             }
-            Action::FpsCapInfo => {
-                let inspection = inspect_fps_cap_info(Some(self.config.value()), &self.state)?;
-                if inspection == Inspection::Satisfied {
-                    let _messages = fps_cap_info_messages(&self.state);
-                }
-                return Ok(inspection);
-            }
+            Action::FpsCapInfo => return self.inspect_fps_cap(),
             Action::Pagefile => return inspect_pagefile(&self.state),
             Action::Cs2Registry(action) => return inspect_cs2_registry(action),
             Action::Cs2Config => return inspect_cs2_config(),
@@ -121,6 +145,10 @@ impl Backend for LiveBackend<'_> {
         if !plan_for_step(&operation.step, branch).applicable {
             return Ok(Inspection::Inapplicable);
         }
+        if let Some(inspection) = self.inspect_transaction_action(&action) {
+            return inspection;
+        }
+        debug_assert!(!has_dedicated_live_inspection(&action));
         inspect_action(&action)
     }
     fn plan(&mut self, operation: Operation) -> Result<Vec<String>, String> {
@@ -320,6 +348,28 @@ impl Backend for LiveBackend<'_> {
 }
 
 impl LiveBackend<'_> {
+    fn inspect_fps_cap(&self) -> Result<Inspection, String> {
+        let inspection = inspect_fps_cap_info(Some(self.config.value()), &self.state)?;
+        if inspection == Inspection::Satisfied {
+            let _messages = fps_cap_info_messages(&self.state);
+        }
+        Ok(inspection)
+    }
+
+    fn inspect_transaction_action(&self, action: &Action) -> Option<Result<Inspection, String>> {
+        Some(match action {
+            Action::NetworkStack => inspect_network_stack(&NativeNetworkStackHost),
+            Action::NvidiaProfileApply => {
+                // DRS apply is idempotent; verify needs the captured backup, so never Satisfied.
+                require_stored_preparation(&self._trusted_work_dir, "P1:20")
+                    .map(|()| Inspection::NeedsApply)
+            }
+            Action::NvidiaDriverRemoval | Action::NvidiaDriverInstall => {
+                load_driver_transaction_at(&self.work_dir).and_then(driver_execution_inspection)
+            }
+            _ => return None,
+        })
+    }
     pub(crate) fn capture_backups_for_action(
         &mut self,
         action: &Action,
@@ -386,6 +436,49 @@ impl LiveBackend<'_> {
                 None,
                 self.captured_cs2_bindings.get(key),
             ),
+        }
+    }
+}
+
+/// P2:2/P3:1 can run only on the durable P1:18/P1:19 driver transaction; the
+/// apply path re-validates it, and verify needs the Engine's apply.
+fn driver_execution_inspection<T>(transaction: Option<T>) -> Result<Inspection, String> {
+    transaction.map(|_| Inspection::NeedsApply).ok_or_else(|| {
+        "P2:2/P3:1 require durable P1:18/P1:19 NVIDIA evidence; run `frametime driver prepare-nvidia` first".into()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn driver_steps_need_the_prepared_transaction() {
+        assert_eq!(
+            driver_execution_inspection(Some(())),
+            Ok(Inspection::NeedsApply)
+        );
+        assert!(
+            driver_execution_inspection::<()>(None)
+                .expect_err("missing transaction")
+                .contains("driver prepare-nvidia")
+        );
+    }
+
+    #[test]
+    fn every_catalog_action_has_a_live_or_generic_inspection() {
+        for step in frametime_domain::catalog::step_catalog() {
+            let descriptor = descriptor_for(step).expect("descriptor");
+            if matches!(descriptor.capability, Capability::Advisory(_)) {
+                continue;
+            }
+            let action = descriptor.action;
+            assert!(
+                has_dedicated_live_inspection(&action) || generic_inspection_supported(&action),
+                "{}:{} has no live or generic inspection for {action:?}",
+                step.id.phase as u8,
+                step.id.number
+            );
         }
     }
 }

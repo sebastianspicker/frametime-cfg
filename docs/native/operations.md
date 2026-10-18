@@ -37,12 +37,19 @@ the authenticated package or selected runtime. See
 
 ## Three phases
 
+In this alpha only the NVIDIA branches continue past Phase 1. On AMD and Intel
+Arc, `optimize` completes Phase 1 and stops without arming Safe Mode, because
+P2:2 and P2:3 require a prepared NVIDIA driver transaction.
+
 1. **Phase 1 — normal boot.** Validates requested work, captures and persists
    prerequisite evidence, and may publish a verified runtime before arming the
    exact Safe Mode handoff.
 2. **Phase 2 — Safe Mode.** Requires the selected runtime, transaction stage,
    and exact handoff; performs guarded work, clears Safe Boot, and records the
-   same-user Phase 3 handoff.
+   same-user Phase 3 handoff. All of it runs in the one Safe Mode launch,
+   because Windows removes the RunOnce handoff when that process exits. If it
+   fails after Safe Boot is cleared, follow the stuck-handoff procedure in
+   [recovery](recovery.md).
 3. **Phase 3 — normal boot, bound user.** Verifies the runtime, user binding,
    and handoff; performs guarded work; and clears the handoff only after
    coherent completion.

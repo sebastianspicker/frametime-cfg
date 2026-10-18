@@ -27,6 +27,19 @@ stays outside that file-level verification boundary.
 CVar names, defaults, and effects depend on the game build. Validate them against
 the installed client and current Valve material before use.
 
+The `repo-checks` suite fails when a cfg asset uses a name that is not a
+player-settable convar or command in the pinned snapshot
+`repo-checks/data/cs2-console-names.txt`: built from the GameTracking-CS2
+`DumpSource2` convar and command dumps, without cheat, development-only, or
+hidden entries. When Valve changes CVars, regenerate the snapshot from the
+newer dump and update the assets in the same change. The snapshot proves a
+name exists, not that a value helps; that still needs measurement.
+
+`assets/videosettings.txt` is a reference for the in-game video menu. Its
+`setting.*` keys are checked against `repo-checks/data/cs2-video-settings.txt`,
+the keys found in the shipped CS2 binaries of the same build. The tool still
+never writes CS2 video files.
+
 ## Excluded and conditional controls
 
 Legacy launch flags, blanket timer or scheduler changes, generic TCP tuning for a

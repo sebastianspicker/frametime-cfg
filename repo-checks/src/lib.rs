@@ -3,12 +3,20 @@
 //! This crate holds no runtime code. It provides the small helpers for
 //! repository-wide policy checks: locating the repository root, reading a file
 //! as UTF-8, parsing a `Cargo.toml` as a TOML table, recursively collecting
-//! `.rs` sources, and separating production lines from `cfg(test)` items.
+//! `.rs` sources, and separating production lines from `cfg(test)` items. It
+//! also checks that batch scripts define every label they call and that the
+//! shipped CS2 cfg assets use only names the pinned game build accepts.
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+mod batch_labels;
+mod cfg_cvars;
+
+pub use batch_labels::undefined_batch_labels;
+pub use cfg_cvars::{cfg_command_names, snapshot_names, video_setting_keys};
 
 /// The repository root, derived from this crate's own manifest directory.
 ///
