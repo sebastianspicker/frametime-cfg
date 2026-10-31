@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use frametime_domain::hex::lower_hex;
 use frametime_domain::{
     handoff::RuntimeRecord,
     runtime::{
@@ -291,7 +292,7 @@ fn copy_bounded(
         remaining -= read;
     }
     flush(destination, "flush published runtime payload")?;
-    let expected = format!("{:x}", digest.finalize());
+    let expected = lower_hex(digest.finalize().as_slice());
     if expected != expected_hash {
         return Err("authenticated runtime source hash changed before copy".into());
     }
@@ -364,11 +365,11 @@ fn hash_handle(handle: HANDLE) -> Result<String, String> {
         digest.update(&buffer[..read]);
         remaining -= read;
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(lower_hex(digest.finalize().as_slice()))
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    lower_hex(Sha256::digest(bytes).as_slice())
 }
 
 fn write_all(handle: HANDLE, bytes: &[u8]) -> Result<(), String> {

@@ -36,6 +36,22 @@ State-changing commands authenticate before elevation or mutation. The runtime
 and handoff records bind phase actions to verified package evidence, the
 selected generation, and the required same-user checks.
 
+## Resetting a pre-existing C:\FRAMETIME_CFG
+
+The tool only accepts a `C:\FRAMETIME_CFG` that it created itself, with a
+protected DACL granting exactly SYSTEM and Administrators. A folder with that
+name that was not created by this version, for example one left over from the
+retired PowerShell suite or an earlier build, has a normal inherited DACL and is
+rejected with "suite root DACL is not protected". The tool never repairs it.
+
+1. Back up the folder if it holds anything you want to keep.
+2. From an elevated prompt, move it aside:
+   `move C:\FRAMETIME_CFG C:\FRAMETIME_CFG.old`
+3. Run the command again. The tool creates a fresh, protected
+   `C:\FRAMETIME_CFG`.
+
+Never loosen the DACL or take ownership of the folder by hand to make it pass.
+
 ## Maintainer checks
 
 - Keep [`package-layout.txt`](../package-layout.txt), package generation,

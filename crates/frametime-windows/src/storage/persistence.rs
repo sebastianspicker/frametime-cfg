@@ -10,13 +10,25 @@ pub fn load_progress() -> Result<Progress, String> {
 }
 
 pub(crate) fn load_progress_at(work_dir: &Path) -> Result<Progress, String> {
+    Ok(load_progress_if_present_at(work_dir)?.unwrap_or_default())
+}
+
+/// Like [`load_progress`], but reports an absent file as `None`.  A present
+/// file that cannot be read or validated is still an error.
+pub fn load_progress_if_present() -> Result<Option<Progress>, String> {
+    load_progress_if_present_at(TrustedWorkDir::acquire_fixed()?.path())
+}
+
+pub(crate) fn load_progress_if_present_at(work_dir: &Path) -> Result<Option<Progress>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let work_dir = trusted.path();
     let path = work_dir.join(PROGRESS_FILE);
     if !path.exists() {
-        return Ok(Progress::default());
+        return Ok(None);
     }
-    read_json_trusted(&trusted, PROGRESS_FILE).map_err(|error| format!("read progress: {error}"))
+    read_json_trusted(&trusted, PROGRESS_FILE)
+        .map(Some)
+        .map_err(|error| format!("read progress: {error}"))
 }
 
 /// Load and validate persisted state only from the fixed live location.
@@ -25,11 +37,21 @@ pub fn load_state() -> Result<State, String> {
 }
 
 pub(crate) fn load_state_at(work_dir: &Path) -> Result<State, String> {
+    Ok(load_state_if_present_at(work_dir)?.unwrap_or_default())
+}
+
+/// Like [`load_state`], but reports an absent file as `None`.  A present file
+/// that cannot be read or validated is still an error.
+pub fn load_state_if_present() -> Result<Option<State>, String> {
+    load_state_if_present_at(TrustedWorkDir::acquire_fixed()?.path())
+}
+
+pub(crate) fn load_state_if_present_at(work_dir: &Path) -> Result<Option<State>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let work_dir = trusted.path();
     let path = work_dir.join(STATE_FILE);
     if !path.exists() {
-        return Ok(State::default());
+        return Ok(None);
     }
     let state: State =
         read_json_trusted(&trusted, STATE_FILE).map_err(|error| format!("read state: {error}"))?;
@@ -37,7 +59,7 @@ pub(crate) fn load_state_at(work_dir: &Path) -> Result<State, String> {
     if !state.work_dir.eq_ignore_ascii_case(WINDOWS_WORK_DIR) {
         return Err("state workDir must be C:\\FRAMETIME_CFG".into());
     }
-    Ok(state)
+    Ok(Some(state))
 }
 
 /// Reads the compatible benchmark history only through the trusted fixed root.

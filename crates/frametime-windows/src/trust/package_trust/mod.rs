@@ -188,5 +188,7 @@ mod release_feature_tests {
 #[cfg(windows)]
 pub(crate) mod catalog;
 mod contract;
+#[cfg(any(windows, test))]
+mod rejection;
 #[cfg(windows)]
 pub(crate) mod windows;

@@ -68,7 +68,7 @@ boundary, or view the [live demo](https://sebastianspicker.github.io/frametime-c
 | `crates/frametime-app` | Shared command and use-case orchestration | Root workspace library |
 | `crates/frametime-cli` | `frametime.exe` terminal interface | Root workspace binary |
 | `crates/frametime-gui` | `frametime-gui.exe` desktop interface | Root workspace binary |
-| `repo-checks` | Repository policy check helpers | Root workspace member, never packaged |
+| `repo-checks` | Batch-label and CS2 cfg checks plus source helpers | Root workspace member, never packaged |
 | [`tools/northclock`](tools/northclock/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
 | [`tools/driver-foundry`](tools/driver-foundry/README.md) | Archived, unsupported reference workspace | Source, history, and security reporting retained |
 
@@ -105,8 +105,8 @@ In this alpha the Safe Mode driver workflow (P1:38, Phase 2 and Phase 3) is
 NVIDIA-only: on AMD and Intel Arc, `optimize` completes Phase 1 and stops
 without arming Safe Mode, and `dry-run` shows those steps as stopped.
 
-The full contributor gate — formatting, Clippy, architecture checks, and the
-Windows target check — is in [CONTRIBUTING.md](CONTRIBUTING.md). Authenticated
+The full contributor gate — formatting, Clippy, tests, and the Windows target
+check — is in [CONTRIBUTING.md](CONTRIBUTING.md). Authenticated
 and unsigned package commands are in
 [release packaging](docs/DEPLOYMENT.md).
 

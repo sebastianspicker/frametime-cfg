@@ -232,7 +232,7 @@ pub(crate) fn require_cleanup_confirmation(
     };
     if requires_irreversible_acknowledgement(contract_mode) && !acknowledge_irreversible {
         return Err(ApplicationError::Invalid(
-            "cleanup --mode full requires --acknowledge-irreversible after --yes".into(),
+            "cleanup quick and cleanup full delete Temp contents irreversibly and require --yes --acknowledge-irreversible".into(),
         ));
     }
     Ok(())
@@ -296,8 +296,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cleanup_confirmation_requires_an_extra_acknowledgement_only_for_full() {
-        assert!(require_cleanup_confirmation(CleanupMode::Quick, true, false).is_ok());
+    fn cleanup_confirmation_requires_an_extra_acknowledgement_for_quick_and_full() {
+        assert!(require_cleanup_confirmation(CleanupMode::Quick, true, false).is_err());
+        assert!(require_cleanup_confirmation(CleanupMode::Quick, true, true).is_ok());
         assert!(require_cleanup_confirmation(CleanupMode::Driver, true, false).is_ok());
         assert!(require_cleanup_confirmation(CleanupMode::Full, true, false).is_err());
         assert!(require_cleanup_confirmation(CleanupMode::Full, true, true).is_ok());

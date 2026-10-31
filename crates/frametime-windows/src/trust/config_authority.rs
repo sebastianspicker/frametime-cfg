@@ -5,6 +5,7 @@ use crate::*;
 
 use std::sync::Arc;
 
+use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +62,7 @@ impl VerifiedConfig {
         if actual_size != expected_size {
             return Err("verified configuration size differs from its trusted identity".into());
         }
-        let actual_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let actual_sha256 = lower_hex(Sha256::digest(&bytes).as_slice());
         if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
             return Err("verified configuration SHA-256 differs from its trusted identity".into());
         }
@@ -89,7 +90,7 @@ mod config_authority_tests {
     #[test]
     pub(crate) fn verified_config_is_cloneable_and_snapshot_bound() {
         let mut bytes = fixture();
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = lower_hex(Sha256::digest(&bytes).as_slice());
         let config =
             VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64, &digest)
                 .expect("verified fixture");
@@ -102,7 +103,7 @@ mod config_authority_tests {
     #[test]
     pub(crate) fn verified_config_rejects_identity_or_content_tampering() {
         let bytes = fixture();
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = lower_hex(Sha256::digest(&bytes).as_slice());
         assert!(
             VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64 + 1, &digest)
                 .is_err()
@@ -114,7 +115,7 @@ mod config_authority_tests {
             VerifiedConfig::from_verified_bytes(
                 vec![0xff],
                 1,
-                &format!("{:x}", Sha256::digest([0xff]))
+                &lower_hex(Sha256::digest([0xff]).as_slice())
             )
             .is_err()
         );

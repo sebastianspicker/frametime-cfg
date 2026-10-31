@@ -3,6 +3,7 @@ use std::path::Path;
 use frametime_domain::driver::{
     CaptureFreshnessPolicy, DriverTransactionV2Stage, DrsSnapshot, Sha256Digest,
 };
+use frametime_domain::hex::lower_hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -46,7 +47,7 @@ impl PreviousDriverTransaction {
             .profile_backup
             .to_json()
             .map_err(|error| format!("validate archived NVIDIA profile backup: {error:?}"))?;
-        let actual = Sha256Digest::parse(format!("{:x}", Sha256::digest(bytes)))
+        let actual = Sha256Digest::parse(lower_hex(Sha256::digest(bytes).as_slice()))
             .map_err(|error| error.to_string())?;
         if actual != expected.sha256 {
             return Err("archived NVIDIA profile backup digest does not match transaction".into());

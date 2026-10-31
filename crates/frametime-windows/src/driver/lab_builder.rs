@@ -313,7 +313,7 @@ fn certificate_sha1_for_sha256(expected: &str) -> Result<String, String> {
                         .map_err(|_| "certificate encoding is too large")?,
                 )
             };
-            if format!("{:x}", Sha256::digest(encoded)) != expected {
+            if frametime_domain::hex::lower_hex(Sha256::digest(encoded).as_slice()) != expected {
                 continue;
             }
             let mut bytes = 0_u32;

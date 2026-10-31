@@ -6,7 +6,7 @@ pub(crate) fn authenticate(
     current_image: &Path,
 ) -> Result<AuthenticatedPackage, String> {
     if !is_fixed_local_drive(root)? {
-        return Err("package root must be on a local fixed drive".into());
+        return Err(rejection::not_fixed_drive());
     }
     let root_handle = open(root, true)?;
     let root_path = root_handle.path.clone();

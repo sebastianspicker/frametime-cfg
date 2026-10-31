@@ -12,6 +12,7 @@ use crate::{
     cs2_config::{
         Cs2ConfigController, Cs2ConfigError, Cs2ConfigFs, Cs2ConfigRequest, Cs2ConfigTarget,
     },
+    hex::lower_hex,
     steam::{CS2_APP_ID, Cs2Install},
 };
 
@@ -382,7 +383,7 @@ fn install_identity(install: &Cs2Install) -> Cs2InstallIdentity {
     }
     Cs2InstallIdentity {
         steam_app_id: CS2_APP_ID.to_owned(),
-        install_fingerprint: hex_digest(&hasher.finalize()),
+        install_fingerprint: lower_hex(hasher.finalize().as_slice()),
         unknown: BTreeMap::new(),
     }
 }
@@ -457,15 +458,5 @@ fn validate_snapshot_bytes(
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    hex_digest(&Sha256::digest(bytes))
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX[usize::from(byte >> 4)] as char);
-        encoded.push(HEX[usize::from(byte & 0x0f)] as char);
-    }
-    encoded
+    lower_hex(Sha256::digest(bytes).as_slice())
 }

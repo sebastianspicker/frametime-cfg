@@ -10,6 +10,7 @@ use std::{
 };
 
 use frametime_domain::driver::{OemPublishedName, PublishedDriverPackage, Sha256Digest};
+use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
@@ -120,7 +121,7 @@ fn hash_inf_and_catalog_identity(inf_path: &Path) -> Result<Sha256Digest, Adapte
     for (name, path) in files {
         hash_identity_file(&mut digest, &name, &path, &mut total)?;
     }
-    Sha256Digest::parse(format!("{:x}", digest.finalize()))
+    Sha256Digest::parse(lower_hex(digest.finalize().as_slice()))
         .map_err(|error| invalid_store_path(&error.to_string()))
 }
 

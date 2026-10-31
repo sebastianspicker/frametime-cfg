@@ -54,8 +54,17 @@ pub(crate) fn validate_kind(file: &RetainedFile, directory: bool) -> Result<(), 
     if attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
         || (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0) != directory
     {
+        let name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
         return Err(
-            "package members may not be reparse points and must have the expected type".into(),
+            if attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+                rejection::reparse_point(&name)
+            } else {
+                rejection::wrong_member_type(&name)
+            },
         );
     }
     let mut basic = BY_HANDLE_FILE_INFORMATION::default();
@@ -89,18 +98,18 @@ pub(crate) fn verify_tree_inventory(root: &Path) -> Result<(), String> {
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| format!("inspect package tree entry: {error}"))?;
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| "package inventory escapes root")?
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
             if metadata.file_type().is_symlink() {
-                return Err("package tree may not contain reparse points".into());
+                return Err(rejection::reparse_point(&relative));
             }
             if metadata.is_dir() {
                 walk(root, &path, files)?;
             } else if metadata.is_file() {
-                let relative = path
-                    .strip_prefix(root)
-                    .map_err(|_| "package inventory escapes root")?
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .to_ascii_lowercase();
                 if !files.insert(relative) {
                     return Err("package tree has case-colliding paths".into());
                 }
@@ -115,10 +124,9 @@ pub(crate) fn verify_tree_inventory(root: &Path) -> Result<(), String> {
     let mut expected = super::super::contract::expected_payload_paths();
     expected.insert(PACKAGE_MANIFEST_NAME.into());
     expected.insert(PACKAGE_CATALOG_NAME.into());
-    if actual == expected {
-        Ok(())
-    } else {
-        Err("package tree differs from fixed package inventory".into())
+    match rejection::inventory_difference(&actual, &expected) {
+        None => Ok(()),
+        Some(message) => Err(message),
     }
 }
 
@@ -150,7 +158,7 @@ pub(crate) fn file_id(handle: HANDLE) -> Result<FILE_ID_INFO, String> {
                 .map_err(|_| "FILE_ID_INFO size exceeds u32")?,
         )
     }
-    .map_err(|error| format!("inspect package member identity: {error}"))?;
+    .map_err(|error| rejection::identity_unavailable(&error.to_string()))?;
     Ok(id)
 }
 pub(crate) fn file_size(file: &RetainedFile) -> Result<u64, String> {
@@ -205,7 +213,9 @@ pub(crate) fn hash(file: &RetainedFile) -> Result<String, String> {
         let read = usize::try_from(read).map_err(|_| "package payload read size exceeds usize")?;
         digest.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(frametime_domain::hex::lower_hex(
+        digest.finalize().as_slice(),
+    ))
 }
 
 pub(crate) fn is_fixed_local_drive(root: &Path) -> Result<bool, String> {

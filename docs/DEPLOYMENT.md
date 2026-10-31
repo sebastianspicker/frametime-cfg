@@ -134,6 +134,21 @@ self-signed certificate is its own root, so it needs no CRL, but the timestamp
 authority's chain is still checked online. Testers therefore need network
 access when a live command authenticates the package.
 
+A tester without internet access fails authentication with "signature
+revocation status is offline or unknown". The self-signed test certificate is
+not the problem, because its root is excluded from the revocation check; the
+check needs to reach the CRL/OCSP endpoints of the rest of the chain, including
+the timestamp authority's.
+
+The pin is on the signing (leaf) certificate's SPKI, so a signing setup that
+rotates keys between builds breaks it: a package signed with a new key no longer
+matches the pin compiled into the build. Keep the release key stable for the
+whole alpha. The build accepts one or two pins in
+`FRAMETIME_PUBLISHER_SPKI_SHA256`, separated by `;` (two distinct SHA-256 hex
+values at most, checked by `scripts\package.cmd` and at runtime). Package
+authentication accepts a signer whose SPKI equals either pin, so supply both
+when the key is being replaced.
+
 ## Unsigned structural package
 
 The CI-equivalent lane clears the publisher pin, builds the default fail-closed

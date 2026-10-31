@@ -13,6 +13,7 @@ use std::{
 };
 
 use frametime_domain::driver::{NvidiaComponentSelection, SourceComponentClassification};
+use frametime_domain::hex::lower_hex;
 use serde::{Deserialize, Serialize};
 use sevenz_rust2::{ArchiveEntry, ArchiveReader, Error as SevenZError, Password};
 use sha2::{Digest, Sha256};
@@ -556,7 +557,7 @@ fn hash_reader(
             "package file length changed while hashing {relative}: inspected {inspected_len}, read {counted}"
         ));
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(lower_hex(hasher.finalize().as_slice()))
 }
 
 fn require_unused_output(path: &Path) -> Result<(), String> {

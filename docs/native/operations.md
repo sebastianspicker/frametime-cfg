@@ -29,11 +29,28 @@ reboot sequence.
   before any driver, Safe Mode, reboot, or irreversible cleanup step.
 - Do not replace package, selected-runtime, handoff, or protected-root files to
   work around a failed check.
+- `cleanup quick` and `cleanup full` both delete Windows and user Temp contents
+  irreversibly and require `--yes --acknowledge-irreversible`. In this alpha
+  `full` runs the same actions as `quick`; the repair actions (shader caches,
+  Prefetch, Winsock reset, event logs) are not offered.
 
 State-changing construction takes the fixed protected root `C:\FRAMETIME_CFG`,
 requires elevation, and uses the immutable configuration snapshot attached to
 the authenticated package or selected runtime. See
 [configuration](../CONFIGURATION.md).
+
+## Before you run optimize
+
+Two Phase 1 steps depend on earlier commands. Run these in order:
+
+1. `frametime baseline-benchmark --vprof-file <capture>` persists the P1:17
+   baseline. Without it, `optimize` stops at P1:17.
+2. On NVIDIA, `frametime driver prepare-nvidia` (with `--official-url` or
+   `--local-installer`) persists the P1:18/P1:19 driver package evidence.
+   Without it, `optimize` stops at P1:19.
+3. `frametime optimize`. Without `--yes`, it first asks once whether to continue
+   from the existing Phase 1 state (left by the earlier commands), then asks per
+   step. `--yes` skips both.
 
 ## Three phases
 
@@ -85,9 +102,27 @@ top of the compatible rounded aggregate fields.
 
 From an authenticated package, `verify` prints a read-only structured state
 snapshot, `backup-summary` reports captured backup counts, and `restore --yes`
-attempts only supported identity-bound restores. `show-log` reads a bounded
-existing `Logs\frametime_current.log`; the current implementation does not create
-or append that file, so a fresh installation may have no log to show.
+attempts only supported identity-bound restores. `abort-handoff --yes` removes
+exactly the Safe Boot and Run/RunOnce values an active reboot transaction armed
+and clears that transaction; see [recovery](recovery.md).
+
+Every state-changing live command (`optimize`, `configure`, `cs2-cfg`,
+`boot-safe-mode`, `phase2`, `phase3`, `phase3-handoff`, `cleanup`, `restore`,
+`reset-progress`, `abort-handoff`) appends to `C:\FRAMETIME_CFG\Logs\frametime_current.log`. The
+`Logs` directory and file are created on first use with the protected work-directory
+security, inside an existing work directory: the tool never creates `C:\FRAMETIME_CFG`
+just to log, and a command run without elevation writes no log. Each run writes a start record, a command record, one record per Engine
+step (applied, skipped, satisfied, inspect-only, advisory, or failed with the error
+text), and an `ERROR` record if the command fails. Computer and user names and
+`C:\Users\<name>` paths are redacted. When the log passes 8 MiB it is renamed to
+`frametime_<timestamp>.log` in the same directory and a new one is started. A log
+write failure prints `warning: could not write log: ...` on stderr and does not
+change the command's outcome. Read-only commands (`dry-run`, `verify`, `hardware`,
+`fps-cap --no-persist`) do not write the log.
+
+`show-log` reads the bounded `Logs\frametime_current.log`; before any live command
+has run it prints `No log has been written yet (...)` and exits 0. Attach this file
+(and the archives, if the problem spans a rotation) to bug reports.
 
 Read [recovery](recovery.md) before attempting a live operation or intervening
 in an incomplete phase.

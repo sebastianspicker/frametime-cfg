@@ -10,6 +10,8 @@ pub(crate) mod io_windows;
 pub(crate) mod json_common;
 #[cfg(windows)]
 pub(crate) mod json_windows;
+#[cfg(any(test, windows))]
+pub(crate) mod log_writer;
 pub(crate) mod package_trust;
 mod public;
 mod runtime_publish;

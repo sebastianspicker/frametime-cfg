@@ -61,9 +61,13 @@ Public surfaces are deliberately narrow:
   of those stubs, host builds allow dead code in this crate, and the
   Windows-target Clippy run is the authority for it.
 
-The unpublished [`repo-checks`](../repo-checks) workspace member holds the
-helpers for repository policy checks (dependency direction, domain purity, the
-frontend-to-app boundary, the native package surface, a 600-line file cap).
+The unpublished [`repo-checks`](../repo-checks) workspace member holds source
+helpers and the tests that `cargo test --workspace` runs: every `call :label`
+in `scripts/*.cmd` resolves to a defined label, and the shipped CS2 cfg assets
+and video-settings reference use only names from the pinned CVar and video-key
+snapshots. The dependency direction, domain purity, frontend boundary, package
+surface, and file-size rules in [CONTRIBUTING.md](../CONTRIBUTING.md) are
+contributor rules reviewed by hand, not automated checks.
 
 ## Primary runtime flow
 

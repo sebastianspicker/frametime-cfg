@@ -51,8 +51,11 @@ project is alpha: no release has been qualified on Windows hardware. See
 - Repository policy checks (dependency direction, domain purity, frontend
   boundary, native package surface, file-size cap, clone detection) moved from
   two bash scripts, inline workflow steps, and domain tests into the
-  unpublished `repo-checks` workspace member, so `cargo test --workspace` and
-  `scripts\verify.cmd` enforce them on every platform.
+  unpublished `repo-checks` workspace member. Correction: those checks are no
+  longer part of the published workspace, so `cargo test --workspace` does not
+  enforce them; they are contributor rules. `repo-checks` runs only the
+  batch-label resolution check for `scripts/*.cmd` and the CS2 cfg CVar and
+  video-key snapshot checks.
 - Narrowed library surfaces: `frametime-domain` items are reached only through
   their owning module, and `frametime-windows` exposes one explicit API that is
   identical on every target.

@@ -37,6 +37,7 @@ use windows::{
 };
 
 use super::catalog::CatalogContext;
+use super::rejection;
 use super::{
     AuthenticatedExecutable, AuthenticatedPackage, CLI_EXECUTABLE_NAME, GUI_EXECUTABLE_NAME,
     PACKAGE_CATALOG_NAME, PACKAGE_MANIFEST_NAME, PackageFile, PackageManifest, VerifiedConfig,

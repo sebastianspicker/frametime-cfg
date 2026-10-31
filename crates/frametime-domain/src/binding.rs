@@ -7,6 +7,7 @@
 
 use std::{collections::BTreeMap, fmt};
 
+use crate::hex::lower_hex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -61,7 +62,7 @@ impl BindingReceiptId {
 
     pub fn digest_serializable(value: &impl Serialize) -> Result<Self, BindingError> {
         let bytes = serde_json::to_vec(value).map_err(|_| BindingError::InvalidReceiptId)?;
-        Self::parse(format!("{:x}", Sha256::digest(bytes)))
+        Self::parse(lower_hex(Sha256::digest(bytes).as_slice()))
     }
 }
 

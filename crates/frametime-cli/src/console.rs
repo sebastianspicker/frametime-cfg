@@ -1,4 +1,7 @@
-use std::io::{self, IsTerminal, Write};
+use std::{
+    io::{self, IsTerminal, Write},
+    path::PathBuf,
+};
 
 use frametime_domain::{catalog::Step, cs2_config::OptionalCfgAsset};
 
@@ -140,8 +143,8 @@ fn interactive_cleanup() -> Result<Command, AppError> {
         _ => return Err(AppError::Invalid("invalid cleanup mode".into())),
     };
     let yes = confirm("Run this destructive cleanup mode? [y/N]: ")?;
-    let acknowledge_irreversible = if yes && matches!(mode, CleanupMode::Full) {
-        confirm("Full cleanup is irreversible. Acknowledge irreversible effects? [y/N]: ")?
+    let acknowledge_irreversible = if yes && !matches!(mode, CleanupMode::Driver) {
+        confirm("This cleanup deletes Temp contents irreversibly. Acknowledge? [y/N]: ")?
     } else {
         false
     };
@@ -157,24 +160,40 @@ fn interactive_cleanup() -> Result<Command, AppError> {
 }
 
 fn interactive_fps_cap() -> Result<Command, AppError> {
-    let value = read_console_line("Measured average FPS: ")?;
-    let average_fps = value
-        .trim()
-        .parse::<f64>()
-        .map_err(|_| AppError::Invalid("average FPS must be a number".into()))?;
+    let value = read_console_line("Path of a VProf capture file (empty to go back): ")?;
+    let Some(path) = fps_cap_menu_path(&value) else {
+        return Ok(Command::Exit);
+    };
+    println!("{}", fps_cap_persist_hint(&path.display().to_string()));
     Ok(Command::FpsCap {
-        average_fps: Some(average_fps),
+        average_fps: None,
         vprof_text: None,
-        vprof_file: None,
+        vprof_file: Some(path),
         clipboard: false,
         strategy: FpsStrategyValue::Raw,
         measured_cap: 0,
         refresh_hz: 0,
         ceiling_margin_hz: 3,
         label: "Manual benchmark".into(),
-        copy: frametime_app::is_supported_windows_host(),
-        no_persist: !frametime_app::is_supported_windows_host(),
+        copy: false,
+        no_persist: true,
     })
+}
+
+/// The menu only evaluates; persisting a cap stays an explicit command.
+fn fps_cap_persist_hint(path: &str) -> String {
+    format!(
+        "This evaluation changes nothing and copies nothing. To persist a cap, run:\n  frametime fps-cap --vprof-file \"{path}\" --measured-cap <N>\n  frametime fps-cap --vprof-file \"{path}\" --strategy vrr --refresh-hz <HZ>"
+    )
+}
+
+fn fps_cap_menu_path(value: &str) -> Option<PathBuf> {
+    let trimmed = value.trim().trim_matches('"').trim();
+    (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
+}
+
+pub(crate) fn confirm_interactive(message: &str) -> bool {
+    io::stdin().is_terminal() && confirm(message).unwrap_or(false)
 }
 
 fn confirm(prompt: &str) -> Result<bool, AppError> {
@@ -211,5 +230,22 @@ mod tests {
         assert_eq!(cfg_asset_menu_value("0"), None);
         assert_eq!(cfg_asset_menu_value("16"), None);
         assert_eq!(cfg_asset_menu_value("not-a-number"), None);
+    }
+
+    #[test]
+    fn fps_cap_menu_path_ignores_blank_input_and_surrounding_quotes() {
+        assert_eq!(fps_cap_menu_path("  \n"), None);
+        assert_eq!(fps_cap_menu_path("\"\""), None);
+        assert_eq!(
+            fps_cap_menu_path(" \"C:\\caps\\run.txt\" \n"),
+            Some(PathBuf::from("C:\\caps\\run.txt"))
+        );
+    }
+
+    #[test]
+    fn fps_cap_persist_hint_names_both_explicit_commands() {
+        let hint = fps_cap_persist_hint("run.txt");
+        assert!(hint.contains("frametime fps-cap --vprof-file \"run.txt\" --measured-cap <N>"));
+        assert!(hint.contains("--strategy vrr"));
     }
 }

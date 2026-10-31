@@ -13,6 +13,17 @@ pub(crate) struct Cli {
 #[derive(Debug, Subcommand)]
 pub(crate) enum Command {
     /// Start or resume native Phase 1. Prompted profile steps need explicit consent.
+    ///
+    /// Before you run optimize:
+    ///
+    /// 1. frametime baseline-benchmark --vprof-file <capture>   (P1:17 baseline)
+    ///
+    /// 2. On NVIDIA: frametime driver prepare-nvidia --official-url <url>   (P1:19 driver package)
+    ///
+    /// 3. frametime optimize
+    ///
+    /// Without --yes, optimize first asks once to continue from the existing
+    /// state, then asks per step.
     Optimize {
         #[arg(long)]
         yes: bool,
@@ -54,13 +65,16 @@ pub(crate) enum Command {
         #[arg(long)]
         yes: bool,
     },
-    /// Request a bounded standalone cleanup with explicit destructive acknowledgement.
+    /// Request a bounded standalone cleanup. Quick and full both delete Windows
+    /// and user Temp contents irreversibly and need `--yes --acknowledge-irreversible`.
+    /// In this alpha full runs the same actions as quick; shader-cache, Prefetch,
+    /// Winsock reset, and event-log repair actions are not offered.
     Cleanup {
         #[arg(value_enum, default_value = "quick")]
         mode: CleanupMode,
         #[arg(long)]
         yes: bool,
-        /// Acknowledge Full cleanup's irreversible resets and record deletion.
+        /// Acknowledge that quick and full cleanup delete Temp contents irreversibly.
         #[arg(long)]
         acknowledge_irreversible: bool,
     },
@@ -134,6 +148,11 @@ pub(crate) enum Command {
     BackupSummary,
     /// Clear only phase progress after confirmation.
     ResetProgress {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Remove exactly the Safe Boot and Run/RunOnce values a stuck reboot handoff armed.
+    AbortHandoff {
         #[arg(long)]
         yes: bool,
     },

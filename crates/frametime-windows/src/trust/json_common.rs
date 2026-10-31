@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 pub(super) const MAX_TRUSTED_JSON_BYTES: usize = 64 * 1024 * 1024;
-const TRUSTED_JSON_CHILDREN: [&str; 10] = [
+const TRUSTED_JSON_CHILDREN: [&str; 11] = [
     "backup.json",
     "progress.json",
     "state.json",
@@ -18,6 +18,9 @@ const TRUSTED_JSON_CHILDREN: [&str; 10] = [
     "driver-transaction.json",
     "driver-profile-backup.json",
     "driver-previous-transaction.json",
+    // Aborted reboot transactions are retained as fixed-name evidence by
+    // `abort-handoff`; the name is never caller-selected.
+    "aborted-reboot-transactions.json",
 ];
 
 pub(super) fn is_allowed_child(name: &str) -> bool {
@@ -84,6 +87,7 @@ mod tests {
             "driver-transaction.json",
             "driver-profile-backup.json",
             "driver-previous-transaction.json",
+            "aborted-reboot-transactions.json",
         ] {
             assert!(is_allowed_child(name), "{name}");
         }

@@ -19,8 +19,9 @@ use frametime_windows::{
     HandoffEvidence as NativeHandoffEvidence, LiveBackend, RebootHandoffState, SafebootEvidence,
     arm_phase_three_handoff, arm_safe_mode_handoff, clear_phase_three_handoff,
     complete_phase_two_safe_boot_clear, current_boot_mode, final_benchmark_status,
-    inspect_reboot_handoff_state, launch_published_safe_mode_handoff, load_progress, load_state,
-    publish_current_packaged_runtime, relaunch_phase_three_handoff, retain_selected_runtime,
+    inspect_reboot_handoff_state, launch_published_safe_mode_handoff, load_progress,
+    load_progress_if_present, load_state, load_state_if_present, publish_current_packaged_runtime,
+    relaunch_phase_three_handoff, retain_selected_runtime,
     runtime_inventory_incomplete as native_runtime_inventory_incomplete, selected_gpu_branch,
 };
 
@@ -29,7 +30,7 @@ use crate::{
     actions::{persist_final_benchmark_capture, read_final_benchmark_capture, require_yes},
     cancellation_requested,
     commands::VprofBenchmarkRequest,
-    prompt_for_step,
+    confirm, prompt_for_step,
 };
 
 mod live_commands;
@@ -41,7 +42,7 @@ fn run_phase_one(
 ) -> Result<RunSummary, ApplicationError> {
     require_boot_mode(BootMode::Normal, "optimize")?;
     let (state, progress) = load_session()?;
-    require_legacy_phase_one_migration(&state, &progress, yes)?;
+    require_legacy_phase_one_migration(yes)?;
     authorize_live(
         PhaseRequest::Optimize,
         &state,
@@ -359,36 +360,57 @@ fn state_has_reboot_transaction(state: &State) -> bool {
         || state.unknown.contains_key("activeRebootTransaction")
 }
 
-fn require_legacy_phase_one_migration(
-    state: &State,
-    progress: &Progress,
-    yes: bool,
-) -> Result<(), ApplicationError> {
+fn require_legacy_phase_one_migration(yes: bool) -> Result<(), ApplicationError> {
     let native = inspect_reboot_handoff_state().map_err(ApplicationError::failed)?;
-    let decision = assess_inventory(
-        Some(state),
-        Some(progress),
+    // Absent files must reach the assessment as `None`; the defaulting loaders
+    // would make a fresh machine look like an idle legacy install.
+    let state = load_state_if_present().map_err(ApplicationError::failed)?;
+    let progress = load_progress_if_present().map_err(ApplicationError::failed)?;
+    let decision = assess_migration(
+        state.as_ref(),
+        progress.as_ref(),
         migration_inventory_from_native(&native, runtime_inventory_incomplete()),
     );
-    require_migration_decision(decision, yes)
+    require_migration_decision(decision, yes, confirm)
+}
+
+fn assess_migration(
+    state: Option<&State>,
+    progress: Option<&Progress>,
+    inventory: MigrationInventory,
+) -> MigrationDecision {
+    assess_inventory(state, progress, inventory)
 }
 
 fn require_migration_decision(
     decision: MigrationDecision,
     yes: bool,
+    confirm: impl FnOnce(&str) -> bool,
 ) -> Result<(), ApplicationError> {
-    match decision {
-        MigrationDecision::NotNeeded => Ok(()),
-        MigrationDecision::ConfirmIdle => require_yes(yes, "optimize legacy Phase 1 migration"),
-        MigrationDecision::ConfirmPartialPhaseOne { .. } if yes => Ok(()),
-        MigrationDecision::ConfirmPartialPhaseOne { completed, skipped } => {
-            Err(ApplicationError::Invalid(format!(
-                "optimize legacy Phase 1 migration ({completed} completed, {skipped} skipped) requires --yes"
-            )))
+    let (question, declined) = match decision {
+        MigrationDecision::NotNeeded => return Ok(()),
+        MigrationDecision::ConfirmIdle => (
+            "Existing workflow state found. Continue Phase 1 from it? [y/N]: ".to_string(),
+            "optimize legacy Phase 1 migration requires --yes; run `frametime optimize --yes` from a command prompt".to_string(),
+        ),
+        MigrationDecision::ConfirmPartialPhaseOne { completed, skipped } => (
+            format!(
+                "Existing Phase 1 state found ({completed} completed, {skipped} skipped). Continue Phase 1 from it? [y/N]: "
+            ),
+            format!(
+                "optimize legacy Phase 1 migration ({completed} completed, {skipped} skipped) requires --yes; run `frametime optimize --yes` from a command prompt"
+            ),
+        ),
+        MigrationDecision::Refuse(reason) => {
+            return Err(ApplicationError::failed(format!(
+                "optimize refused: legacy reboot transaction is armed or incomplete ({reason:?})"
+            )));
         }
-        MigrationDecision::Refuse(reason) => Err(ApplicationError::failed(format!(
-            "optimize refused: legacy reboot transaction is armed or incomplete ({reason:?})"
-        ))),
+    };
+    if yes || confirm(&question) {
+        Ok(())
+    } else {
+        Err(ApplicationError::Invalid(declined))
     }
 }
 
@@ -529,14 +551,14 @@ fn run_live_steps(
     }
     .map_err(ApplicationError::failed)?;
     let mut engine = Engine::new(backend, progress);
-    let report = engine
-        .run_with_control(
-            &steps,
-            profile,
-            |step| yes || prompt_for_step(step),
-            cancellation_requested,
-        )
-        .map_err(|error| ApplicationError::failed(error.to_string()))?;
+    let report = crate::live_log::run_steps_logged(
+        &mut engine,
+        &steps,
+        profile,
+        |step| yes || prompt_for_step(step),
+        cancellation_requested,
+    )
+    .map_err(|error| ApplicationError::failed(error.to_string()))?;
     let mut summary = RunSummary::message(format!(
         "Completed: {}; skipped: {}; advisories: {}",
         report.completed, report.skipped, report.advisories

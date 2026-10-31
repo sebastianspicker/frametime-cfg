@@ -393,7 +393,7 @@ mod tests {
 
     pub(crate) fn verified_config() -> VerifiedConfig {
         let bytes = include_bytes!("../../../../frametime.toml").to_vec();
-        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let digest = frametime_domain::hex::lower_hex(Sha256::digest(&bytes).as_slice());
         VerifiedConfig::from_verified_bytes(bytes.clone(), bytes.len() as u64, &digest)
             .expect("verified fixture")
     }

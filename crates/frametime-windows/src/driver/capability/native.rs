@@ -1,6 +1,7 @@
 use std::{ffi::c_void, mem::size_of};
 
 use frametime_domain::driver::Sha256Digest;
+use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
@@ -516,6 +517,6 @@ fn digest_handle(handle: HANDLE) -> Result<Sha256Digest, AdapterFailure> {
             .map_err(|_| adapter("hash artifact", "read count exceeds address space"))?;
         hash.update(&buffer[..count]);
     }
-    Sha256Digest::parse(format!("{:x}", hash.finalize()))
+    Sha256Digest::parse(lower_hex(hash.finalize().as_slice()))
         .map_err(|e| adapter("hash artifact", e.to_string()))
 }

@@ -66,6 +66,49 @@ pub fn read_log() -> Result<String, String> {
     }
 }
 
+/// One log record: a level word (`INFO`, `WARN`, `ERROR`) and its message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    pub level: &'static str,
+    pub message: String,
+}
+
+/// Appends records to the current file-backed log under the trusted work
+/// directory, creating `Logs` on first use inside an existing, validated root.
+/// An unelevated process or a work root that does not exist yet is a defined
+/// skip (`Ok`, nothing written): logging never creates the root.
+/// `start_session` writes the start record first. Computer and user names are
+/// redacted from every message.
+pub fn append_log(start_session: bool, entries: &[LogEntry]) -> Result<(), String> {
+    if entries.is_empty() && !start_session {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        if require_elevation().is_err() {
+            return Ok(());
+        }
+        let Some(trusted) = TrustedWorkDir::acquire_existing_fixed()? else {
+            return Ok(());
+        };
+        let host = crate::log_writer::HostNames {
+            computer: std::env::var("COMPUTERNAME").ok(),
+            user: std::env::var("USERNAME").ok(),
+        };
+        crate::trust::io_windows::append_current_log(
+            &trusted,
+            entries,
+            start_session,
+            &timestamp(),
+            &host,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        Err("log writing requires supported Windows x64".into())
+    }
+}
+
 /// Run only the catalogued P1:16 NIC latency transaction through the normal
 /// engine. The caller keeps consent in the application layer and supplies the
 /// non-cloneable package capability that authorizes the mutation.

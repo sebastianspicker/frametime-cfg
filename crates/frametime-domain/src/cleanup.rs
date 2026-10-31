@@ -304,11 +304,11 @@ pub const fn denied_cleanup_targets() -> &'static [DeniedCleanupTargetClass] {
     DENIED_TARGETS
 }
 
-/// Full cleanup has destructive system-reset and record-deletion effects and
-/// therefore needs an acknowledgement in addition to ordinary confirmation.
+/// A mode needs an acknowledgement in addition to ordinary confirmation
+/// whenever any of its actions is irreversible, such as deleting Temp contents.
 #[must_use]
-pub const fn requires_irreversible_acknowledgement(mode: CleanupMode) -> bool {
-    matches!(mode, CleanupMode::Full)
+pub fn requires_irreversible_acknowledgement(mode: CleanupMode) -> bool {
+    cleanup_actions(mode).iter().any(|spec| spec.irreversible)
 }
 
 #[cfg(test)]
@@ -332,6 +332,13 @@ mod tests {
                 && spec.target == CleanupTargetClass::Cs2App730ShaderCache
                 && spec.recovery == CleanupRecovery::RebuiltByOwner
         }));
+    }
+
+    #[test]
+    fn every_temp_deleting_mode_requires_the_irreversible_acknowledgement() {
+        assert!(requires_irreversible_acknowledgement(CleanupMode::Quick));
+        assert!(requires_irreversible_acknowledgement(CleanupMode::Full));
+        assert!(!requires_irreversible_acknowledgement(CleanupMode::Driver));
     }
 
     #[test]

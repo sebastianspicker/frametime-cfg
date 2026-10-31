@@ -105,8 +105,8 @@ pub(crate) use trust::trusted_work_dir;
 // non-Windows hosts as fail-closed stubs so the app and frontends can be
 // built, tested, and previewed there.
 pub use self::backend::{
-    BackupSummary, BackupSummaryEntry, LiveBackend, PlannerBackend, clear_backup,
-    deploy_optional_cs2_cfgs, export_backup, read_backup_summary, read_log,
+    BackupSummary, BackupSummaryEntry, LiveBackend, LogEntry, PlannerBackend, append_log,
+    clear_backup, deploy_optional_cs2_cfgs, export_backup, read_backup_summary, read_log,
     read_presentable_step_messages, reset_progress, restore_all_from_package,
     restore_all_from_runtime, restore_selected_from_package, run_network_stack_transaction,
     selected_gpu_branch,
@@ -123,16 +123,18 @@ pub use self::driver::{
     prepare_nvidia_driver, prepare_nvidia_driver_with_options, reconcile_nvidia_profiles,
 };
 pub use self::reboot::{
-    BootMode, BootModeEvidence, HandoffEvidence, RebootHandoffState, SafebootEvidence,
-    arm_phase_three_handoff, arm_safe_mode_handoff, clear_phase_three_handoff,
-    complete_phase_two_safe_boot_clear, current_boot_mode, inspect_reboot_handoff_state,
-    platform_is_supported, relaunch_phase_three_handoff,
+    BootMode, BootModeEvidence, HandoffAbort, HandoffAbortReport, HandoffEvidence,
+    RebootHandoffState, SafebootEvidence, abort_reboot_handoff, arm_phase_three_handoff,
+    arm_safe_mode_handoff, clear_phase_three_handoff, complete_phase_two_safe_boot_clear,
+    current_boot_mode, inspect_reboot_handoff_state, platform_is_supported,
+    relaunch_phase_three_handoff,
 };
 pub use self::storage::{
     FinalBenchmarkStatus, arm_driver_cleanup, cleanup_full, cleanup_quick, configure_profile,
     copy_text_to_clipboard, final_benchmark_status, load_backup, load_benchmark_history,
-    load_progress, load_state, persist_baseline_benchmark, persist_final_benchmark,
-    persist_fps_capture, read_text_from_clipboard, verify_settings,
+    load_progress, load_progress_if_present, load_state, load_state_if_present,
+    persist_baseline_benchmark, persist_final_benchmark, persist_fps_capture,
+    read_text_from_clipboard, verify_settings,
 };
 pub use self::system::platform::harden_process_dll_search;
 pub use self::trust::{

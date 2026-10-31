@@ -84,7 +84,7 @@ pub(crate) fn verify(
 }
 pub(crate) fn trust_error(status: i32) -> String {
     match u32::from_ne_bytes(status.to_ne_bytes()) {
-        0x8009_2013 | 0x800b_010e => "signature revocation status is offline or unknown".into(),
+        0x8009_2013 | 0x800b_010e => rejection::revocation_unavailable(),
         _ => format!("WinVerifyTrust rejected package signature: {status}"),
     }
 }

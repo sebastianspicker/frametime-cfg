@@ -67,7 +67,7 @@ fn malformed_sfx_is_rejected_without_creating_output() {
 #[test]
 fn streaming_hash_covers_multiple_buffers() {
     let bytes = vec![0xa5; HASH_BUFFER_BYTES * 2 + 137];
-    let expected = format!("{:x}", Sha256::digest(&bytes));
+    let expected = lower_hex(Sha256::digest(&bytes).as_slice());
     let actual = hash_reader(
         &mut Cursor::new(&bytes),
         u64::try_from(bytes.len()).unwrap(),
@@ -121,7 +121,7 @@ fn persisted_and_returned_manifests_have_the_required_sorted_forms() {
     assert_eq!(returned_manifest_file.bytes, persisted_bytes.len() as u64);
     assert_eq!(
         returned_manifest_file.sha256,
-        format!("{:x}", Sha256::digest(&persisted_bytes))
+        lower_hex(Sha256::digest(&persisted_bytes).as_slice())
     );
     assert_eq!(verify_prepared_nvidia_package(&output).unwrap(), persisted);
     let digest = prepared_nvidia_package_digest(&persisted).unwrap();
@@ -186,7 +186,7 @@ fn package_inventory_performance_fixture() {
             vec![NvidiaPackageFile {
                 path: "fixture.bin".into(),
                 bytes: metadata.len(),
-                sha256: format!("{:x}", Sha256::digest(&bytes)),
+                sha256: lower_hex(Sha256::digest(&bytes).as_slice()),
             }]
         }
         value => panic!("unsupported fixture mode: {value}"),

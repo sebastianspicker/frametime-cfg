@@ -168,5 +168,8 @@ pub enum Command {
     ResetProgress {
         yes: bool,
     },
+    AbortHandoff {
+        yes: bool,
+    },
     ShowLog,
 }

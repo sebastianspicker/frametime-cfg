@@ -1,6 +1,7 @@
 use std::{fs, path::Path};
 
 use frametime_domain::driver::Sha256Digest;
+use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 
 use super::{PreparedNvidiaPackageManifest, collect_manifest_files};
@@ -30,6 +31,6 @@ pub(crate) fn prepared_nvidia_package_digest(
 ) -> Result<Sha256Digest, String> {
     let canonical = serde_json::to_vec(manifest)
         .map_err(|error| format!("serialize prepared NVIDIA manifest: {error}"))?;
-    Sha256Digest::parse(format!("{:x}", Sha256::digest(canonical)))
+    Sha256Digest::parse(lower_hex(Sha256::digest(canonical).as_slice()))
         .map_err(|error| error.to_string())
 }

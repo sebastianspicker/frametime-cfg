@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use crate::hex::lower_hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -137,7 +138,7 @@ pub fn generate_dry_run_plan(input: &DriverPlanInput) -> Result<DryRunDriverPlan
     };
     let encoded = serde_json::to_vec(&canonical_input)
         .map_err(|_| ValidationError::Invalid { field: "planInput" })?;
-    let input_sha256 = Sha256Digest::parse(format!("{:x}", Sha256::digest(encoded)))?;
+    let input_sha256 = Sha256Digest::parse(lower_hex(Sha256::digest(encoded).as_slice()))?;
     let names = packages
         .iter()
         .map(|package| package.published_name.clone())

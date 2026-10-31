@@ -54,13 +54,60 @@ prepared, environment-specific Windows recovery procedure and preserve
 `C:\FRAMETIME_CFG` for diagnosis. Do not improvise other registry, BCD, driver,
 or filesystem changes from these source docs.
 
+## Abort a stuck reboot handoff
+
+Use `abort-handoff --yes` from the authenticated package first, in an elevated
+prompt. It authenticates the package like other live commands, and package
+authentication checks signature revocation online, so in plain Safe Mode
+without networking it can fail with "signature revocation status is offline or
+unknown". In that case restart into "Safe Mode with Networking" or use the
+manual procedure below. It reads the active reboot transaction and removes
+only what that transaction armed, each by exact match: the HKLM RunOnce Phase 2
+value and the HKCU Run Phase 3 value when they hold exactly the transaction
+runtime's command, and Safe Boot when it is `minimal` and the transaction is
+still at the stage where this workflow armed it (after P1:38, before P2:1
+clears it). Run it as the user who
+started `optimize`; from another account it leaves the HKCU value alone and
+reports it. A value that differs, is unreadable, or is not the workflow's own
+`safeboot minimal` is left in place and reported; that includes `minimal` at a
+later stage, because the workflow already cleared its own Safe Boot at P2:1.
+
+When every item is gone, the command archives the transaction to
+`C:\FRAMETIME_CFG\aborted-reboot-transactions.json`, clears it from the
+workflow state, and prints what it removed and what was already absent. Then
+restart normally and run `verify` and `backup-summary`, then `restore --yes`.
+If it reports remaining items, the transaction stays in the state as evidence;
+fall back to the manual procedure below for those items, then rerun
+`abort-handoff --yes`. Without an active reboot transaction it changes nothing
+and exits with status 2.
+
+`abort-handoff` does not reinstall a graphics driver. If Phase 2 already removed
+the NVIDIA driver, reinstall the NVIDIA driver after restarting normally.
+
+## Phase 3 does not start after signing in
+
+Phase 3 normally starts from the HKCU Run value at sign-in. If it does not, open
+an elevated `cmd.exe` as the user who started `optimize` and run the selected
+runtime's executable directly:
+
+```bat
+"C:\FRAMETIME_CFG\runtime-generations\<generation>\frametime.exe" phase3 --yes
+```
+
+The selected generation is the `relativePath` value
+(`runtime-generations/<generation>`) in `C:\FRAMETIME_CFG\runtime-current.json`;
+`verify` also prints it as `state.activeRebootTransaction.runtime.generation`.
+Do not run `phase3` from the package or a copied executable; only the selected
+runtime is accepted.
+
 ## Alpha escape from a stuck reboot handoff
 
 This procedure is for alpha testers only. It has not been qualified on Windows
 hardware yet; qualify it on the VM before relying on it. It removes exactly the
 three boot-time values the workflow sets and nothing else. Use it only when the
 guarded phase command has failed and the machine keeps starting in Safe Mode, or
-a handoff keeps failing at every sign-in.
+a handoff keeps failing at every sign-in, and `abort-handoff --yes` above has
+reported remaining items or cannot run.
 
 1. Sign in (Safe Mode included) and open an elevated `cmd.exe`.
 2. Copy the whole `C:\FRAMETIME_CFG` directory and the failing command's output

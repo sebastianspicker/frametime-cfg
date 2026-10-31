@@ -251,8 +251,11 @@ exit /b !errorlevel!
 :is_allowed
 set "candidate=%~1"
 set "candidate=!candidate:\=/!"
-findstr /l /i /x /c:"!candidate!" "%source%\package-layout.txt" >nul
-exit /b !errorlevel!
+rem Compare with the same for /f reader that drives staging. package-layout.txt
+rem is checked out with LF line endings, and findstr /x rejected every entry in
+rem the Windows CI package lane; for /f accepts LF and CRLF lines alike.
+for /f "usebackq delims=" %%L in ("%source%\package-layout.txt") do if /i "%%L"=="!candidate!" exit /b 0
+exit /b 1
 
 :scan_payload
 for /r "%~1" %%F in (*) do call :scan_file "%%~fF" || exit /b 1

@@ -7,7 +7,9 @@ pub(crate) fn spki_sha256(context: *const CERT_CONTEXT) -> Result<String, String
         &info.SubjectPublicKeyInfo.Algorithm,
         &info.SubjectPublicKeyInfo.PublicKey,
     )?;
-    Ok(format!("{:x}", Sha256::digest(encoded)))
+    Ok(frametime_domain::hex::lower_hex(
+        Sha256::digest(encoded).as_slice(),
+    ))
 }
 pub(crate) fn encode_spki(
     algorithm: &CRYPT_ALGORITHM_IDENTIFIER,

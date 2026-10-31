@@ -12,8 +12,6 @@ use frametime_domain::driver::{
 #[cfg(windows)]
 use frametime_domain::driver::{DrsSnapshot, ProfileBackupDigestReference};
 use serde::{Deserialize, Serialize};
-#[cfg(windows)]
-use sha2::{Digest, Sha256};
 
 use crate::{DrsBackup, TrustedWorkDir, read_json_trusted};
 #[cfg(windows)]
@@ -239,8 +237,7 @@ pub(crate) fn persist_profile_backup(
     let bytes = snapshot
         .to_json()
         .map_err(|error| format!("validate NVIDIA DRS profile backup: {error:?}"))?;
-    let digest = Sha256Digest::parse(format!("{:x}", Sha256::digest(&bytes)))
-        .map_err(|error| error.to_string())?;
+    let digest = Sha256Digest::of_bytes(&bytes);
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let _lock = WorkLock::acquire(trusted.path())?;
     write_json_atomic_trusted(&trusted, DRIVER_PROFILE_BACKUP_FILE, snapshot)
@@ -250,8 +247,7 @@ pub(crate) fn persist_profile_backup(
     let persisted_bytes = persisted
         .to_json()
         .map_err(|error| format!("validate persisted NVIDIA profile backup: {error:?}"))?;
-    let persisted_digest = Sha256Digest::parse(format!("{:x}", Sha256::digest(&persisted_bytes)))
-        .map_err(|error| error.to_string())?;
+    let persisted_digest = Sha256Digest::of_bytes(&persisted_bytes);
     if persisted != *snapshot || persisted_digest != digest {
         return Err("NVIDIA profile backup readback or digest verification failed".into());
     }
@@ -269,8 +265,7 @@ pub(crate) fn load_profile_backup_at(
     let bytes = snapshot
         .to_json()
         .map_err(|error| format!("validate NVIDIA profile backup: {error:?}"))?;
-    let actual = Sha256Digest::parse(format!("{:x}", Sha256::digest(&bytes)))
-        .map_err(|error| error.to_string())?;
+    let actual = Sha256Digest::of_bytes(&bytes);
     if actual != expected.sha256 {
         return Err("NVIDIA profile backup digest does not match the transaction".into());
     }

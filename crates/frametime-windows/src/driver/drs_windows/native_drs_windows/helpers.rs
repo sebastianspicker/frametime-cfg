@@ -163,5 +163,7 @@ pub(super) fn sha256_file(path: &Path) -> Result<String, String> {
         }
         hasher.update(&bytes[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(frametime_domain::hex::lower_hex(
+        hasher.finalize().as_slice(),
+    ))
 }

@@ -17,6 +17,7 @@ pub(crate) fn main() -> ExitCode {
     install_cancellation_handler();
     let _ = frametime_app::install_interaction(frametime_app::Interaction {
         prompt_for_step: crate::console::prompt_for_step,
+        confirm: crate::console::confirm_interactive,
         cancellation_requested: crate::console::cancellation_requested,
     });
     match run(Cli::parse()) {
@@ -338,6 +339,7 @@ fn map_live_command(value: Command) -> frametime_app::Command {
         Command::Restore { yes } => frametime_app::Command::Restore { yes },
         Command::BackupSummary => frametime_app::Command::BackupSummary,
         Command::ResetProgress { yes } => frametime_app::Command::ResetProgress { yes },
+        Command::AbortHandoff { yes } => frametime_app::Command::AbortHandoff { yes },
         Command::ShowLog => frametime_app::Command::ShowLog,
         Command::DryRun { .. }
         | Command::FpsCap { .. }

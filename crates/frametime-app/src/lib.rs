@@ -6,6 +6,7 @@
 mod actions;
 mod benchmark;
 pub mod commands;
+mod live_log;
 mod outcomes;
 mod workflow;
 
@@ -183,6 +184,7 @@ impl std::error::Error for ApplicationError {}
 #[derive(Clone, Copy)]
 pub struct Interaction {
     pub prompt_for_step: fn(&Step) -> bool,
+    pub confirm: fn(&str) -> bool,
     pub cancellation_requested: fn() -> bool,
 }
 
@@ -198,6 +200,12 @@ pub(crate) fn prompt_for_step(step: &Step) -> bool {
     INTERACTION
         .get()
         .is_some_and(|hooks| (hooks.prompt_for_step)(step))
+}
+
+pub(crate) fn confirm(message: &str) -> bool {
+    INTERACTION
+        .get()
+        .is_some_and(|hooks| (hooks.confirm)(message))
 }
 
 pub(crate) fn cancellation_requested() -> bool {

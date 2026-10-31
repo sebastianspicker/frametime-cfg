@@ -42,28 +42,44 @@ fn migration_inventory_maps_armed_and_unavailable_native_evidence_fail_closed() 
 }
 
 #[test]
-fn migration_confirmation_requires_yes_but_refusals_cannot_be_overridden() {
-    assert!(require_migration_decision(MigrationDecision::ConfirmIdle, false).is_err());
-    assert!(require_migration_decision(MigrationDecision::ConfirmIdle, true).is_ok());
+fn migration_confirmation_requires_yes_or_interactive_confirmation() {
+    let partial = || MigrationDecision::ConfirmPartialPhaseOne {
+        completed: 1,
+        skipped: 2,
+    };
+    assert!(require_migration_decision(MigrationDecision::ConfirmIdle, false, |_| true).is_ok());
+    assert!(require_migration_decision(MigrationDecision::ConfirmIdle, false, |_| false).is_err());
+    assert!(require_migration_decision(partial(), false, |_| true).is_ok());
+    let error = require_migration_decision(partial(), false, |_| false).expect_err("declined");
+    assert!(error.to_string().contains("frametime optimize --yes"));
+    let mut question = String::new();
     assert!(
-        require_migration_decision(
-            MigrationDecision::ConfirmPartialPhaseOne {
-                completed: 1,
-                skipped: 2,
-            },
-            false,
-        )
-        .is_err()
+        require_migration_decision(partial(), false, |message| {
+            question = message.to_string();
+            true
+        })
+        .is_ok()
     );
-    assert!(
-        require_migration_decision(
-            MigrationDecision::Refuse(
-                frametime_domain::migration::LegacyHandoff::IncompleteRuntime
-            ),
-            true,
-        )
-        .is_err()
-    );
+    assert!(question.contains("1 completed, 2 skipped"));
+}
+
+#[test]
+fn migration_yes_and_not_needed_never_ask_and_refusals_cannot_be_overridden() {
+    let never = |_: &str| -> bool { panic!("confirm must not be called") };
+    assert!(require_migration_decision(MigrationDecision::ConfirmIdle, true, never).is_ok());
+    assert!(require_migration_decision(MigrationDecision::NotNeeded, false, never).is_ok());
+    for yes in [false, true] {
+        assert!(
+            require_migration_decision(
+                MigrationDecision::Refuse(
+                    frametime_domain::migration::LegacyHandoff::IncompleteRuntime
+                ),
+                yes,
+                never,
+            )
+            .is_err()
+        );
+    }
 }
 
 // Only non-Windows hosts lack the trusted Windows work directory; on Windows the inventory
@@ -143,4 +159,24 @@ fn phase_three_receipt_routing_never_runs_the_engine_for_coherent_or_incoherent_
         Ok(PhaseThreeReceiptRoute::Complete(_))
     ));
     assert!(phase_three_receipt_route(FinalBenchmarkStatus::Incoherent("prefix".into())).is_err());
+}
+
+#[test]
+fn fresh_machine_needs_no_migration_but_present_default_files_still_confirm() {
+    assert_eq!(
+        assess_migration(None, None, MigrationInventory::default()),
+        MigrationDecision::NotNeeded
+    );
+    assert_eq!(
+        assess_migration(
+            Some(&State::default()),
+            Some(&Progress::default()),
+            MigrationInventory::default(),
+        ),
+        MigrationDecision::ConfirmIdle
+    );
+    assert_eq!(
+        assess_migration(Some(&State::default()), None, MigrationInventory::default()),
+        MigrationDecision::ConfirmIdle
+    );
 }

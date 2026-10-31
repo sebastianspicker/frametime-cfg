@@ -25,14 +25,19 @@ when a serialized or FFI representation cannot be changed, and the exception mus
 explain that compatibility constraint.
 
 Keep every Rust source file beneath `crates/` and `repo-checks/` within 600
-physical lines, with no allowlist. Split files along existing ownership and responsibility boundaries instead of
-hiding source from the check.
+physical lines, with no allowlist. This is a contributor rule that is not
+enforced automatically; reviewers check it. Split files along existing
+ownership and responsibility boundaries.
 
 On Windows, `scripts\verify.cmd` is the authoritative root source gate and also
 requires `cargo-audit`. Northclock and Driver Foundry are archived and
 unsupported; they are not part of the primary contributor workflow.
 
 ## Design rules
+
+These are contributor and review rules. The workspace tests do not check them
+automatically; `repo-checks` only verifies batch-script labels and the shipped
+CS2 cfg names.
 
 - Keep the dependency direction explicit: Windows depends on domain; app depends
   on domain and Windows; CLI/GUI depend on app. Entrypoints may reach domain only

@@ -7,12 +7,12 @@ use windows::{
     Win32::{
         Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
-            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-            FILE_ATTRIBUTE_TAG_INFO, FILE_BEGIN, FILE_FLAG_BACKUP_SEMANTICS,
-            FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH, FILE_LIST_DIRECTORY,
-            FILE_READ_ATTRIBUTES, FILE_SHARE_MODE, FileAttributeTagInfo, FlushFileBuffers,
-            GetDriveTypeW, GetFileInformationByHandleEx, GetFileSizeEx, OPEN_EXISTING, ReadFile,
-            SetEndOfFile, SetFilePointerEx, WriteFile,
+            CREATE_NEW, CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY,
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BEGIN,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
+            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_MODE, FileAttributeTagInfo,
+            FlushFileBuffers, GetDriveTypeW, GetFileInformationByHandleEx, GetFileSizeEx,
+            OPEN_ALWAYS, OPEN_EXISTING, ReadFile, SetEndOfFile, SetFilePointerEx, WriteFile,
         },
         System::WindowsProgramming::DRIVE_FIXED,
     },
@@ -20,8 +20,9 @@ use windows::{
 };
 
 use crate::{
-    BACKUP_FILE, TrustedWorkDir,
+    BACKUP_FILE, LogEntry, TrustedWorkDir, WINDOWS_WORK_DIR,
     io_contract::{is_missing_path_hresult, parse_export_destination},
+    log_writer::{HostNames, assemble_log_text, rotation_needed},
     trusted_work_dir,
 };
 
@@ -43,11 +44,103 @@ impl Drop for RetainedHandle {
     }
 }
 
+/// A missing path is distinguished so callers can treat it as "not there yet".
+pub(crate) enum OpenError {
+    Missing(String),
+    Failed(String),
+}
+
+impl From<OpenError> for String {
+    fn from(error: OpenError) -> Self {
+        match error {
+            OpenError::Missing(message) | OpenError::Failed(message) => message,
+        }
+    }
+}
+
+impl From<String> for OpenError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+/// Returns a notice instead of an error when no log has been written yet.
 pub(crate) fn read_current_log(trusted: &TrustedWorkDir) -> Result<String, String> {
-    let _logs = open_trusted_logs_directory(trusted)?;
-    let log = open_trusted_file(trusted, CURRENT_LOG)?;
+    let no_log = || {
+        Ok(format!(
+            "No log has been written yet ({WINDOWS_WORK_DIR}\\{CURRENT_LOG})\n"
+        ))
+    };
+    let _logs = match open_trusted_logs_directory(trusted) {
+        Ok(logs) => logs,
+        Err(OpenError::Missing(_)) => return no_log(),
+        Err(error) => return Err(error.into()),
+    };
+    let log = match open_trusted_file(trusted, CURRENT_LOG) {
+        Ok(log) => log,
+        Err(OpenError::Missing(_)) => return no_log(),
+        Err(error) => return Err(error.into()),
+    };
     let bytes = read_bounded(log.0, MAX_LOG_BYTES, "current log")?;
     String::from_utf8(bytes).map_err(|_| "current log is not valid UTF-8".into())
+}
+
+/// Appends records to the current log, creating `Logs` and the file with the
+/// protected suite security on first use and archiving an oversized log first.
+pub(crate) fn append_current_log(
+    trusted: &TrustedWorkDir,
+    entries: &[LogEntry],
+    start_session: bool,
+    timestamp: &str,
+    host: &HostNames,
+) -> Result<(), String> {
+    trusted_work_dir::ensure_logs_directory(trusted.root_handle())?;
+    let _logs = open_trusted_logs_directory(trusted)?;
+    let mut log = open_current_log_for_append(trusted)?;
+    let mut length = u64::try_from(bounded_length(log.0, usize::MAX, "current log")?)
+        .map_err(|_| "current log size is invalid")?;
+    let probe = assemble_log_text(entries, timestamp, host, start_session || length == 0);
+    if rotation_needed(length, probe.len()) {
+        drop(log);
+        archive_current_log(trusted, timestamp)?;
+        log = open_current_log_for_append(trusted)?;
+        length = 0;
+    }
+    let text = assemble_log_text(entries, timestamp, host, start_session || length == 0);
+    write_all(log.0, text.as_bytes(), "current log")?;
+    unsafe { FlushFileBuffers(log.0) }.map_err(|error| format!("flush current log: {error}"))
+}
+
+fn open_current_log_for_append(trusted: &TrustedWorkDir) -> Result<RetainedHandle, String> {
+    let attributes = trusted_work_dir::ProtectedSecurityAttributes::new()?;
+    let path = wide(&format!("{WINDOWS_WORK_DIR}\\{CURRENT_LOG}"));
+    // SAFETY: the path and SECURITY_ATTRIBUTES pointers stay valid for this synchronous call.
+    let handle = unsafe {
+        CreateFileW(
+            PCWSTR(path.as_ptr()),
+            FILE_APPEND_DATA.0 | GENERIC_READ.0 | FILE_READ_ATTRIBUTES.0,
+            FILE_SHARE_MODE(0),
+            Some(attributes.as_ptr()),
+            OPEN_ALWAYS,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH,
+            None,
+        )
+    }
+    .map(RetainedHandle)
+    .map_err(|error| format!("open current log for append: {error}"))?;
+    trusted_work_dir::validate_descendant_handle(handle.0, CURRENT_LOG, false)?;
+    trusted_work_dir::validate_exact_security(trusted.root_handle())?;
+    Ok(handle)
+}
+
+fn archive_current_log(trusted: &TrustedWorkDir, timestamp: &str) -> Result<(), String> {
+    let logs = trusted.path().join(LOG_DIRECTORY);
+    let archive = logs.join(frametime_domain::logging::archive_log_name(timestamp));
+    if archive.exists() {
+        return Err("log archive name is already in use; the current log was not rotated".into());
+    }
+    std::fs::rename(trusted.path().join(CURRENT_LOG), &archive)
+        .map_err(|error| format!("archive current log: {error}"))
 }
 
 pub(crate) fn export_backup(
@@ -68,7 +161,7 @@ pub(crate) fn export_backup(
 
 pub(crate) fn open_trusted_logs_directory(
     trusted: &TrustedWorkDir,
-) -> Result<RetainedHandle, String> {
+) -> Result<RetainedHandle, OpenError> {
     trusted_work_dir::validate_exact_security(trusted.root_handle())?;
     let handle = open_existing(
         &trusted.path().join(LOG_DIRECTORY),
@@ -82,7 +175,7 @@ pub(crate) fn open_trusted_logs_directory(
 pub(crate) fn open_trusted_file(
     trusted: &TrustedWorkDir,
     relative: &str,
-) -> Result<RetainedHandle, String> {
+) -> Result<RetainedHandle, OpenError> {
     trusted_work_dir::validate_exact_security(trusted.root_handle())?;
     let handle = open_existing(
         &trusted.path().join(relative),
@@ -171,7 +264,7 @@ pub(crate) fn open_existing(
     path: &std::path::Path,
     directory: bool,
     access: u32,
-) -> Result<RetainedHandle, String> {
+) -> Result<RetainedHandle, OpenError> {
     let path = path
         .as_os_str()
         .encode_wide()
@@ -193,7 +286,14 @@ pub(crate) fn open_existing(
             None,
         )
     }
-    .map_err(|error| format!("open retained trusted suite file: {error}"))?;
+    .map_err(|error| {
+        let message = format!("open retained trusted suite file: {error}");
+        if is_missing_path_hresult(error.code().0) {
+            OpenError::Missing(message)
+        } else {
+            OpenError::Failed(message)
+        }
+    })?;
     Ok(RetainedHandle(handle))
 }
 
@@ -331,7 +431,7 @@ pub(crate) fn copy_exact(
     while remaining != 0 {
         let wanted = remaining.min(buffer.len());
         read_exact(source, &mut buffer[..wanted], "backup source")?;
-        write_all(destination, &buffer[..wanted])?;
+        write_all(destination, &buffer[..wanted], "backup export destination")?;
         hasher.update(&buffer[..wanted]);
         copied = copied
             .checked_add(wanted)
@@ -371,20 +471,20 @@ pub(crate) fn read_exact(handle: HANDLE, bytes: &mut [u8], label: &str) -> Resul
     Ok(())
 }
 
-pub(crate) fn write_all(handle: HANDLE, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_all(handle: HANDLE, bytes: &[u8], label: &str) -> Result<(), String> {
     let mut offset = 0;
     while offset < bytes.len() {
         let mut written = 0_u32;
         unsafe { WriteFile(handle, Some(&bytes[offset..]), Some(&mut written), None) }
-            .map_err(|error| format!("write backup export destination: {error}"))?;
+            .map_err(|error| format!("write {label}: {error}"))?;
         let written =
-            usize::try_from(written).map_err(|_| "backup export write count overflows")?;
+            usize::try_from(written).map_err(|_| format!("{label} write count overflows"))?;
         if written == 0 {
-            return Err("backup export destination accepted a zero-byte write".into());
+            return Err(format!("{label} accepted a zero-byte write"));
         }
         offset = offset
             .checked_add(written)
-            .ok_or("backup export write offset overflows")?;
+            .ok_or_else(|| format!("{label} write offset overflows"))?;
     }
     Ok(())
 }

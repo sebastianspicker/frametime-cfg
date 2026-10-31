@@ -36,6 +36,23 @@ impl TrustedWorkDir {
         Self::acquire(Path::new(WINDOWS_WORK_DIR))
     }
 
+    /// Open the fixed suite root only if it already exists, with the same
+    /// validation as `acquire_fixed`. A missing root is `Ok(None)`; nothing is
+    /// ever created. An existing root that fails validation is an error.
+    #[cfg(windows)]
+    pub(crate) fn acquire_existing_fixed() -> Result<Option<Self>, String> {
+        let work_dir = Path::new(WINDOWS_WORK_DIR);
+        if !platform_is_supported() {
+            return Err("the live backend is supported only on supported Windows x64".into());
+        }
+        Ok(
+            trusted_work_dir::open_existing(work_dir)?.map(|(path, handle)| Self {
+                path,
+                _handle: handle,
+            }),
+        )
+    }
+
     /// Open the fixed suite root, creating it with the protected suite DACL
     /// only when it does not already exist.  Existing roots are never silently
     /// repaired: their exact protected DACL must already be present.

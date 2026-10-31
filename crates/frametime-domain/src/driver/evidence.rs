@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use crate::hex::lower_hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -57,7 +58,7 @@ impl CanonicalPackageSet {
         let encoded = serde_json::to_vec(self).map_err(|_| ValidationError::Invalid {
             field: "packageSet",
         })?;
-        Sha256Digest::parse(format!("{:x}", Sha256::digest(encoded)))
+        Sha256Digest::parse(lower_hex(Sha256::digest(encoded).as_slice()))
     }
 
     fn names(&self) -> BTreeSet<OemPublishedName> {

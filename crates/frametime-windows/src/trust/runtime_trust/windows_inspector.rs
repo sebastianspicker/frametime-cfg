@@ -6,6 +6,7 @@ use std::{
     path::Path,
 };
 
+use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
@@ -367,11 +368,11 @@ pub(crate) fn hash_handle(handle: HANDLE, maximum: usize) -> Result<String, Stri
         digest.update(&buffer[..read]);
         remaining -= read;
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(lower_hex(digest.finalize().as_slice()))
 }
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    lower_hex(Sha256::digest(bytes).as_slice())
 }
 
 pub(crate) fn seek_to_start(handle: HANDLE) -> Result<(), String> {

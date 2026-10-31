@@ -138,7 +138,30 @@ pub(crate) fn open_driver_artifact_directory(root: HANDLE) -> Result<RootHandle,
     Ok(directory)
 }
 
+/// Create the fixed `Logs` child with the protected suite DACL when absent.
+/// An existing directory is left untouched; the caller validates it afterwards.
+pub(crate) fn ensure_logs_directory(root: HANDLE) -> Result<(), String> {
+    validate_exact_security(root)?;
+    create_protected_root(&format!("{WINDOWS_WORK_DIR}\\Logs")).map(|_| ())
+}
+
+/// Open and fully validate the fixed suite root without ever creating it.
+/// A missing root is `Ok(None)`; any other open or validation failure is an error.
+pub(crate) fn open_existing(requested: &Path) -> Result<Option<(PathBuf, RootHandle)>, String> {
+    match open_directory_raw(&requested.to_string_lossy()) {
+        Ok(handle) => validate_open_root(handle).map(Some),
+        Err(error) if crate::trust::io_contract::is_missing_path_hresult(error.code().0) => {
+            Ok(None)
+        }
+        Err(error) => Err(format!("open suite root handle: {error}")),
+    }
+}
+
 fn open_directory(path: &str) -> Result<RootHandle, String> {
+    open_directory_raw(path).map_err(|error| format!("open suite root handle: {error}"))
+}
+
+fn open_directory_raw(path: &str) -> windows::core::Result<RootHandle> {
     let path = wide(path);
     let handle = unsafe {
         CreateFileW(
@@ -150,8 +173,7 @@ fn open_directory(path: &str) -> Result<RootHandle, String> {
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
             None,
         )
-    }
-    .map_err(|error| format!("open suite root handle: {error}"))?;
+    }?;
     Ok(RootHandle(handle))
 }
 
@@ -321,7 +343,7 @@ pub(crate) fn validate_exact_security(handle: HANDLE) -> Result<(), String> {
     unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) }
         .map_err(|error| format!("read suite root DACL control: {error}"))?;
     if control & SE_DACL_PROTECTED.0 == 0 {
-        return Err("suite root DACL is not protected".into());
+        return Err("suite root DACL is not protected: C:\\FRAMETIME_CFG was not created by this version or its permissions were changed (for example it is left over from the retired PowerShell suite); back it up, move it aside as described in docs/package-security.md under \"Resetting a pre-existing C:\\FRAMETIME_CFG\", and run again. Do not change its permissions or ownership by hand".into());
     }
     let acl_header =
         unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), std::mem::size_of::<u16>() + 2) };

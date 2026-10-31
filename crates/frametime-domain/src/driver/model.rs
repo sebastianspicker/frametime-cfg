@@ -295,6 +295,15 @@ impl Sha256Digest {
         }
     }
 
+    /// The SHA-256 digest of `bytes`; always a valid 64-character lower-case value.
+    #[must_use]
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        use sha2::Digest;
+        Self(crate::hex::lower_hex(
+            sha2::Sha256::digest(bytes).as_slice(),
+        ))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }

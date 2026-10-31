@@ -83,9 +83,7 @@ impl Backend for LiveBackend<'_> {
         if matches!(action, Action::NvidiaDriverDownloadPreparation) {
             return load_driver_transaction_at(&self.work_dir)?
                 .map(|_| Inspection::Satisfied)
-                .ok_or_else(|| {
-                    "P1:19 requires durable P1:18/P1:19 NVIDIA evidence; run `frametime driver prepare-nvidia` first".into()
-                });
+                .ok_or_else(|| P1_19_PREREQUISITE_MESSAGE.into());
         }
         if let Some(inspection) = self.inspect_interrupt_action(&action, operation)? {
             return Ok(inspection);
@@ -96,13 +94,10 @@ impl Backend for LiveBackend<'_> {
             }
             Action::ObserveGpuInventory => return inspect_gpu_inventory(&self.hardware),
             Action::BaselineBenchmark => {
-                return Ok(
-                    if baseline_benchmark_is_persisted(&self.work_dir, &self._trusted_work_dir) {
-                        Inspection::Satisfied
-                    } else {
-                        Inspection::Unsupported
-                    },
-                );
+                return baseline_benchmark_inspection(baseline_benchmark_is_persisted(
+                    &self.work_dir,
+                    &self._trusted_work_dir,
+                ));
             }
             Action::FinalBenchmark => return Ok(Inspection::Unsupported),
             Action::ObserveChipsetDriver => {
@@ -440,6 +435,19 @@ impl LiveBackend<'_> {
     }
 }
 
+const P1_17_PREREQUISITE_MESSAGE: &str = "P1:17 needs a baseline benchmark first: run `frametime baseline-benchmark --vprof-file <capture>` before `optimize`";
+const P1_19_PREREQUISITE_MESSAGE: &str = "P1:19 needs a prepared NVIDIA driver package first: run `frametime driver prepare-nvidia --official-url <url>` (or `--local-installer <path>`) before `optimize`";
+
+/// P1:17 is satisfied only by a persisted baseline; otherwise the error names
+/// the command that creates it instead of a generic unsupported-step failure.
+fn baseline_benchmark_inspection(persisted: bool) -> Result<Inspection, String> {
+    if persisted {
+        Ok(Inspection::Satisfied)
+    } else {
+        Err(P1_17_PREREQUISITE_MESSAGE.into())
+    }
+}
+
 /// P2:2/P3:1 can run only on the durable P1:18/P1:19 driver transaction; the
 /// apply path re-validates it, and verify needs the Engine's apply.
 fn driver_execution_inspection<T>(transaction: Option<T>) -> Result<Inspection, String> {
@@ -463,6 +471,19 @@ mod tests {
                 .expect_err("missing transaction")
                 .contains("driver prepare-nvidia")
         );
+    }
+
+    #[test]
+    fn missing_baseline_names_the_baseline_benchmark_command() {
+        assert_eq!(
+            baseline_benchmark_inspection(true),
+            Ok(Inspection::Satisfied)
+        );
+        assert_eq!(
+            baseline_benchmark_inspection(false),
+            Err("P1:17 needs a baseline benchmark first: run `frametime baseline-benchmark --vprof-file <capture>` before `optimize`".into())
+        );
+        assert!(P1_19_PREREQUISITE_MESSAGE.contains("frametime driver prepare-nvidia"));
     }
 
     #[test]
