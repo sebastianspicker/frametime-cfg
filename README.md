@@ -1,5 +1,6 @@
 # frametime.cfg
 
+
 [![Native Rust validation](https://github.com/sebastianspicker/frametime-cfg/actions/workflows/rust.yml/badge.svg)](https://github.com/sebastianspicker/frametime-cfg/actions/workflows/rust.yml)
 [![Security](https://github.com/sebastianspicker/frametime-cfg/actions/workflows/security.yml/badge.svg)](https://github.com/sebastianspicker/frametime-cfg/actions/workflows/security.yml)
 ![Rust 1.96](https://img.shields.io/badge/rust-1.96.0-orange)
@@ -11,11 +12,35 @@ network, power, and Windows settings. It is built for x64 Windows machines
 managed by an administrator who wants to see the change, understand it, and
 have a way back.
 
-> **Status: alpha, and not yet qualified on Windows hardware.** Source tests
-> prove the Rust contracts and the fail-closed behavior; they do not qualify
-> UAC, Safe Mode, drivers, NVAPI, Windows APIs, hardware, or a complete reboot
-> sequence. The project makes no claim of universal FPS, frame-time, latency,
-> image-quality, or stability gains.
+<details>
+<summary>Status and limitations</summary>
+
+frametime.cfg is independent experimental software for inspecting and
+changing selected Windows and game settings. Developed independently
+alongside my main professional work. It remains an alpha template for review
+and adaptation. Source tests check Rust contracts and fail-closed behavior;
+they do not qualify UAC, Safe Mode, drivers, NVAPI, Windows APIs, hardware
+or a complete reboot sequence. Windows hardware qualification remains open.
+
+**Disclaimer.** No universal performance or stability gains are promised.
+System changes can cause outages, data loss or an unbootable machine.
+Validate the workflow in a spare test environment, keep backups and a
+recovery path, and take responsibility for any changes you apply.
+
+</details>
+
+## At a glance
+
+```mermaid
+flowchart LR
+    Inspect[Inspect and preview without changes] --> Plan[Review a typed plan]
+    Plan --> Trust[Authenticated package and operator approval]
+    Trust --> Apply[Guarded Windows stages]
+    Apply --> Verify[Verify captured state and recovery options]
+```
+
+Source builds stop at the read-only preview. The diagram describes the guarded
+workflow; it does not establish Windows hardware qualification.
 
 ## What it does
 
@@ -87,6 +112,10 @@ are independent read-only observations, not part of the profile policy.
   state-changing operation.
 
 ## Build and preview from source
+
+For CI-equivalent results, check both `cargo --version` and `rustc --version`
+and use the Rustup-managed 1.96.0 binaries; a separate compiler on `PATH` can
+bypass the project toolchain pin.
 
 Run these from the repository root. A source checkout can build, test, and run
 the strict preview, but it has no package authority.

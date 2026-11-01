@@ -1,6 +1,6 @@
 # Third-party notices
 
-`sevenz-rust2` 0.22.2 powers the NVIDIA SFX reader, with only its `util` feature
+`sevenz-rust2` 0.24.1 powers the NVIDIA SFX reader, with only its `util` feature
 enabled. It is Apache-2.0 and ships with its transitive `lzma-rust2`
 (Apache-2.0) and `crc32fast` (MIT OR Apache-2.0) dependencies. The applicable
 license texts are in this directory.
@@ -26,6 +26,7 @@ The distribution carries the full license texts used by these declarations:
 
 - [Apache-2.0](LICENSE-APACHE-2.0)
 - [MIT](LICENSE-MIT)
+- Zlib, reproduced in the [foldhash notice](#foldhash-zlib-notice) below.
 
 `aho-corasick` and `memchr` declare `Unlicense OR MIT`; the MIT option is
 included in this distribution. No package in this target-selected set includes
@@ -47,26 +48,27 @@ small ABI-derived portion.
 | `anstyle-parse v1.0.0` | `MIT OR Apache-2.0` |
 | `anstyle-query v1.1.5` | `MIT OR Apache-2.0` |
 | `anstyle-wincon v3.0.11` | `MIT OR Apache-2.0` |
-| `anyhow v1.0.104` | `MIT OR Apache-2.0` |
 | `bitflags v2.13.1` | `MIT OR Apache-2.0` |
-| `block-buffer v0.10.4` | `MIT OR Apache-2.0` |
+| `block-buffer v0.12.1` | `MIT OR Apache-2.0` |
 | `cfg-if v1.0.4` | `MIT OR Apache-2.0` |
-| `clap v4.6.6` | `MIT OR Apache-2.0` |
-| `clap_builder v4.6.6` | `MIT OR Apache-2.0` |
+| `clap v4.6.7` | `MIT OR Apache-2.0` |
+| `clap_builder v4.6.7` | `MIT OR Apache-2.0` |
 | `clap_lex v1.1.0` | `MIT OR Apache-2.0` |
 | `colorchoice v1.0.5` | `MIT OR Apache-2.0` |
-| `cpufeatures v0.2.17` | `MIT OR Apache-2.0` |
+| `const-oid v0.10.2` | `Apache-2.0 OR MIT` |
+| `cpufeatures v0.3.1` | `MIT OR Apache-2.0` |
 | `crc32fast v1.5.0` | `MIT OR Apache-2.0` |
-| `crypto-common v0.1.7` | `MIT OR Apache-2.0` |
+| `crypto-common v0.2.2` | `MIT OR Apache-2.0` |
 | `deranged v0.5.8` | `MIT OR Apache-2.0` |
-| `digest v0.10.7` | `MIT OR Apache-2.0` |
+| `digest v0.11.3` | `MIT OR Apache-2.0` |
 | `equivalent v1.0.2` | `Apache-2.0 OR MIT` |
-| `generic-array v0.14.7` | `MIT` |
+| `foldhash v0.2.0` | `Zlib` |
 | `hashbrown v0.17.1` | `MIT OR Apache-2.0` |
+| `hybrid-array v0.4.15` | `MIT OR Apache-2.0` |
 | `indexmap v2.14.0` | `Apache-2.0 OR MIT` |
 | `is_terminal_polyfill v1.70.2` | `MIT OR Apache-2.0` |
 | `itoa v1.0.18` | `MIT OR Apache-2.0` |
-| `lzma-rust2 v0.20.1` | `Apache-2.0` |
+| `lzma-rust2 v0.23.0` | `Apache-2.0` |
 | `memchr v2.8.3` | `Unlicense OR MIT` |
 | `num-conv v0.2.2` | `MIT OR Apache-2.0` |
 | `once_cell_polyfill v1.70.2` | `MIT OR Apache-2.0` |
@@ -77,18 +79,18 @@ small ABI-derived portion.
 | `regex-syntax v0.8.11` | `MIT OR Apache-2.0` |
 | `serde v1.0.229` | `MIT OR Apache-2.0` |
 | `serde_core v1.0.229` | `MIT OR Apache-2.0` |
-| `serde_json v1.0.151` | `MIT OR Apache-2.0` |
-| `serde_spanned v1.1.1` | `MIT OR Apache-2.0` |
-| `sevenz-rust2 v0.22.2` | `Apache-2.0` |
-| `sha2 v0.10.9` | `MIT OR Apache-2.0` |
+| `serde_json v1.0.154` | `MIT OR Apache-2.0` |
+| `serde_spanned v1.1.2` | `MIT OR Apache-2.0` |
+| `sevenz-rust2 v0.24.1` | `Apache-2.0` |
+| `sha2 v0.11.1` | `MIT OR Apache-2.0` |
 | `strsim v0.11.1` | `MIT` |
-| `thiserror v2.0.20` | `MIT OR Apache-2.0` |
+| `thiserror v2.0.21` | `MIT OR Apache-2.0` |
 | `time v0.3.55` | `MIT OR Apache-2.0` |
 | `time-core v0.1.9` | `MIT OR Apache-2.0` |
-| `toml v0.9.12+spec-1.1.0` | `MIT OR Apache-2.0` |
-| `toml_datetime v0.7.5+spec-1.1.0` | `MIT OR Apache-2.0` |
-| `toml_parser v1.1.3+spec-1.1.0` | `MIT OR Apache-2.0` |
-| `toml_writer v1.1.2+spec-1.1.0` | `MIT OR Apache-2.0` |
+| `toml v1.1.8+spec-1.1.0` | `MIT OR Apache-2.0` |
+| `toml_datetime v1.1.2+spec-1.1.0` | `MIT OR Apache-2.0` |
+| `toml_parser v1.1.5+spec-1.1.0` | `MIT OR Apache-2.0` |
+| `toml_writer v1.1.3+spec-1.1.0` | `MIT OR Apache-2.0` |
 | `typenum v1.20.1` | `MIT OR Apache-2.0` |
 | `utf8parse v0.2.2` | `Apache-2.0 OR MIT` |
 | `windows v0.62.2` | `MIT OR Apache-2.0` |
@@ -101,6 +103,32 @@ small ABI-derived portion.
 | `windows-strings v0.5.1` | `MIT OR Apache-2.0` |
 | `windows-sys v0.61.2` | `MIT OR Apache-2.0` |
 | `windows-threading v0.2.1` | `MIT OR Apache-2.0` |
-| `winnow v0.7.15` | `MIT` |
 | `winnow v1.0.4` | `MIT` |
 | `zmij v1.0.23` | `MIT` |
+
+## Foldhash Zlib notice
+
+The following notice is reproduced unchanged from `foldhash` 0.2.0. It is
+included here so the existing portable notice payload carries its full terms.
+
+```text
+Copyright (c) 2024 Orson Peters
+
+This software is provided 'as-is', without any express or implied warranty. In
+no event will the authors be held liable for any damages arising from the use of
+this software.
+
+Permission is granted to anyone to use this software for any purpose, including
+commercial applications, and to alter it and redistribute it freely, subject to
+the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim
+    that you wrote the original software. If you use this software in a product,
+    an acknowledgment in the product documentation would be appreciated but is
+    not required.
+
+2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+
+3. This notice may not be removed or altered from any source distribution.
+```

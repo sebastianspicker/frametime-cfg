@@ -189,3 +189,15 @@ Before publishing, retain the package-script output and record:
 
 The repository does not define an upload destination, release-creation command,
 support window, or automatic rollback procedure. Do not infer one.
+
+## Workflow publication policy
+
+Native Rust CI runs automatically only for pull requests authored by
+`dependabot[bot]`, or by manual dispatch. Every general job, including dependent
+`always()` jobs, checks that eligibility. Security-only scans may run on pushes
+and pull requests. Pages assembly and deployment require manual dispatch on
+`main`; normal pushes and human-authored pull requests do not deploy.
+
+The repository owner must also keep the Pages source set to GitHub Actions;
+legacy branch publishing is a separate setting and is not disabled by a workflow
+change. No source or unsigned package grants permission to apply system changes.

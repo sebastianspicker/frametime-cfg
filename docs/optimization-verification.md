@@ -80,3 +80,19 @@ The native product, package boundary, and workflow-integrity shell checks from
 `.github/workflows/security.yml` also passed locally. Live CI cache hit rates,
 Windows GUI timings and accessibility, native clipboard behavior, and protected
 Windows persistence were not measured or qualified on this macOS host.
+
+## Maintenance follow-up, 2026-11-01
+
+The cache pin and source state described above are retained as historical
+verification evidence. The prepared workflow now uses the reviewed
+`actions/cache` v6.1.0 commit, and generic CI runs only for Dependabot-authored
+pull requests or manual dispatch. The classifier and every dependent
+`always()` job retain an explicit eligibility guard. Pages publication is manual
+on `main` only; security-only scans remain independent.
+
+The grouped Cargo upgrade was validated on the actual Rust 1.96 compiler/Clippy
+binaries, with host formatting, strict Clippy, workspace tests, all-branch
+read-only preview, and Windows-target check/Clippy. RustSec reported no advisory
+findings. Windows-native packaging, signing, Safe Mode and hardware qualification
+were not executed on this Mac. Existing numeric observations above were not
+recomputed or reclassified by this maintenance pass.

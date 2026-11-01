@@ -200,3 +200,7 @@ Desktop.ini
 /crates/frametime-cli/tests/
 /crates/frametime-domain/tests/
 /repo-checks/tests/
+
+# Local alpha audit work and retained research notes.
+/ALPHA_AUDIT_REPORT.md
+/research_notes/
