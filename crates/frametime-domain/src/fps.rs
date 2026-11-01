@@ -1,6 +1,3 @@
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -9,10 +6,65 @@ pub const MAX_VPROF_OBSERVATIONS: usize = 1_000;
 pub const MIN_CAP_AUTHORIZATION_RUNS: usize = 5;
 pub const BENCHMARK_RUN_EVIDENCE_SCHEMA_VERSION: u8 = 1;
 
-static VPROF_RESULT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\[VProf\]\s*FPS:\s*Avg\s*=\s*([^\s,]+)\s*,\s*P1\s*=\s*(\S+)")
-        .expect("static VProf expression")
-});
+struct VprofResult<'a> {
+    text: &'a str,
+    average: &'a str,
+    p1: &'a str,
+}
+
+fn strip_prefix_ignore_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|_| &text[prefix.len()..])
+}
+
+fn split_token(text: &str, stop: impl Fn(char) -> bool) -> (&str, &str) {
+    text.split_at(text.find(stop).unwrap_or(text.len()))
+}
+
+/// The text after `[VProf] FPS:` when `text` begins with that marker.
+fn vprof_start_rest(text: &str) -> Option<&str> {
+    let rest = strip_prefix_ignore_case(text, "[vprof]")?.trim_start();
+    strip_prefix_ignore_case(rest, "fps:")
+}
+
+fn vprof_result_at(text: &str) -> Option<VprofResult<'_>> {
+    let rest = strip_prefix_ignore_case(vprof_start_rest(text)?.trim_start(), "avg")?;
+    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+    let (average, rest) = split_token(rest, |c| c.is_whitespace() || c == ',');
+    let rest = rest.trim_start().strip_prefix(',')?.trim_start();
+    let rest = strip_prefix_ignore_case(rest, "p1")?;
+    let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+    let (p1, tail) = split_token(rest, char::is_whitespace);
+    (!average.is_empty() && !p1.is_empty()).then(|| VprofResult {
+        text: &text[..text.len() - tail.len()],
+        average,
+        p1,
+    })
+}
+
+/// Every `[VProf] FPS: Avg = <n>, P1 = <n>` result on one line.
+fn vprof_results(line: &str) -> Vec<VprofResult<'_>> {
+    let lower = line.to_ascii_lowercase();
+    let mut results = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = lower[from..].find("[vprof]") {
+        let start = from + offset;
+        from = start + 1;
+        if let Some(result) = vprof_result_at(&line[start..]) {
+            from = start + result.text.len();
+            results.push(result);
+        }
+    }
+    results
+}
+
+fn vprof_line_starts_run(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower
+        .match_indices("[vprof]")
+        .any(|(start, _)| vprof_start_rest(&line[start..]).is_some())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BenchmarkCapture {
@@ -215,6 +267,8 @@ pub enum VprofParseError {
     NoValidObservations,
     #[error("VProf input exceeds the limit of {max_observations} valid observations")]
     TooManyObservations { max_observations: usize },
+    #[error("VProf result line could not be parsed: {line}")]
+    UnparsableRun { line: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,21 +368,32 @@ pub fn parse_vprof_output_detailed(
             max_bytes: MAX_VPROF_INPUT_BYTES,
         });
     }
+    if let Some(line) = input
+        .lines()
+        .find(|line| vprof_line_starts_run(line) && vprof_results(line).is_empty())
+    {
+        return Err(VprofParseError::UnparsableRun { line: line.into() });
+    }
     let mut observations = Vec::new();
-    for captures in VPROF_RESULT.captures_iter(input) {
-        let Some(average_fps) = captures
-            .get(1)
-            .and_then(|value| value.as_str().parse::<f64>().ok())
+    for result in input.lines().flat_map(vprof_results) {
+        let unparsable = || VprofParseError::UnparsableRun {
+            line: result.text.into(),
+        };
+        let Some(average_fps) = result
+            .average
+            .parse::<f64>()
+            .ok()
             .filter(|value| value.is_finite() && *value > 0.0)
         else {
-            continue;
+            return Err(unparsable());
         };
-        let Some(p1_fps) = captures
-            .get(2)
-            .and_then(|value| value.as_str().parse::<f64>().ok())
+        let Some(p1_fps) = result
+            .p1
+            .parse::<f64>()
+            .ok()
             .filter(|value| value.is_finite() && *value >= 0.0)
         else {
-            continue;
+            return Err(unparsable());
         };
         if observations.len() == MAX_VPROF_OBSERVATIONS {
             return Err(VprofParseError::TooManyObservations {
@@ -494,6 +559,18 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_mixed_case_and_extra_whitespace() {
+        let capture = parse_vprof_output_detailed(
+            "[vprof]   fps:\tAVG  =  300.5 ,   p1\t= 180.25\n[VPROF]FPS:avg=301,P1=181",
+        )
+        .expect("capture");
+        assert_eq!(capture.observations().len(), 2);
+        assert_eq!(capture.observations()[0].average_fps, 300.5);
+        assert_eq!(capture.observations()[0].p1_fps, 180.25);
+        assert_eq!(capture.observations()[1].p1_fps, 181.0);
+    }
+
+    #[test]
     fn detailed_parser_retains_order_and_unrounded_values() {
         let capture = parse_vprof_output_detailed(
             "[VProf] FPS: Avg=300.04, P1=179.96\n[VProf] FPS: Avg=301.06, P1=180.04",
@@ -540,10 +617,24 @@ mod tests {
     }
 
     #[test]
+    fn unparsable_result_lines_are_rejected_not_dropped() {
+        for bad in [
+            "[VProf] FPS: Avg=bad, P1=100",
+            "[VProf] FPS: Avg=300.0, P1=-nan(ind)",
+            "[vprof] fps: Avg=300.0",
+        ] {
+            let input = format!("noise\n[VProf] FPS: Avg=300.2, P1=150.0\n{bad}\n");
+            assert!(matches!(
+                parse_vprof_output_detailed(&input),
+                Err(VprofParseError::UnparsableRun { .. })
+            ));
+        }
+    }
+
+    #[test]
     fn compatibility_parser_retains_legacy_aggregate() {
         let capture = parse_vprof_output(
             "noise\n[VProf] FPS: Avg=300.2, P1=150.0\n\
-             [VProf] FPS: Avg=bad, P1=100\n\
              [VProf] FPS: Avg=200.0, P1=0\n",
         )
         .expect("capture");

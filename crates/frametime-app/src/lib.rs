@@ -27,7 +27,7 @@ mod test_support {
             runs: 3,
             run_evidence: None,
             fps_cap: 270,
-            label: "After all optimizations".into(),
+            label: frametime_domain::benchmark::FINAL_BENCHMARK_LABEL.into(),
             unknown: std::collections::BTreeMap::new(),
         }
     }
@@ -37,9 +37,7 @@ use std::{path::Path, sync::OnceLock};
 
 use frametime_domain::{
     catalog::Step,
-    cs2_config::OptionalCfgAsset,
     hardware::{DiagnosticCommand, DiagnosticEnvelope},
-    policy::Profile,
 };
 pub use frametime_windows::AuthenticatedPackage;
 use frametime_windows::authenticate_current_package;
@@ -50,9 +48,9 @@ pub use actions::{
 };
 pub use benchmark::{evaluate_fps_cap, read_fps_capture, run_baseline_benchmark, run_fps_cap};
 pub use commands::{
-    Branch, BuildNvidiaLabRequest, CleanupMode, Command, DriverCommand, FpsRequest,
-    FpsStrategyValue, HardwareCommand, NvidiaInstallerSource, PrepareNvidiaRequest,
-    ValidatedFpsRequest, VprofBenchmarkRequest,
+    Branch, BuildNvidiaLabRequest, CleanupMode, Command, FpsRequest, FpsStrategyValue,
+    HardwareCommand, NvidiaInstallerSource, PrepareNvidiaRequest, ValidatedFpsRequest,
+    VprofBenchmarkRequest,
 };
 pub use outcomes::{
     BackupSummary, BackupSummaryEntry, BenchmarkOutcome, BenchmarkPersistence, CleanupSummary,
@@ -150,10 +148,6 @@ pub fn preview_video(root: &Path, goal: frametime_domain::video::VideoGoal) -> V
             rows: Vec::new(),
         },
     }
-}
-
-pub fn is_supported_windows_host() -> bool {
-    frametime_windows::platform_is_supported()
 }
 
 #[derive(Debug)]
@@ -256,20 +250,4 @@ pub fn export_backup(destination: &Path) -> Result<(), ApplicationError> {
 
 pub fn diagnose(command: DiagnosticCommand) -> DiagnosticEnvelope {
     frametime_windows::WindowsHardwareDiagnostics::new().execute(command)
-}
-
-pub fn deploy_optional_cs2_cfgs(
-    package: &AuthenticatedPackage,
-    assets: &[OptionalCfgAsset],
-) -> Result<Vec<std::path::PathBuf>, ApplicationError> {
-    frametime_windows::deploy_optional_cs2_cfgs(package, assets).map_err(ApplicationError::failed)
-}
-
-pub fn configure_profile(
-    package: &AuthenticatedPackage,
-    profile: Profile,
-    dry_run: bool,
-) -> Result<frametime_domain::state::State, ApplicationError> {
-    frametime_windows::configure_profile(package, profile, dry_run)
-        .map_err(ApplicationError::failed)
 }

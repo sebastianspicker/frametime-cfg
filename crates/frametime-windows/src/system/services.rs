@@ -1,5 +1,6 @@
 #[cfg(windows)]
 pub(crate) mod native_services {
+    use crate::system::wide;
     use std::{mem::size_of, thread, time::Duration};
 
     use windows::{
@@ -37,10 +38,6 @@ pub(crate) mod native_services {
                 let _ = windows::Win32::System::Services::CloseServiceHandle(self.0);
             }
         }
-    }
-
-    pub(crate) fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(Some(0)).collect()
     }
 
     pub(crate) fn start_type(value: &str) -> Result<SERVICE_START_TYPE, String> {

@@ -26,6 +26,8 @@ use std::path::Path;
 #[cfg(windows)]
 use crate::TrustedWorkDir;
 #[cfg(windows)]
+use crate::driver::drs_backend::persist_drs_original;
+#[cfg(windows)]
 use crate::driver::transaction::{load_profile_backup_at, persist_driver_transaction};
 #[cfg(windows)]
 use crate::driver::{
@@ -101,6 +103,9 @@ fn apply_baseline(
             backup
         }
     };
+    // F-69: `restore` reads backup.json, so the user's profile must be there
+    // before the baseline overwrites it (first value wins; resume-safe).
+    persist_drs_original(work_dir, &backup)?;
 
     // A crash may leave the DRS save complete while the durable lifecycle is
     // still ProfilesRestored. Readback first makes that boundary resumable;

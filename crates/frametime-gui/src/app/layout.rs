@@ -51,7 +51,6 @@ struct LayoutControls {
     min_input: HWND,
     vprof_input: HWND,
     profile: HWND,
-    dry_run: HWND,
     filter_label: HWND,
     catalog_filter: HWND,
     video_root_label: HWND,
@@ -83,7 +82,6 @@ impl From<&mut AppState> for LayoutControls {
             min_input: app.min_input,
             vprof_input: app.vprof_input,
             profile: app.profile,
-            dry_run: app.dry_run,
             filter_label: app.filter_label,
             catalog_filter: app.catalog_filter,
             video_root_label: app.video_root_label,
@@ -288,13 +286,6 @@ fn layout_preference_controls(controls: &LayoutControls, metrics: LayoutMetrics)
         metrics.scale(100) + metrics.scale(216),
         metrics.scale(180),
         metrics.scale(240),
-    );
-    move_control(
-        controls.dry_run,
-        metrics.content_x + metrics.scale(194),
-        metrics.scale(100) + metrics.scale(216),
-        metrics.scale(190),
-        metrics.scale(28),
     );
 }
 

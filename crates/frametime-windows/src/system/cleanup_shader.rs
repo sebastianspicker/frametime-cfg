@@ -42,5 +42,5 @@ pub(crate) fn clear_cleanup_shader_cache(
         .into_iter()
         .map(|value| resolve_cache_template(value, &folders))
         .collect::<Result<Vec<_>, _>>()?;
-    super::shader_cache::handles::delete_fixed_roots(&roots)
+    super::shader_cache::handles::delete_fixed_roots(&roots).map(|outcome| outcome.deleted)
 }

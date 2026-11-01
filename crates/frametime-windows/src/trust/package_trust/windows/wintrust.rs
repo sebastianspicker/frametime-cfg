@@ -1,7 +1,8 @@
 use super::*;
+use crate::system::{wide, wide_path};
 
 pub(crate) fn verify_file(file: &RetainedFile) -> Result<String, String> {
-    let wide = wide(&file.path);
+    let wide = wide_path(&file.path);
     let mut info = WINTRUST_FILE_INFO {
         cbStruct: u32::try_from(size_of::<WINTRUST_FILE_INFO>())
             .map_err(|_| "WINTRUST_FILE_INFO size exceeds u32")?,
@@ -17,9 +18,9 @@ pub(crate) fn verify_catalog_member(
 ) -> Result<String, String> {
     let context = CatalogContext::acquire()?;
     let hash = context.hash(member.handle)?;
-    let catalog_path = wide(&catalog.path);
-    let member_path = wide(&member.path);
-    let tag = wide_text(
+    let catalog_path = wide_path(&catalog.path);
+    let member_path = wide_path(&member.path);
+    let tag = wide(
         &hash
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -68,10 +69,12 @@ pub(crate) fn verify(
             (&mut trust as *mut WINTRUST_DATA).cast(),
         )
     };
-    if status != 0 {
-        return Err(trust_error(status));
-    }
-    let result = signer(trust.hWVTStateData);
+    let result = if status == 0 {
+        signer(trust.hWVTStateData)
+    } else {
+        Err(trust_error(status))
+    };
+    // A failed VERIFY can still allocate provider state, so CLOSE runs on every path.
     trust.dwStateAction = WTD_STATEACTION_CLOSE;
     let _ = unsafe {
         WinVerifyTrust(

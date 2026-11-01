@@ -26,6 +26,7 @@ mod native_drs_windows {
     use super::super::drs_abi::{
         NVDRS_DWORD_TYPE, NvDrsApplicationV4, NvDrsProfile, NvDrsSetting, unicode_argument,
     };
+    use crate::system::wide_path;
     use crate::{DrsError, DrsOriginalSetting, NvapiDrs};
     use frametime_domain::driver::{
         DrsApplicationSnapshot, DrsItemKey, DrsItemKind, DrsProfileSnapshot, DrsSettingSnapshot,
@@ -227,7 +228,7 @@ mod native_drs_windows {
                         match api.find_application_profile(session, &application.executable)? {
                             None => {
                                 if api
-                                    .bind_application(session, &profile, &application.executable)
+                                    .bind_application_snapshot(session, &profile, application)
                                     .is_err()
                                 {
                                     incompatible.push(DrsItemKey {
@@ -246,14 +247,7 @@ mod native_drs_windows {
                         }
                     }
                     for setting in &captured.settings {
-                        let mut value = NvDrsSetting::typed(setting.setting_id, &setting.value)
-                            .map_err(|reason| error("prepare typed DRS setting", reason))?;
-                        if status(
-                            unsafe { (api.set_setting)(session.0, profile.0, &mut value) },
-                            "DRS_SetSetting",
-                        )
-                        .is_err()
-                        {
+                        if !api.merge_setting(session, &profile, setting)? {
                             incompatible.push(DrsItemKey {
                                 profile: captured.name.clone(),
                                 kind: DrsItemKind::Setting,
@@ -265,6 +259,40 @@ mod native_drs_windows {
                 api.save_settings(session)?;
                 Ok(incompatible)
             })
+        }
+
+        /// Writes a captured setting only when the live profile has no
+        /// user-customized value for it. Returns false when the setting is
+        /// left for reconciliation (a differing live value, or a failed
+        /// read or write), so a change made since the snapshot is not reset.
+        fn merge_setting(
+            &mut self,
+            session: &NativeDrsSession,
+            profile: &NativeDrsProfile,
+            setting: &DrsSettingSnapshot,
+        ) -> Result<bool, DrsError> {
+            let mut live =
+                NvDrsSetting::query().map_err(|reason| error("prepare setting query", reason))?;
+            let result =
+                unsafe { (self.get_setting)(session.0, profile.0, setting.setting_id, &mut live) };
+            if result != SETTING_NOT_FOUND {
+                // A predefined driver default is not a user change.
+                if status(result, "DRS_GetSetting").is_err() {
+                    return Ok(false);
+                }
+                if !live.current_is_predefined() {
+                    return Ok(live
+                        .current_value()
+                        .is_ok_and(|value| value == setting.value));
+                }
+            }
+            let mut value = NvDrsSetting::typed(setting.setting_id, &setting.value)
+                .map_err(|reason| error("prepare typed DRS setting", reason))?;
+            Ok(status(
+                unsafe { (self.set_setting)(session.0, profile.0, &mut value) },
+                "DRS_SetSetting",
+            )
+            .is_ok())
         }
 
         fn enumerate_applications(
@@ -294,14 +322,27 @@ mod native_drs_windows {
                     return Err(error("DRS_EnumApplications", "unexpected result count"));
                 }
                 if !item.is_predefined() {
-                    applications.push(DrsApplicationSnapshot {
-                        executable: item
-                            .name()
-                            .map_err(|reason| error("decode application name", reason))?,
-                    });
+                    applications.push(
+                        item.snapshot()
+                            .map_err(|reason| error("decode application", reason))?,
+                    );
                 }
             }
             Ok(applications)
+        }
+
+        fn bind_application_snapshot(
+            &mut self,
+            session: &NativeDrsSession,
+            profile: &NativeDrsProfile,
+            application: &DrsApplicationSnapshot,
+        ) -> Result<(), DrsError> {
+            let mut app = NvDrsApplicationV4::from_snapshot(application)
+                .map_err(|reason| error("prepare application", reason))?;
+            status(
+                unsafe { (self.create_application)(session.0, profile.0, &mut app) },
+                "DRS_CreateApplication",
+            )
         }
 
         fn enumerate_settings(

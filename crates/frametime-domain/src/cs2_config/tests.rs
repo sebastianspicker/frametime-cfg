@@ -56,7 +56,7 @@ fn preview_and_apply_use_only_the_injected_port() {
     let request = Cs2ConfigRequest::at("2026-08-23 12:34", [OptionalCfgAsset::NetStable]).unwrap();
     let controller = controller();
     let mut files = FakeFs::default();
-    let preview = controller.preview(&request, &mut files).unwrap();
+    let preview = controller.preview(&request).unwrap();
     assert!(
         String::from_utf8(preview.optimization_bytes.clone())
             .unwrap()

@@ -82,6 +82,32 @@ impl NvDrsApplicationV4 {
         read_unicode(&self.application_name)
     }
 
+    /// Builds a binding that keeps every field the snapshot captured (F-82).
+    pub(super) fn from_snapshot(
+        snapshot: &frametime_domain::driver::DrsApplicationSnapshot,
+    ) -> Result<Self, String> {
+        let mut value = Self::named(&snapshot.executable)?;
+        write_unicode(&mut value.friendly_name, &snapshot.friendly_name)?;
+        write_unicode(&mut value.launcher, &snapshot.launcher)?;
+        write_unicode(&mut value.file_in_folder, &snapshot.file_in_folder)?;
+        write_unicode(&mut value.command_line, &snapshot.command_line)?;
+        value.flags = snapshot.flags;
+        Ok(value)
+    }
+
+    pub(super) fn snapshot(
+        &self,
+    ) -> Result<frametime_domain::driver::DrsApplicationSnapshot, String> {
+        Ok(frametime_domain::driver::DrsApplicationSnapshot {
+            executable: self.name()?,
+            friendly_name: read_unicode(&self.friendly_name)?,
+            launcher: read_unicode(&self.launcher)?,
+            file_in_folder: read_unicode(&self.file_in_folder)?,
+            command_line: read_unicode(&self.command_line)?,
+            flags: self.flags,
+        })
+    }
+
     pub(super) const fn is_predefined(&self) -> bool {
         self.is_predefined != 0
     }
@@ -309,5 +335,19 @@ mod tests {
         let application = NvDrsApplicationV4::named("cs2.exe").unwrap();
         assert_eq!(application.name().unwrap(), "cs2.exe");
         assert!(!application.is_predefined());
+    }
+
+    #[test]
+    fn application_snapshot_fields_round_trip() {
+        let snapshot = frametime_domain::driver::DrsApplicationSnapshot {
+            executable: "cs2.exe".into(),
+            friendly_name: "Counter-Strike 2".into(),
+            launcher: "steam.exe".into(),
+            file_in_folder: "game.dll".into(),
+            command_line: "-novid".into(),
+            flags: 3,
+        };
+        let application = NvDrsApplicationV4::from_snapshot(&snapshot).unwrap();
+        assert_eq!(application.snapshot().unwrap(), snapshot);
     }
 }

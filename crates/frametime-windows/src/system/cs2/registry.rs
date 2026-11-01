@@ -37,8 +37,19 @@ pub(crate) fn cs2_registry_changes(
     }
 }
 
+/// Windows matches `UserGpuPreferences` names against plain `C:\...` paths, not the
+/// `\\?\` form `canonicalize` returns. Only this tool ever wrote the prefixed form.
+pub(crate) fn plain_drive_path(path: &str) -> &str {
+    match path.strip_prefix(r"\\?\") {
+        Some(rest) if matches!(rest.as_bytes(), [drive, b':', b'\\', ..] if drive.is_ascii_alphabetic()) => {
+            rest
+        }
+        _ => path,
+    }
+}
+
 pub(crate) fn cs2_path_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    plain_drive_path(&path.to_string_lossy()).to_owned()
 }
 
 pub(crate) fn capture_cs2_registry(
@@ -128,7 +139,8 @@ pub(crate) fn validate_cs2_restore_binding(
         );
     }
     let binding = discover_cs2_registry_binding()?;
-    if cs2_path_string(&binding.cs2_executable) != captured_path {
+    // Backups from before the prefix strip carry the `\\?\` form.
+    if cs2_path_string(&binding.cs2_executable) != plain_drive_path(captured_path) {
         return Err(
             "CS2 registry restore executable identity no longer matches HKCU SteamPath discovery"
                 .into(),
@@ -148,6 +160,9 @@ pub(crate) fn discover_cs2_registry_binding() -> Result<Cs2RegistryBinding, Stri
         .join("cs2.exe");
     let canonical = std::fs::canonicalize(&executable)
         .map_err(|error| format!("canonicalize trusted CS2 executable: {error}"))?;
+    if canonical.to_string_lossy().starts_with(r"\\?\UNC\") {
+        return Err("trusted CS2 executable resolved to a network path".into());
+    }
     Ok(Cs2RegistryBinding {
         steam_root: install.steam_root,
         cs2_executable: canonical,
@@ -223,7 +238,20 @@ pub(crate) fn is_confirmed_hybrid_vendor_set(vendors: &[u16]) -> bool {
 
 #[cfg(test)]
 mod cs2_registry_hybrid_tests {
-    use super::is_confirmed_hybrid_vendor_set;
+    use super::{is_confirmed_hybrid_vendor_set, plain_drive_path};
+
+    #[test]
+    pub(crate) fn verbatim_drive_prefix_is_stripped_and_unc_is_not() {
+        assert_eq!(
+            plain_drive_path(r"\\?\C:\Steam\cs2.exe"),
+            r"C:\Steam\cs2.exe"
+        );
+        assert_eq!(plain_drive_path(r"C:\Steam\cs2.exe"), r"C:\Steam\cs2.exe");
+        assert_eq!(
+            plain_drive_path(r"\\?\UNC\host\share\cs2.exe"),
+            r"\\?\UNC\host\share\cs2.exe"
+        );
+    }
 
     #[test]
     pub(crate) fn gpu_preference_requires_a_confirmed_integrated_plus_discrete_vendor_set() {

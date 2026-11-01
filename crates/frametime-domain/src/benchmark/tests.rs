@@ -514,3 +514,14 @@ fn persisted_final_bundle_rejects_partial_or_duplicated_evidence() {
             .is_err()
     );
 }
+
+#[test]
+fn fps_capture_labels_are_trimmed_and_cannot_be_empty_or_reserved() {
+    assert_eq!(
+        normalize_fps_capture_label("  Manual  "),
+        Ok("Manual".into())
+    );
+    assert!(normalize_fps_capture_label("   ").is_err());
+    assert!(normalize_fps_capture_label(BASELINE_BENCHMARK_LABEL).is_err());
+    assert!(normalize_fps_capture_label(" After all optimizations ").is_err());
+}

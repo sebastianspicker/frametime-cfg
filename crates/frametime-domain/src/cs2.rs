@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 pub const OPTIMIZATION_TEMPLATE: &str =
     include_str!("../../../assets/cfgs/optimization.cfg.template");
-pub const AUTOEXEC_LINE: &str = "exec optimization.cfg";
 
 #[must_use]
 pub fn optimization_values() -> BTreeMap<&'static str, &'static str> {
@@ -44,42 +43,6 @@ pub fn render_optimization_cfg_at(timestamp: &str) -> String {
     output
 }
 
-#[must_use]
-pub fn ensure_autoexec_line(existing: &str) -> String {
-    if existing.lines().any(is_optimization_exec) {
-        return existing.to_owned();
-    }
-    if existing.is_empty() {
-        return format!(
-            "// Optional frametime.cfg bootstrap. Keep personal CVars in this file.\n// Add a temporary sentinel to prove CS2 executed the line; this does not guarantee precedence.\n\n{AUTOEXEC_LINE}\n"
-        );
-    }
-    let has_blank_final_line = existing.ends_with("\n\n")
-        || existing.ends_with("\r\n\r\n")
-        || existing
-            .trim_end_matches(['\r', '\n'])
-            .rsplit(['\r', '\n'])
-            .next()
-            .is_some_and(|line| line.trim().is_empty());
-    let mut output = existing.to_owned();
-    if !output.ends_with('\n') {
-        output.push('\n');
-    }
-    if !has_blank_final_line {
-        output.push('\n');
-    }
-    output.push_str(AUTOEXEC_LINE);
-    output.push('\n');
-    output
-}
-
-fn is_optimization_exec(line: &str) -> bool {
-    line.split_once("//")
-        .map_or(line, |(command, _)| command)
-        .trim()
-        .eq_ignore_ascii_case(AUTOEXEC_LINE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,29 +51,6 @@ mod tests {
     fn current_source_has_one_explicit_generated_assignment() {
         assert_eq!(optimization_values().len(), 1);
         assert_eq!(optimization_values()["fps_max"], "400");
-    }
-
-    #[test]
-    fn autoexec_bootstrap_is_idempotent_and_preserves_content() {
-        let once = ensure_autoexec_line("bind x y\n");
-        let twice = ensure_autoexec_line(&once);
-        assert_eq!(once, twice);
-        assert!(once.starts_with("bind x y"));
-        assert!(once.lines().any(|line| line == AUTOEXEC_LINE));
-    }
-
-    #[test]
-    fn autoexec_matches_legacy_comment_blank_line_and_new_file_contract() {
-        let commented = "bind x y\nEXEC optimization.cfg // suite\n";
-        assert_eq!(ensure_autoexec_line(commented), commented);
-        assert_eq!(
-            ensure_autoexec_line("bind x y"),
-            "bind x y\n\nexec optimization.cfg\n"
-        );
-        assert_eq!(
-            ensure_autoexec_line(""),
-            "// Optional frametime.cfg bootstrap. Keep personal CVars in this file.\n// Add a temporary sentinel to prove CS2 executed the line; this does not guarantee precedence.\n\nexec optimization.cfg\n"
-        );
     }
 
     #[test]

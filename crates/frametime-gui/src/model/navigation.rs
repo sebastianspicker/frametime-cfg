@@ -113,7 +113,7 @@ impl Area {
                 (
                     "Configuration",
                     "Authenticated package",
-                    "Writes the selected profile and dry-run mode",
+                    "Writes the selected profile",
                 ),
                 (
                     "Phase 1",
@@ -237,16 +237,6 @@ const DRIVER_ROWS: [(&str, &str, &str); 8] = [
 ];
 
 pub const PROFILE_PREFERENCES: [&str; 5] = ["safe", "recommended", "competitive", "custom", "yolo"];
-#[cfg(test)]
-pub const SETUP_PHASE_ONE_ARGUMENTS: [&str; 2] = ["optimize", "--yes"];
-#[cfg(test)]
-pub const SETUP_VERIFY_ARGUMENTS: [&str; 1] = ["verify"];
-#[cfg(test)]
-pub const fn cs2_cfg_arguments(
-    asset: frametime_domain::cs2_config::OptionalCfgAsset,
-) -> [&'static str; 4] {
-    ["cs2-cfg", "--asset", asset.cli_token(), "--yes"]
-}
 /// Phase 2 is a Safe Mode CLI handoff; the GUI never runs it from a Safe Mode boot.
 pub const fn gui_allows_phase_2_in_safe_mode() -> bool {
     false
@@ -285,16 +275,10 @@ mod tests {
     fn setup_and_cs2_cfg_contracts_are_fixed() {
         use frametime_domain::cs2_config::OptionalCfgAsset;
         assert!(matches!(Area::SetupVerify.action(), Action::PhaseChoice));
-        assert_eq!(SETUP_PHASE_ONE_ARGUMENTS, ["optimize", "--yes"]);
-        assert_eq!(SETUP_VERIFY_ARGUMENTS, ["verify"]);
         assert_eq!(OptionalCfgAsset::ALL.len(), 15);
         assert_eq!(
             OptionalCfgAsset::NetStable.display_label(),
             "Network stable"
-        );
-        assert_eq!(
-            cs2_cfg_arguments(OptionalCfgAsset::AudioEqCrisp),
-            ["cs2-cfg", "--asset", "audio-eq-crisp", "--yes"]
         );
         assert!(matches!(Area::Cs2Cfg.action(), Action::Cs2CfgApply));
         assert!(Area::Cs2Cfg.table_rows()[0].2.contains("arbitrary paths"));

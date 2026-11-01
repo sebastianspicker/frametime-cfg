@@ -14,7 +14,6 @@ pub mod evidence;
 pub mod fps;
 pub mod handoff;
 pub mod hex;
-pub mod latency;
 pub mod logging;
 pub mod migration;
 pub mod operations;

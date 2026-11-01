@@ -15,6 +15,8 @@ use frametime_domain::{
 
 #[cfg(windows)]
 use super::cleanup_shader::{CleanupShaderCacheKind, clear_cleanup_shader_cache};
+#[cfg(windows)]
+use super::shader_cache::handles::DeleteOutcome;
 use crate::{
     AuthenticatedPackage, Progress, VerifiedConfig, launch_published_safe_mode_handoff,
     load_driver_transaction_at, load_progress_at, publish_current_packaged_runtime,
@@ -110,6 +112,7 @@ pub(crate) fn action_outcome(
             CleanupActionOutcome::Inapplicable { reason }
         }
         Err(CleanupDisposition::Deferred(reason)) => CleanupActionOutcome::Deferred { reason },
+        Err(CleanupDisposition::Skipped(reason)) => CleanupActionOutcome::Skipped { reason },
         Err(CleanupDisposition::Failed(reason)) => CleanupActionOutcome::Failed { reason },
     }
 }
@@ -128,7 +131,23 @@ pub(crate) fn action_outcome(
 pub(crate) enum CleanupDisposition {
     Inapplicable(String),
     Deferred(String),
+    /// Partly done: files held open by other programs were left in place.
+    Skipped(String),
     Failed(String),
+}
+
+#[cfg(windows)]
+fn deletion_effect(outcome: Result<DeleteOutcome, String>) -> Result<usize, CleanupDisposition> {
+    match outcome {
+        Ok(DeleteOutcome {
+            deleted,
+            skipped: 0,
+        }) => Ok(deleted),
+        Ok(DeleteOutcome { deleted, skipped }) => Err(CleanupDisposition::Skipped(format!(
+            "deleted {deleted}, skipped {skipped} in use"
+        ))),
+        Err(reason) => Err(CleanupDisposition::Failed(reason)),
+    }
 }
 
 #[cfg(windows)]
@@ -161,13 +180,9 @@ pub(crate) fn action_effect(
                 shader(config, CleanupShaderCacheKind::AmdDx)
             }
         }
-        ClearWindowsTemp => cleanup_paths::windows_temp().map_err(CleanupDisposition::Failed),
-        ClearCurrentUserTemp => {
-            cleanup_paths::current_user_temp().map_err(CleanupDisposition::Failed)
-        }
-        DeleteWindowsPrefetchPfFiles => {
-            cleanup_paths::prefetch_pf().map_err(CleanupDisposition::Failed)
-        }
+        ClearWindowsTemp => deletion_effect(cleanup_paths::windows_temp()),
+        ClearCurrentUserTemp => deletion_effect(cleanup_paths::current_user_temp()),
+        DeleteWindowsPrefetchPfFiles => deletion_effect(cleanup_paths::prefetch_pf()),
         FlushDnsResolverCache => dns::flush().map_err(CleanupDisposition::Deferred),
         TrimSystemFileCacheWorkingSet => system_cache::trim().map_err(CleanupDisposition::Failed),
         ClearApplicationEventLog => {
@@ -246,15 +261,15 @@ mod cleanup_paths {
         Ok(crate::known_folders()?.local_app_data().join("Temp"))
     }
 
-    pub(super) fn windows_temp() -> Result<usize, String> {
+    pub(super) fn windows_temp() -> Result<DeleteOutcome, String> {
         crate::system::shader_cache::handles::delete_fixed_roots(&[windows_root()?.join("Temp")])
     }
 
-    pub(super) fn current_user_temp() -> Result<usize, String> {
+    pub(super) fn current_user_temp() -> Result<DeleteOutcome, String> {
         crate::system::shader_cache::handles::delete_fixed_roots(&[user_temp_root()?])
     }
 
-    pub(super) fn prefetch_pf() -> Result<usize, String> {
+    pub(super) fn prefetch_pf() -> Result<DeleteOutcome, String> {
         crate::system::shader_cache::handles::delete_prefetch_pf_files(
             &windows_root()?.join("Prefetch"),
         )
@@ -317,9 +332,10 @@ mod system_cache {
             }
             .map_err(|error| format!("enable SeIncreaseQuotaPrivilege: {error}"))?;
             if unsafe { GetLastError() } == ERROR_NOT_ALL_ASSIGNED
-                || returned
-                    != u32::try_from(size_of::<TOKEN_PRIVILEGES>())
-                        .expect("TOKEN_PRIVILEGES size fits in u32")
+                // An already-enabled privilege returns a header-only state (0 entries): nothing to restore.
+                || usize::try_from(returned).map_or(true, |used| {
+                    used < size_of::<u32>() || used > size_of::<TOKEN_PRIVILEGES>()
+                })
             {
                 unsafe {
                     let _ = CloseHandle(token);

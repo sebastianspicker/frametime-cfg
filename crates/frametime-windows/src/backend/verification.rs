@@ -10,7 +10,7 @@ impl LiveBackend<'_> {
                 verify_gpu_inventory(&self.hardware, &observed).map(Some)
             }
             Action::BaselineBenchmark => {
-                if baseline_benchmark_is_persisted(&self.work_dir, &self._trusted_work_dir) {
+                if baseline_benchmark_is_persisted(&self.work_dir, &self._trusted_work_dir)? {
                     Ok(Some(()))
                 } else {
                     Err("P1:17 requires a coherent persisted baseline VProf capture".into())

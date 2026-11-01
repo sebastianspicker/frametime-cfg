@@ -17,6 +17,8 @@ use super::handles::{
 };
 use crate::validate_shader_cache_entry_name;
 
+pub(crate) const HARD_LINKED_OBJECT: &str = "P1:3 cache tree contains a hard-linked object";
+
 pub(crate) fn parse_directory_buffer(
     buffer: &[u8],
     output: &mut Vec<DirectoryEntry>,
@@ -143,7 +145,7 @@ pub(crate) fn observe_node(handle: HANDLE) -> Result<ObservedNode, String> {
     unsafe { GetFileInformationByHandle(handle, &raw mut links) }
         .map_err(|error| format!("inspect P1:3 object link count: {error}"))?;
     if links.nNumberOfLinks != 1 {
-        return Err("P1:3 cache tree contains a hard-linked object".into());
+        return Err(HARD_LINKED_OBJECT.into());
     }
     let mut info: FILE_ID_INFO = unsafe { zeroed() };
     unsafe {

@@ -2,8 +2,6 @@
 
 mod capability;
 mod cleanup_observation;
-#[cfg(test)]
-mod cleanup_v2;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod drs;
 #[cfg(any(test, windows))]

@@ -68,3 +68,44 @@ pub(crate) fn restore_drs_entry(entry: &BackupEntry) -> Result<(), String> {
         Err("DRS restore requires NVIDIA NVAPI on Windows".into())
     }
 }
+
+/// Step whose captured DRS entry holds the user's profile from before the baseline.
+pub(crate) const DRS_ORIGINAL_STEP: &str = "P3:1";
+
+pub(crate) fn drs_original<'a>(file: &'a BackupFile, profile: &str) -> Option<&'a BackupEntry> {
+    file.entries.iter().find(|entry| {
+        matches!(entry, BackupEntry::Drs { step, profile: known, .. }
+            if step == DRS_ORIGINAL_STEP && known == profile)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drs(step: &str, profile: &str) -> BackupEntry {
+        BackupEntry::Drs {
+            step: step.into(),
+            timestamp: String::new(),
+            profile: profile.into(),
+            profile_created: false,
+            settings: Vec::new(),
+            application_bindings: Vec::new(),
+            unknown: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn finds_only_the_p3_1_original_for_the_same_profile() {
+        let mut file = BackupFile {
+            entries: vec![drs("P3:4", "CS2")],
+            created: String::new(),
+            unknown: BTreeMap::new(),
+        };
+        assert!(drs_original(&file, "CS2").is_none());
+        file.entries.push(drs("P3:1", "Other"));
+        assert!(drs_original(&file, "CS2").is_none());
+        file.entries.push(drs("P3:1", "CS2"));
+        assert!(drs_original(&file, "CS2").is_some());
+    }
+}

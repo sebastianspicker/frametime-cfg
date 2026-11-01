@@ -1,20 +1,16 @@
 use std::{collections::BTreeSet, io, path::PathBuf};
 
+use super::OPTIMIZATION_FILE;
 use super::safe_backup::{
-    Cs2Paths, assert_existing_path_safe, backup_path, bytes_as_autoexec, create_autoexec_backup,
-    create_optimization_backup, ensure_cfg_directory, ensure_safe_target, read_optional,
-    validate_install,
+    Cs2Paths, assert_existing_path_safe, backup_path, create_optimization_backup,
+    ensure_cfg_directory, ensure_safe_target, read_optional, validate_install,
 };
-use super::transaction::{verify_bytes, write_and_verify};
-use super::{AUTOEXEC_BACKUP_FILE, AUTOEXEC_FILE, OPTIMIZATION_FILE};
+use super::transaction::{verify_bytes, verify_bytes_ignoring_generated_line, write_and_verify};
 use super::{
-    AutoexecBackup, Cs2ConfigError, Cs2ConfigFs, Cs2ConfigPreview, Cs2ConfigRequest,
-    Cs2ConfigTarget, Cs2ConfigWriteReport, OptionalCfgAsset,
+    Cs2ConfigError, Cs2ConfigFs, Cs2ConfigPreview, Cs2ConfigRequest, Cs2ConfigTarget,
+    Cs2ConfigWriteReport, OptionalCfgAsset,
 };
-use crate::{
-    cs2::{ensure_autoexec_line, render_optimization_cfg_at},
-    steam::Cs2Install,
-};
+use crate::{cs2::render_optimization_cfg_at, steam::Cs2Install};
 
 #[derive(Debug, Clone)]
 pub struct Cs2ConfigController {
@@ -32,44 +28,17 @@ impl Cs2ConfigController {
         &self.install
     }
 
-    pub fn preview(
-        &self,
-        request: &Cs2ConfigRequest,
-        files: &mut dyn Cs2ConfigFs,
-    ) -> Result<Cs2ConfigPreview, Cs2ConfigError> {
+    pub fn preview(&self, request: &Cs2ConfigRequest) -> Result<Cs2ConfigPreview, Cs2ConfigError> {
         let paths = self.paths()?;
         ensure_safe_target(&paths.cfg_directory, &paths.optimization_path)?;
         ensure_safe_target(&paths.cfg_directory, &paths.optimization_backup_path)?;
-        if request.bootstraps_autoexec() {
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_path)?;
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_backup_path)?;
-        }
         for deployment in paths.optional_deployments(request) {
             ensure_safe_target(&paths.cfg_directory, &deployment.target)?;
         }
-        let (autoexec_path, autoexec_backup_path, autoexec_would_change) =
-            if request.bootstraps_autoexec() {
-                let existing = read_optional(files, &paths.autoexec_path)?;
-                let existing = existing
-                    .as_deref()
-                    .map(bytes_as_autoexec)
-                    .transpose()?
-                    .unwrap_or_default();
-                (
-                    Some(paths.autoexec_path.clone()),
-                    Some(paths.autoexec_backup_path.clone()),
-                    ensure_autoexec_line(existing) != existing,
-                )
-            } else {
-                (None, None, false)
-            };
         Ok(Cs2ConfigPreview {
             cfg_directory: paths.cfg_directory.clone(),
             optimization_path: paths.optimization_path.clone(),
-            autoexec_path,
-            autoexec_backup_path,
             optimization_bytes: render_optimization_cfg_at(request.generated_at()).into_bytes(),
-            autoexec_would_change,
             optional_assets: paths.optional_deployments(request),
         })
     }
@@ -83,35 +52,13 @@ impl Cs2ConfigController {
         ensure_cfg_directory(&self.install.install_root, &paths.cfg_directory, files)?;
         ensure_safe_target(&paths.cfg_directory, &paths.optimization_path)?;
         ensure_safe_target(&paths.cfg_directory, &paths.optimization_backup_path)?;
-        if request.bootstraps_autoexec() {
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_path)?;
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_backup_path)?;
-        }
         let optional = paths.optional_deployments(request);
         for deployment in &optional {
             ensure_safe_target(&paths.cfg_directory, &deployment.target)?;
         }
 
         let original_optimization = read_optional(files, &paths.optimization_path)?;
-        let autoexec_original = if request.bootstraps_autoexec() {
-            read_optional(files, &paths.autoexec_path)?
-        } else {
-            None
-        };
-        let autoexec_before = autoexec_original
-            .as_deref()
-            .map(bytes_as_autoexec)
-            .transpose()?;
         let expected_optimization = render_optimization_cfg_at(request.generated_at()).into_bytes();
-        let expected_autoexec = request.bootstraps_autoexec().then(|| {
-            autoexec_before
-                .map(ensure_autoexec_line)
-                .unwrap_or_else(|| ensure_autoexec_line(""))
-                .into_bytes()
-        });
-        let autoexec_updated = expected_autoexec.as_ref().is_some_and(|expected| {
-            autoexec_before.is_none_or(|value| value.as_bytes() != expected.as_slice())
-        });
 
         let backup = create_optimization_backup(
             files,
@@ -126,25 +73,6 @@ impl Cs2ConfigController {
             "optimization.cfg replacement",
             recovery.clone(),
         )?;
-        let autoexec_backup = if request.bootstraps_autoexec() {
-            create_autoexec_backup(
-                files,
-                &paths.autoexec_backup_path,
-                autoexec_original.as_deref(),
-                autoexec_updated,
-            )?
-        } else {
-            AutoexecBackup::NotNeeded
-        };
-        if let Some(expected_autoexec) = expected_autoexec.filter(|_| autoexec_updated) {
-            write_and_verify(
-                files,
-                &paths.autoexec_path,
-                &expected_autoexec,
-                "autoexec.cfg replacement",
-                recovery.clone(),
-            )?;
-        }
         let mut optional_assets_written = Vec::with_capacity(optional.len());
         for deployment in optional {
             write_and_verify(
@@ -158,17 +86,13 @@ impl Cs2ConfigController {
         }
         Ok(Cs2ConfigWriteReport {
             optimization_path: paths.optimization_path,
-            autoexec_path: request.bootstraps_autoexec().then_some(paths.autoexec_path),
             optimization_backup: backup,
-            autoexec_backup,
-            autoexec_updated,
             optional_assets_written,
         })
     }
 
-    /// Confirms rendered managed-file bytes and, when explicitly requested,
-    /// the idempotent bootstrap line. It does not establish runtime execution
-    /// or sentinel proof.
+    /// Confirms rendered managed-file bytes. It does not establish runtime
+    /// execution or sentinel proof.
     pub fn verify(
         &self,
         request: &Cs2ConfigRequest,
@@ -176,55 +100,17 @@ impl Cs2ConfigController {
     ) -> Result<(), Cs2ConfigError> {
         let paths = self.paths()?;
         ensure_safe_target(&paths.cfg_directory, &paths.optimization_path)?;
-        if request.bootstraps_autoexec() {
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_path)?;
-            ensure_safe_target(&paths.cfg_directory, &paths.autoexec_backup_path)?;
-        }
         let expected_optimization = render_optimization_cfg_at(request.generated_at()).into_bytes();
-        verify_bytes(files, &paths.optimization_path, &expected_optimization)?;
-        if request.bootstraps_autoexec() {
-            let autoexec = files.read_file(&paths.autoexec_path)?;
-            let autoexec = bytes_as_autoexec(&autoexec)?;
-            if ensure_autoexec_line(autoexec) != autoexec {
-                return Err(Cs2ConfigError::ReadbackMismatch {
-                    target: paths.autoexec_path,
-                    recovery: None,
-                });
-            }
-        }
+        verify_bytes_ignoring_generated_line(
+            files,
+            &paths.optimization_path,
+            &expected_optimization,
+        )?;
         for deployment in paths.optional_deployments(request) {
             ensure_safe_target(&paths.cfg_directory, &deployment.target)?;
             verify_bytes(files, &deployment.target, &deployment.bytes)?;
         }
         Ok(())
-    }
-
-    /// Deploys only explicitly selected, embedded CFG assets. It does not
-    /// rewrite optimization.cfg or autoexec.cfg and does not execute a CFG.
-    pub fn apply_optional_assets(
-        &self,
-        assets: &BTreeSet<OptionalCfgAsset>,
-        files: &mut dyn Cs2ConfigFs,
-    ) -> Result<Vec<PathBuf>, Cs2ConfigError> {
-        if assets.is_empty() {
-            return Err(Cs2ConfigError::EmptyOptionalSelection);
-        }
-        let paths = self.paths()?;
-        ensure_cfg_directory(&self.install.install_root, &paths.cfg_directory, files)?;
-        let deployments = paths.deployments_for_assets(assets.iter().copied());
-        let mut written = Vec::with_capacity(deployments.len());
-        for deployment in deployments {
-            ensure_safe_target(&paths.cfg_directory, &deployment.target)?;
-            write_and_verify(
-                files,
-                &deployment.target,
-                &deployment.bytes,
-                "optional CFG replacement",
-                None,
-            )?;
-            written.push(deployment.target);
-        }
-        Ok(written)
     }
 
     /// Verifies only the selected optional assets through exact byte readback.
@@ -394,8 +280,6 @@ impl Cs2ConfigController {
         Ok(Cs2Paths {
             optimization_path: cfg_directory.join(OPTIMIZATION_FILE),
             optimization_backup_path: cfg_directory.join("optimization.cfg.bak"),
-            autoexec_path: cfg_directory.join(AUTOEXEC_FILE),
-            autoexec_backup_path: cfg_directory.join(AUTOEXEC_BACKUP_FILE),
             cfg_directory,
         })
     }

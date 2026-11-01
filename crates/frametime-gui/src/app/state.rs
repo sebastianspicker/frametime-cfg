@@ -1,9 +1,5 @@
 use super::*;
 
-pub(super) struct RetainedChild {
-    pub(super) child: Child,
-}
-
 pub(super) enum NativeOperation {
     Recovery,
     NetworkApply,
@@ -43,7 +39,6 @@ pub(super) struct AppState {
     pub(super) min_input: HWND,
     pub(super) vprof_input: HWND,
     pub(super) profile: HWND,
-    pub(super) dry_run: HWND,
     pub(super) filter_label: HWND,
     pub(super) catalog_filter: HWND,
     pub(super) video_root_label: HWND,
@@ -54,13 +49,11 @@ pub(super) struct AppState {
     pub(super) cs2_cfg_asset: HWND,
     pub(super) reads: model::snapshots::SnapshotWorker,
     pub(super) package: model::PackageAuthentication<frametime_app::AuthenticatedPackage>,
-    pub(super) child: Option<RetainedChild>,
     pub(super) elevation_watchdog: Option<ElevationWatchdog>,
     pub(super) native_result: Option<Receiver<NativeWorkerResult>>,
     pub(super) native_operation: Option<NativeOperation>,
     pub(super) critical_operation: bool,
     pub(super) vprof_input_state: model::VprofInputState,
-    pub(super) benchmark_preview: model::snapshots::Rows,
     pub(super) diagnostics: DiagnosticPresentation,
     pub(super) operation: OperationState,
     pub(super) last_focus: HWND,
@@ -69,11 +62,7 @@ pub(super) struct AppState {
 
 impl AppState {
     pub(super) fn is_running(&self) -> bool {
-        self.child.is_some() || self.elevation_watchdog.is_some() || self.native_result.is_some()
-    }
-
-    pub(super) fn is_cancellable(&self) -> bool {
-        self.child.is_some()
+        self.elevation_watchdog.is_some() || self.native_result.is_some()
     }
 }
 

@@ -88,7 +88,7 @@ fn command_notification(wparam: WPARAM) -> usize {
 }
 
 fn handle_poll_timer(window: HWND) -> LRESULT {
-    poll_terminal(window);
+    poll_native(window);
     poll_reads(window);
     LRESULT(0)
 }
@@ -227,16 +227,15 @@ fn refresh_theme(window: HWND) {
 }
 
 fn handle_close(window: HWND) -> LRESULT {
-    let (running, terminal, critical, diagnostic, watchdog) = with_state(window, |app| {
+    let (running, critical, diagnostic, watchdog) = with_state(window, |app| {
         (
             app.is_running(),
-            app.child.is_some(),
             app.critical_operation,
             matches!(app.native_operation, Some(NativeOperation::Diagnostic)),
             app.elevation_watchdog.is_some(),
         )
     })
-    .unwrap_or((false, false, false, false, false));
+    .unwrap_or((false, false, false, false));
     if watchdog {
         unsafe {
             MessageBoxW(
@@ -245,19 +244,6 @@ fn handle_close(window: HWND) -> LRESULT {
                     "The unelevated GUI must remain open while the elevated GUI runs so it can retain the authenticated package capability. It will return automatically when the elevated GUI exits."
                 ),
                 w!("frametime.cfg elevation watchdog active"),
-                MB_OK | MB_ICONWARNING,
-            );
-        }
-        return LRESULT(0);
-    }
-    if terminal {
-        unsafe {
-            MessageBoxW(
-                Some(window),
-                w!(
-                    "The GUI must remain open while the authenticated native CLI runs so it can retain the package capability. Use Ctrl-Break and wait for the terminal result."
-                ),
-                w!("frametime.cfg authenticated CLI active"),
                 MB_OK | MB_ICONWARNING,
             );
         }
@@ -315,7 +301,7 @@ fn handle_destroy(window: HWND) -> LRESULT {
 }
 
 pub(super) fn configure_preference(window: HWND) {
-    let Some((profile, dry_run)) = with_state(window, |app| (app.profile, app.dry_run)) else {
+    let Some(profile) = with_state(window, |app| app.profile) else {
         return;
     };
     let selected =
@@ -352,11 +338,7 @@ pub(super) fn configure_preference(window: HWND) {
         );
         return;
     }
-    let dry = unsafe {
-        SendMessageW(dry_run, BM_GETCHECK, Some(WPARAM(0)), Some(LPARAM(0))).0
-            == BST_CHECKED.0 as isize
-    };
-    configure_profile(window, &profile_name, dry);
+    configure_profile(window, &profile_name);
 }
 pub(super) fn restore_focus(window: HWND) {
     if let Some(last_focus) = with_state(window, |app| app.last_focus) {

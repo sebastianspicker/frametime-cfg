@@ -115,7 +115,6 @@ pub fn read_text_from_clipboard() -> Result<String, String> {
 pub fn configure_profile(
     _package: &AuthenticatedPackage,
     profile: Profile,
-    dry_run: bool,
 ) -> Result<State, String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     let work_dir = trusted.path();
@@ -127,18 +126,7 @@ pub fn configure_profile(
         State::default()
     };
     state.validate().map_err(str::to_owned)?;
-    state.profile = profile;
-    state.mode = if dry_run {
-        "DRY-RUN"
-    } else {
-        match profile {
-            Profile::Safe | Profile::Recommended => "AUTO",
-            Profile::Competitive => "CONTROL",
-            Profile::Custom => "INFORMED",
-            Profile::Yolo => "YOLO",
-        }
-    }
-    .into();
+    state.set_profile(profile);
     state.work_dir = WINDOWS_WORK_DIR.into();
     write_json_atomic_trusted(&trusted, STATE_FILE, &state)
         .map_err(|error| format!("persist profile state: {error}"))?;
@@ -196,6 +184,17 @@ pub fn persist_fps_capture(
             "advisory FPS persistence cannot replace a completed Phase 3 benchmark receipt".into(),
         );
     }
+    // Validate the label and history before any write so bad input saves nothing.
+    let label =
+        frametime_domain::benchmark::normalize_fps_capture_label(&label).map_err(str::to_owned)?;
+    let history_path = work_dir.join("benchmark_history.json");
+    let mut history: Vec<BenchmarkRecord> = if history_path.exists() {
+        read_json_trusted(&trusted, "benchmark_history.json")
+            .map_err(|error| format!("read benchmark history: {error}"))?
+    } else {
+        Vec::new()
+    };
+    validate_benchmark_run_evidence(&history)?;
     let captured_at = timestamp();
     state.fps_cap = cap;
     state.avg_fps = capture.average_fps;
@@ -211,14 +210,6 @@ pub fn persist_fps_capture(
         return Err("FPS state readback verification failed".into());
     }
     if capture.p1_fps > 0.0 {
-        let history_path = work_dir.join("benchmark_history.json");
-        let mut history: Vec<BenchmarkRecord> = if history_path.exists() {
-            read_json_trusted(&trusted, "benchmark_history.json")
-                .map_err(|error| format!("read benchmark history: {error}"))?
-        } else {
-            Vec::new()
-        };
-        validate_benchmark_run_evidence(&history)?;
         history.push(BenchmarkRecord {
             timestamp: captured_at,
             avg_fps: capture.average_fps,

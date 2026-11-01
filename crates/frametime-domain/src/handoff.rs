@@ -9,6 +9,8 @@ use std::{collections::BTreeMap, fmt};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
+use crate::runtime::{valid_generation_id, valid_sha256};
+
 const REBOOT_TRANSACTION_SCHEMA_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -266,17 +268,6 @@ fn tolerant_record<T: for<'de> Deserialize<'de>>(value: Option<Value>) -> Option
 
 fn tolerant_string(value: Option<Value>) -> Option<String> {
     value.and_then(|value| value.as_str().map(str::to_owned))
-}
-
-fn valid_generation_id(value: &str) -> bool {
-    value.len() == 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn valid_relative_path(value: &str) -> bool {

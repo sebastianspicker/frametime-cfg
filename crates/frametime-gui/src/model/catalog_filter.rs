@@ -13,13 +13,6 @@ pub const fn catalog_filter_accessible_name() -> &'static str {
     "Category and status filter"
 }
 #[cfg(test)]
-pub const STANDARD_TAB_ORDER: [&str; 4] = [
-    "area navigation",
-    "area actions",
-    "Category and status filter",
-    "catalog table",
-];
-#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
@@ -36,7 +29,5 @@ mod tests {
             catalog_filter_accessible_name(),
             "Category and status filter"
         );
-        assert_eq!(STANDARD_TAB_ORDER[2], catalog_filter_accessible_name());
-        assert_eq!(STANDARD_TAB_ORDER.last(), Some(&"catalog table"));
     }
 }

@@ -26,6 +26,7 @@ use windows::{
     core::PCWSTR,
 };
 
+use crate::system::wide;
 use crate::{TRUSTED_WORK_DIR_SDDL, WINDOWS_WORK_DIR};
 
 use super::acl_validation;
@@ -50,10 +51,6 @@ impl RootHandle {
     pub(crate) fn raw(&self) -> HANDLE {
         self.0
     }
-}
-
-pub(crate) fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
 }
 
 pub(crate) fn open_or_create(requested: &Path) -> Result<(PathBuf, RootHandle), String> {

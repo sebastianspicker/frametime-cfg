@@ -55,7 +55,7 @@ jobs:
             FOUND=$((FOUND + 1))
           fi
 
-          if grep -rEh '^[[:space:]]*-[[:space:]]+uses:' .github/workflows/ \
+          if grep -rEh '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows/ \
             | sed -E 's/.*@([^ #]+).*/\1/' \
             | grep -Ev '^[0-9a-f]{40}$'; then
             echo "::error::Action reference is not pinned to a full commit SHA"

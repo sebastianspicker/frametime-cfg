@@ -27,17 +27,26 @@ impl ArmingHost for NativeArmingHost {
 }
 
 /// Undo only values this call created and that still hold what it wrote, so a
-/// value planted or changed by someone else is never removed.
+/// value planted or changed by someone else is never removed. `Ok` carries the
+/// error message when everything was rolled back, `Err` when something remains.
 pub(crate) fn roll_back_partial_arming(
     host: &impl ArmingHost,
     error: String,
     phase2: &str,
     wrote_handoff: bool,
     set_safe_boot: bool,
-) -> String {
+) -> Result<String, String> {
     let mut failures = Vec::new();
     if set_safe_boot {
-        match host.safe_boot() {
+        // A brief bcdedit failure must not strand Safe Boot; clear only after a `minimal` read.
+        let mut evidence = host.safe_boot();
+        for _ in 0..3 {
+            if evidence != SafebootEvidence::Unavailable {
+                break;
+            }
+            evidence = host.safe_boot();
+        }
+        match evidence {
             SafebootEvidence::Configured(value) if value == "minimal" => {
                 if let Err(rollback) = host.clear_safe_boot() {
                     failures.push(rollback);
@@ -67,26 +76,27 @@ pub(crate) fn roll_back_partial_arming(
         }
     }
     if failures.is_empty() {
-        format!(
+        Ok(format!(
             "{error}; partial P1:38 arming was rolled back; rerun optimize, and if it refuses because of an armed handoff or active reboot transaction, follow the stuck-handoff procedure in recovery.md"
-        )
+        ))
     } else {
-        format!(
+        Err(format!(
             "{error}; P1:38 rollback incomplete ({}); follow the stuck-handoff procedure in recovery.md",
             failures.join("; ")
-        )
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     const PHASE2: &str = "\"C:\\FRAMETIME_CFG\\frametime.exe\" phase2 --yes";
 
     struct FakeHost {
         safe_boot: SafebootEvidence,
+        unreadable_reads: Cell<usize>,
         handoff: Option<String>,
         delete_fails: bool,
         clear_fails: bool,
@@ -98,6 +108,7 @@ mod tests {
         fn new(safe_boot: SafebootEvidence, handoff: Option<&str>) -> Self {
             Self {
                 safe_boot,
+                unreadable_reads: Cell::new(0),
                 handoff: handoff.map(str::to_owned),
                 delete_fails: false,
                 clear_fails: false,
@@ -109,6 +120,11 @@ mod tests {
 
     impl ArmingHost for FakeHost {
         fn safe_boot(&self) -> SafebootEvidence {
+            let unreadable = self.unreadable_reads.get();
+            if unreadable > 0 {
+                self.unreadable_reads.set(unreadable - 1);
+                return SafebootEvidence::Unavailable;
+            }
             self.safe_boot.clone()
         }
         fn clear_safe_boot(&self) -> Result<(), String> {
@@ -143,7 +159,8 @@ mod tests {
     #[test]
     fn rolls_back_both_values_this_call_wrote() {
         let host = FakeHost::new(minimal(), Some(PHASE2));
-        let message = roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true);
+        let message =
+            roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true).unwrap();
         assert_eq!(*host.calls.borrow(), ["clear safe boot", "delete handoff"]);
         assert!(message.starts_with("persist; partial P1:38 arming was rolled back"));
     }
@@ -151,14 +168,15 @@ mod tests {
     #[test]
     fn never_touches_values_that_existed_before_the_call() {
         let host = FakeHost::new(minimal(), Some(PHASE2));
-        roll_back_partial_arming(&host, "persist".into(), PHASE2, false, false);
+        assert!(roll_back_partial_arming(&host, "persist".into(), PHASE2, false, false).is_ok());
         assert!(host.calls.borrow().is_empty());
     }
 
     #[test]
     fn skips_steps_that_never_ran() {
         let host = FakeHost::new(SafebootEvidence::Absent, None);
-        let message = roll_back_partial_arming(&host, "differs".into(), PHASE2, true, true);
+        let message =
+            roll_back_partial_arming(&host, "differs".into(), PHASE2, true, true).unwrap();
         assert!(host.calls.borrow().is_empty());
         assert!(message.contains("was rolled back"));
     }
@@ -169,7 +187,8 @@ mod tests {
             SafebootEvidence::Configured("network".into()),
             Some("planted phase2"),
         );
-        let message = roll_back_partial_arming(&host, "differs".into(), PHASE2, true, true);
+        let message =
+            roll_back_partial_arming(&host, "differs".into(), PHASE2, true, true).unwrap_err();
         assert!(host.calls.borrow().is_empty());
         assert!(message.contains("rollback incomplete"));
         assert!(message.contains("safeboot network was set by someone else"));
@@ -180,17 +199,29 @@ mod tests {
     fn unreadable_state_is_an_incomplete_rollback() {
         let mut host = FakeHost::new(SafebootEvidence::Unavailable, Some(PHASE2));
         host.read_fails = true;
-        let message = roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true);
+        let message =
+            roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true).unwrap_err();
         assert!(host.calls.borrow().is_empty());
         assert!(message.contains("safeboot state is unreadable"));
         assert!(message.contains("read failed"));
     }
 
     #[test]
+    fn a_briefly_unreadable_minimal_safe_boot_is_still_cleared() {
+        let host = FakeHost::new(minimal(), None);
+        host.unreadable_reads.set(1);
+        let message =
+            roll_back_partial_arming(&host, "differs".into(), PHASE2, false, true).unwrap();
+        assert_eq!(*host.calls.borrow(), ["clear safe boot"]);
+        assert!(message.contains("was rolled back"));
+    }
+
+    #[test]
     fn rolls_back_only_safe_boot_when_the_handoff_pre_existed() {
         let mut host = FakeHost::new(minimal(), Some(PHASE2));
         host.clear_fails = true;
-        let message = roll_back_partial_arming(&host, "persist".into(), PHASE2, false, true);
+        let message =
+            roll_back_partial_arming(&host, "persist".into(), PHASE2, false, true).unwrap_err();
         assert_eq!(*host.calls.borrow(), ["clear safe boot"]);
         assert!(message.contains("rollback incomplete (clear failed)"));
     }
@@ -199,7 +230,8 @@ mod tests {
     fn reports_an_incomplete_rollback() {
         let mut host = FakeHost::new(SafebootEvidence::Absent, Some(PHASE2));
         host.delete_fails = true;
-        let message = roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true);
+        let message =
+            roll_back_partial_arming(&host, "persist".into(), PHASE2, true, true).unwrap_err();
         assert_eq!(*host.calls.borrow(), ["delete handoff"]);
         assert!(message.contains("rollback incomplete (delete failed)"));
     }

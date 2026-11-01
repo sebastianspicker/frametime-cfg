@@ -74,8 +74,6 @@ pub struct RebuildableAudit {
     pub targets: Vec<RebuildableTarget>,
     #[serde(flatten)]
     pub outcome: RebuildableAuditOutcome,
-    #[serde(flatten)]
-    pub unknown: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -100,7 +98,6 @@ impl RebuildableAudit {
             captured_at: captured_at.into(),
             targets,
             outcome: RebuildableAuditOutcome::Pending,
-            unknown: BTreeMap::new(),
         })
     }
 
@@ -157,8 +154,6 @@ pub struct ManualRecoveryAudit {
     pub target: ManualRecoveryTarget,
     #[serde(flatten)]
     pub outcome: ManualRecoveryAuditOutcome,
-    #[serde(flatten)]
-    pub unknown: BTreeMap<String, Value>,
 }
 
 /// A typed pending/final audit when byte-restorable and manual recovery coexist.
@@ -180,8 +175,6 @@ pub struct MixedRecoveryAudit {
     pub manual_recovery_subjects: Vec<AppxRemovalSubject>,
     #[serde(flatten)]
     pub outcome: ManualRecoveryAuditOutcome,
-    #[serde(flatten)]
-    pub unknown: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -224,7 +217,6 @@ impl ManualRecoveryAudit {
             captured_at: captured_at.into(),
             target,
             outcome: ManualRecoveryAuditOutcome::Pending,
-            unknown: BTreeMap::new(),
         }
     }
 }
@@ -242,7 +234,6 @@ impl MixedRecoveryAudit {
             target,
             manual_recovery_subjects: Vec::new(),
             outcome: ManualRecoveryAuditOutcome::Pending,
-            unknown: BTreeMap::new(),
         }
     }
 

@@ -1,5 +1,6 @@
 //! Bounded, read-only WHEA observations through the Windows Event Log API.
 
+use crate::system::wide;
 use frametime_domain::hardware::{DiagnosticError, WheaEvent};
 use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS};
 use windows::Win32::System::EventLog::{
@@ -45,8 +46,8 @@ struct EventHandle(EVT_HANDLE);
 
 impl EventHandle {
     fn query() -> Result<Self, DiagnosticError> {
-        let path = utf16z("System");
-        let query = utf16z(WHEA_QUERY);
+        let path = wide("System");
+        let query = wide(WHEA_QUERY);
         let handle = unsafe {
             EvtQuery(
                 None,
@@ -167,10 +168,6 @@ fn xml_unescape(value: &str) -> String {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
-}
-
-fn utf16z(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
 }
 
 fn is_win32_error(error: &windows::core::Error, expected: u32) -> bool {

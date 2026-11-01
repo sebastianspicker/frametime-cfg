@@ -78,7 +78,10 @@ fn verify_original_power_plan(
     host: &mut impl PowerPlanHost,
     original_guid: &str,
 ) -> Result<(), String> {
-    if parse_active_power_plan(&host.powercfg(&["/getactivescheme"])?)?.guid != original_guid {
+    if !parse_active_power_plan(&host.powercfg(&["/getactivescheme"])?)?
+        .guid
+        .eq_ignore_ascii_case(original_guid)
+    {
         Err("original power-plan readback did not match".into())
     } else {
         Ok(())
@@ -90,7 +93,7 @@ fn restore_suite_power_plan(host: &mut impl PowerPlanHost, suite_guid: &str) -> 
         .powercfg(&["/list"])?
         .lines()
         .filter_map(parse_power_plan_line)
-        .find(|plan| plan.guid == suite_guid);
+        .find(|plan| plan.guid.eq_ignore_ascii_case(suite_guid));
     let Some(plan) = known else {
         return Ok(());
     };
@@ -102,7 +105,7 @@ fn restore_suite_power_plan(host: &mut impl PowerPlanHost, suite_guid: &str) -> 
         .powercfg(&["/list"])?
         .lines()
         .filter_map(find_power_guid)
-        .any(|guid| guid == suite_guid)
+        .any(|guid| guid.eq_ignore_ascii_case(suite_guid))
     {
         Err("suite power-plan remains after deletion".into())
     } else {
@@ -110,7 +113,7 @@ fn restore_suite_power_plan(host: &mut impl PowerPlanHost, suite_guid: &str) -> 
     }
 }
 
-pub(crate) fn validate_power_plan_guid(value: &str) -> Result<(), String> {
+fn validate_power_plan_guid(value: &str) -> Result<(), String> {
     if value.len() == 36
         && value.chars().enumerate().all(|(index, character)| {
             matches!(index, 8 | 13 | 18 | 23) && character == '-' || character.is_ascii_hexdigit()
@@ -326,6 +329,41 @@ mod tests {
         ]);
 
         assert_eq!(restore(&mut host, &[SUITE_GUID.into()]), Ok(()));
+        host.assert_complete();
+    }
+
+    #[test]
+    fn matches_guids_regardless_of_case() {
+        let original = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+        let suite = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB";
+        let (original_lower, suite_lower) = (original.to_lowercase(), suite.to_lowercase());
+        let mut host = FakePowerPlanHost::new([
+            (vec!["/setactive", original], Ok("")),
+            (
+                vec!["/getactivescheme"],
+                Ok(active_plan(&original_lower).as_str()),
+            ),
+            (
+                vec!["/list"],
+                Ok(listed_plan(&suite_lower, SUITE_POWER_PLAN_NAME).as_str()),
+            ),
+            (vec!["/delete", suite], Ok("")),
+            (
+                vec!["/list"],
+                Ok(listed_plan(&original_lower, "Balanced").as_str()),
+            ),
+        ]);
+
+        assert_eq!(
+            restore_power_plan_with_host(
+                &mut host,
+                "P1:6",
+                original,
+                &[suite.into()],
+                &no_unknown_fields(),
+            ),
+            Ok(())
+        );
         host.assert_complete();
     }
 

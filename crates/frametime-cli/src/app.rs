@@ -317,9 +317,8 @@ const fn map_hardware(value: HardwareCommand) -> frametime_app::HardwareCommand 
 fn map_live_command(value: Command) -> frametime_app::Command {
     match value {
         Command::Optimize { yes } => frametime_app::Command::Optimize { yes },
-        Command::Configure { profile, dry_run } => frametime_app::Command::Configure {
+        Command::Configure { profile } => frametime_app::Command::Configure {
             profile: profile.into(),
-            dry_run,
         },
         Command::Cs2Cfg { assets, yes } => frametime_app::Command::Cs2Cfg { assets, yes },
         Command::BootSafeMode { yes } => frametime_app::Command::BootSafeMode { yes },

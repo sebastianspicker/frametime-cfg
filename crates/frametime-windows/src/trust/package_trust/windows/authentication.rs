@@ -5,11 +5,11 @@ pub(crate) fn authenticate(
     pins: &[String],
     current_image: &Path,
 ) -> Result<AuthenticatedPackage, String> {
-    if !is_fixed_local_drive(root)? {
-        return Err(rejection::not_fixed_drive());
-    }
+    require_fixed_local_drive(root)?;
     let root_handle = open(root, true)?;
     let root_path = root_handle.path.clone();
+    // Links in the requested path are resolved only by the open.
+    require_fixed_local_drive(&dos_path(&root_path))?;
     verify_tree_inventory(&root_path)?;
     let current = open(current_image, false)?;
     if !matches!(
@@ -95,11 +95,11 @@ pub(crate) fn authenticate(
         manifest,
         config: bind_config_snapshot(config_bytes)?,
         gui: AuthenticatedExecutable {
-            path: gui.path.clone(),
+            path: dos_path(&gui.path),
             _retained: gui,
         },
         cli: AuthenticatedExecutable {
-            path: cli.path.clone(),
+            path: dos_path(&cli.path),
             _retained: cli,
         },
         payload,

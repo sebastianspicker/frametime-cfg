@@ -96,34 +96,52 @@ pub(crate) fn require_elevation() -> Result<(), String> {
 
 #[cfg(windows)]
 pub(crate) fn discover_hardware() -> Result<HardwareInfo, String> {
-    let output = CommandVector::new(
-        CommandName::Pnputil,
-        &["/enum-devices", "/class", "Display"],
-    )?
-    .run()?;
-    let display_adapters = output
-        .lines()
-        .filter_map(|line| {
-            line.strip_prefix("Device Description:")
-                .map(|value| value.trim().to_owned())
-        })
+    let devices = crate::system::device_bindings::windows_setupapi::display_devices()
+        .map_err(|error| format!("enumerate display adapters: {error}"))?;
+    let vendors = devices
+        .iter()
+        .filter_map(|(_, vendor)| *vendor)
         .collect::<Vec<_>>();
-    let joined = display_adapters.join(" ").to_ascii_lowercase();
-    let gpu_branch = if joined.contains("nvidia") {
-        Some(GpuBranch::Nvidia)
-    } else if joined.contains("amd") || joined.contains("radeon") {
-        Some(GpuBranch::Amd)
-    } else if joined.contains("intel") || joined.contains("arc") {
-        Some(GpuBranch::IntelArc)
-    } else {
-        None
-    };
     Ok(HardwareInfo {
-        display_adapters,
-        gpu_branch,
+        display_adapters: devices.into_iter().map(|(name, _)| name).collect(),
+        gpu_branch: gpu_branch_from_vendors(&vendors),
     })
+}
+
+#[cfg(any(test, windows))]
+fn gpu_branch_from_vendors(vendors: &[u16]) -> Option<GpuBranch> {
+    [
+        (0x10de, GpuBranch::Nvidia),
+        (0x1002, GpuBranch::Amd),
+        (0x8086, GpuBranch::IntelArc),
+    ]
+    .into_iter()
+    .find_map(|(id, branch)| vendors.contains(&id).then_some(branch))
 }
 #[cfg(not(windows))]
 pub(crate) fn discover_hardware() -> Result<HardwareInfo, String> {
     Err("the live backend is supported only on Windows".into())
+}
+
+#[cfg(test)]
+mod gpu_branch_tests {
+    use super::*;
+
+    #[test]
+    fn vendor_precedence_is_nvidia_amd_intel() {
+        assert_eq!(
+            gpu_branch_from_vendors(&[0x8086, 0x10de]),
+            Some(GpuBranch::Nvidia)
+        );
+        assert_eq!(
+            gpu_branch_from_vendors(&[0x8086, 0x1002]),
+            Some(GpuBranch::Amd)
+        );
+        assert_eq!(
+            gpu_branch_from_vendors(&[0x8086]),
+            Some(GpuBranch::IntelArc)
+        );
+        assert_eq!(gpu_branch_from_vendors(&[0x1414]), None);
+        assert_eq!(gpu_branch_from_vendors(&[]), None);
+    }
 }

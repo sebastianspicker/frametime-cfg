@@ -26,8 +26,7 @@ pub use evidence::{
 };
 pub use lifecycle::{
     DriverLifecycleError, DriverTransactionV2, DriverTransactionV2Stage, DrsApplicationSnapshot,
-    DrsItemKey, DrsItemKind, DrsMergeResult, DrsProfileSnapshot, DrsReconciliation,
-    DrsReconciliationItem, DrsReconciliationStatus, DrsSettingSnapshot, DrsSnapshot, DrsValue,
+    DrsItemKey, DrsItemKind, DrsProfileSnapshot, DrsSettingSnapshot, DrsSnapshot, DrsValue,
     NVIDIA_COMPONENT_CATALOG_SCHEMA_VERSION, NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION,
     NVIDIA_TRANSACTION_V2_SCHEMA_VERSION, NvidiaCleanupScope, NvidiaComponentCatalog,
     NvidiaComponentDefinition, NvidiaComponentPreset, NvidiaComponentSelection,

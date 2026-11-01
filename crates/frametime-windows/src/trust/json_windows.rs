@@ -2,8 +2,6 @@
 
 use std::{
     mem::{offset_of, size_of},
-    os::windows::ffi::OsStrExt,
-    path::Path,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -24,6 +22,7 @@ use windows::{
 };
 
 use super::json_common as trusted_json_common;
+use crate::system::wide_path;
 use crate::{TrustedWorkDir, trusted_work_dir};
 
 static NEXT_TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -59,6 +58,7 @@ pub(super) fn write_json_atomic<T: Serialize>(
         }
 
         trusted_work_dir::validate_exact_security(trusted.root_handle())?;
+        temporary.keep()?;
         rename_into_parent(temporary.raw(), trusted.root_handle(), name)?;
         temporary.mark_renamed();
         flush(temporary.raw(), "flush replaced trusted suite JSON")?;
@@ -120,9 +120,16 @@ impl TemporaryFile {
 
     fn dispose(&mut self) -> Result<(), String> {
         if !self.renamed && !self.disposed {
-            dispose_handle(self.raw())?;
+            dispose_handle(self.raw(), true)?;
             self.disposed = true;
         }
+        Ok(())
+    }
+
+    /// Clears the delete-on-close disposition; a delete-pending file cannot be renamed.
+    fn keep(&mut self) -> Result<(), String> {
+        dispose_handle(self.raw(), false)?;
+        self.disposed = false;
         Ok(())
     }
 }
@@ -130,7 +137,7 @@ impl TemporaryFile {
 impl Drop for TemporaryFile {
     fn drop(&mut self) {
         if !self.renamed && !self.disposed {
-            let _ = dispose_handle(self.raw());
+            let _ = dispose_handle(self.raw(), true);
         }
     }
 }
@@ -184,12 +191,14 @@ fn create_temporary_child(trusted: &TrustedWorkDir, parent: &str) -> Result<Temp
         };
         match opened {
             Ok(handle) => {
-                let temporary = TemporaryFile {
+                let mut temporary = TemporaryFile {
                     file: FileHandle(handle),
                     leaf,
                     renamed: false,
                     disposed: false,
                 };
+                // The kernel deletes the file if the process dies before the rename.
+                temporary.dispose()?;
                 trusted_work_dir::validate_temporary_handle(temporary.raw(), temporary.leaf())?;
                 return Ok(temporary);
             }
@@ -207,10 +216,6 @@ fn create_temporary_child(trusted: &TrustedWorkDir, parent: &str) -> Result<Temp
 fn next_temp_nonce() -> u64 {
     let counter = NEXT_TEMP_NONCE.fetch_add(1, Ordering::Relaxed);
     (u64::from(std::process::id()) << 32) | counter
-}
-
-fn wide_path(path: &Path) -> Vec<u16> {
-    path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 
 fn read_all(handle: HANDLE) -> Result<Vec<u8>, String> {
@@ -278,9 +283,10 @@ fn flush(handle: HANDLE, action: &str) -> Result<(), String> {
     unsafe { FlushFileBuffers(handle) }.map_err(|error| format!("{action}: {error}"))
 }
 
-fn dispose_handle(handle: HANDLE) -> Result<(), String> {
-    let disposition =
-        windows::Win32::Storage::FileSystem::FILE_DISPOSITION_INFO { DeleteFile: true };
+fn dispose_handle(handle: HANDLE, delete_file: bool) -> Result<(), String> {
+    let disposition = windows::Win32::Storage::FileSystem::FILE_DISPOSITION_INFO {
+        DeleteFile: delete_file,
+    };
     // SAFETY: `handle` is the exact temporary handle and `disposition` lives for the call.
     unsafe {
         SetFileInformationByHandle(

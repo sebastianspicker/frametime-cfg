@@ -172,10 +172,13 @@ pub(crate) fn safeboot_evidence() -> SafebootEvidence {
 }
 
 pub(crate) fn safeboot_evidence_from_bcd(text: &str) -> SafebootEvidence {
+    // Exact first token, so `safebootalternateshell` never matches; bcdedit prints `Minimal`.
     match text.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix("safeboot")
-            .map(|value| value.trim().to_owned())
+        let mut tokens = line.split_whitespace();
+        tokens
+            .next()
+            .filter(|key| key.eq_ignore_ascii_case("safeboot"))
+            .map(|_| tokens.collect::<Vec<_>>().join(" ").to_ascii_lowercase())
     }) {
         Some(value) if matches!(value.as_str(), "minimal" | "network" | "dsrepair") => {
             SafebootEvidence::Configured(value)
@@ -201,5 +204,35 @@ pub(crate) fn run_value_evidence(
         Ok(Some(RegValue::String(value))) if !value.is_empty() => HandoffEvidence::Verified,
         Ok(None) => HandoffEvidence::Absent,
         _ => HandoffEvidence::Unavailable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_safeboot_from_a_real_bcdedit_transcript() {
+        let text = "Windows Boot Loader\r
+-------------------\r
+identifier              {current}\r
+device                  partition=C:\r
+path                    \\WINDOWS\\system32\\winload.efi\r
+description             Windows 11\r
+safebootalternateshell  Yes\r
+safeboot                Minimal\r
+";
+        assert_eq!(
+            safeboot_evidence_from_bcd(text),
+            SafebootEvidence::Configured("minimal".into())
+        );
+        assert_eq!(
+            safeboot_evidence_from_bcd("safebootalternateshell  Yes\r\n"),
+            SafebootEvidence::Absent
+        );
+        assert_eq!(
+            safeboot_evidence_from_bcd("safeboot                Bogus\r\n"),
+            SafebootEvidence::Unavailable
+        );
     }
 }

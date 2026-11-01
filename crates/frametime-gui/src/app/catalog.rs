@@ -87,14 +87,6 @@ pub(super) fn render_catalog(window: HWND, area: Area) {
                     .map(|row| (row.item.clone(), row.value.clone(), row.state.clone())),
             );
         }
-        if area == Area::Benchmark {
-            rows.extend(
-                app.benchmark_preview
-                    .iter()
-                    .filter(|(a, b, _)| model::catalog_row_matches_filter(a, b, &filter))
-                    .cloned(),
-            );
-        }
         (app.table, rows)
     }) else {
         return;

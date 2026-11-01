@@ -16,8 +16,6 @@ pub enum Cs2ConfigError {
     PreconditionMismatch(PathBuf),
     #[error("CS2 CFG path is not a trusted real path: {0}")]
     UntrustedPath(PathBuf),
-    #[error("existing autoexec.cfg is not valid UTF-8; refusing to rewrite user content")]
-    AutoexecNotUtf8,
     #[error("CS2 CFG I/O failed: {0}")]
     Io(#[from] io::Error),
     #[error("{stage} failed; recovery evidence retained at {recovery:?}: {source}")]

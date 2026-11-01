@@ -68,7 +68,10 @@ only as `-s -noreboot` from the fixed prepared-package directory.
 8. `baselineApplied`
 9. `verified`
 
-`recoveryRequired` is reachable from every stage. Each transition is written
+`recoveryRequired` is a reserved stage: validation accepts it from every stage,
+but this alpha never sets it. After a failed removal, install or profile restore
+the transaction stays at its last completed stage, and recovery follows
+[recovery](recovery.md). Each transition is written
 atomically and read back before the next operation. A schema-1 preparation with
 no capture remains readable; any schema-1 resume boundary is ambiguous because it
 lacks the mandatory profile backup and is refused.
@@ -129,8 +132,9 @@ remain mandatory so expiry cannot strand a machine after cleanup has begun.
 This makes multi-package cleanup resumable without broadening the original
 captured package set.
 Application suites, Broadcast, Control Panel, PhysX, HD Audio, monitors, and
-driver-search policy are separate typed optional scopes and are preserved when
-not selected. There is no raw execute bypass.
+driver-search policy are not removed in this alpha: optional cleanup scopes are
+not enforced at runtime and everything outside the captured display packages is
+preserved. There is no raw execute bypass.
 
 Driver-search policy, if selected in a qualified future cleanup catalog, must be
 captured and restored to its exact prior state after installation and on

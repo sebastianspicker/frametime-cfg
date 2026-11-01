@@ -5,7 +5,7 @@
 
 use std::path::{Component, Path};
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 
 #[must_use]
 pub fn safe_relative_path(path: &Path) -> bool {
@@ -23,10 +23,6 @@ pub fn safe_relative_path(path: &Path) -> bool {
         && path
             .components()
             .all(|part| matches!(part, Component::Normal(_)))
-}
-
-pub fn decode_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
-    serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
 pub fn encode_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {

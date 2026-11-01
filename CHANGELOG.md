@@ -59,6 +59,42 @@ project is alpha: no release has been qualified on Windows hardware. See
 - Narrowed library surfaces: `frametime-domain` items are reached only through
   their owning module, and `frametime-windows` exposes one explicit API that is
   identical on every target.
+- Suite timestamps are now recorded in UTC, matching the `*Utc` field names.
+- `configure --dry-run` and the GUI "Dry run preference" checkbox were removed;
+  they only stored a label. `dry-run` remains the read-only preview.
+- `cleanup quick` / `cleanup full` skip Temp and Prefetch files that another
+  program holds open and report how many were skipped, instead of failing.
+- A `[VProf] FPS:` result line that cannot be parsed now rejects the capture
+  instead of being dropped silently.
+- `fps-cap` rejects an empty or reserved label and options that belong to the
+  other strategy, and writes nothing until its input is valid.
+
+### Fixed
+
+Source-level fixes from the November 2026 audit; Windows hardware
+qualification is still open.
+
+- NVIDIA driver steps P2:2 and P3:1: audit records now read back intact, and
+  the work lock is re-entrant and held for a whole run, so the steps no longer
+  fail on their own lock and a second CLI or GUI process cannot interleave.
+- P1:38 publishes the reboot runtime (handles request WRITE_DAC/WRITE_OWNER),
+  saves the reboot transaction before arming RunOnce and Safe Boot, parses
+  `bcdedit` Safe Boot output case-insensitively, and refuses when the NVIDIA
+  approval expires within two hours. `optimize` is no longer refused forever
+  after a runtime was published.
+- P2:1 checks the signed-in user before clearing Safe Boot; P2:2 validates the
+  approval before saving its capture.
+- Hardware discovery skips non-PCI devices (HD Audio functions, WAN Miniports,
+  VMBus), GPU detection uses SetupAPI instead of localized `pnputil` text, and
+  P1:20 evidence no longer compares an observation timestamp.
+- P1:16 accepts REG_SZ NIC keywords and its RSS-only inventory; P3:3 creates
+  and later removes a missing interrupt Affinity Policy key.
+- `restore`: pagefile size changes can be undone, an already-absent registry
+  value no longer blocks restore, and the user's NVIDIA CS2 profile from
+  before the baseline is kept and restored. The DRS merge no longer overwrites
+  settings changed since the snapshot and keeps full application bindings.
+- The CS2 GPU preference is written under the plain drive path, and the GUI
+  applies the same reboot-state checks and Phase 1 confirmation as the CLI.
 
 ### Notes
 

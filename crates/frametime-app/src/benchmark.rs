@@ -144,17 +144,18 @@ impl FpsSideEffects {
         } else {
             None
         };
-        if self.copy {
-            copy_text_to_clipboard(&cap.to_string()).map_err(ApplicationError::failed)?;
-        }
-        persist_selected_fps_capture(
+        let persistence = persist_selected_fps_capture(
             package.as_ref(),
             cap,
             capture,
             run_evidence,
             self.label,
             self.no_persist,
-        )
+        )?;
+        if self.copy {
+            copy_text_to_clipboard(&cap.to_string()).map_err(ApplicationError::failed)?;
+        }
+        Ok(persistence)
     }
 }
 
@@ -164,6 +165,16 @@ fn select_fps_strategy(
     refresh_hz: u32,
     ceiling_margin_hz: u32,
 ) -> Result<FpsCapStrategy, ApplicationError> {
+    if matches!(strategy, FpsStrategyValue::Raw) && refresh_hz != 0 {
+        return Err(ApplicationError::Invalid(
+            "--refresh-hz applies only to --strategy vrr".into(),
+        ));
+    }
+    if matches!(strategy, FpsStrategyValue::Vrr) && measured_cap != 0 {
+        return Err(ApplicationError::Invalid(
+            "--measured-cap applies only to --strategy raw".into(),
+        ));
+    }
     match strategy {
         FpsStrategyValue::Raw if measured_cap == 0 => {
             Ok(FpsCapStrategy::RawLatency { measured_cap: None })

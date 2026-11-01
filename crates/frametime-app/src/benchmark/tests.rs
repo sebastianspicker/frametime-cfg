@@ -228,3 +228,17 @@ fn advisory_source_reader_rejects_an_oversized_file_without_truncating_evidence(
             .contains("exceeds")
     );
 }
+
+#[test]
+fn fps_strategy_rejects_options_of_the_other_strategy() {
+    assert!(matches!(
+        select_fps_strategy(FpsStrategyValue::Raw, 0, 144, 3),
+        Err(ApplicationError::Invalid(_))
+    ));
+    assert!(matches!(
+        select_fps_strategy(FpsStrategyValue::Vrr, 200, 144, 3),
+        Err(ApplicationError::Invalid(_))
+    ));
+    assert!(select_fps_strategy(FpsStrategyValue::Raw, 0, 0, 3).is_ok());
+    assert!(select_fps_strategy(FpsStrategyValue::Vrr, 0, 144, 3).is_ok());
+}

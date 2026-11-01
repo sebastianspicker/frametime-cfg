@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use super::*;
 
 fn snapshot(value: u32) -> DrsSnapshot {
@@ -9,6 +7,7 @@ fn snapshot(value: u32) -> DrsSnapshot {
             name: "CS2".into(),
             applications: vec![DrsApplicationSnapshot {
                 executable: "cs2.exe".into(),
+                ..Default::default()
             }],
             settings: vec![DrsSettingSnapshot {
                 setting_id: 1,
@@ -89,27 +88,31 @@ fn unknown_source_directories_are_required_unclassified() {
 }
 
 #[test]
-fn drs_bounds_round_trip_and_reconciliation_are_checked() {
+fn drs_application_fields_default_and_round_trip() {
+    let old = format!(
+        r#"{{"schemaVersion":{NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION},"profiles":[{{"name":"CS2","applications":[{{"executable":"cs2.exe"}}],"settings":[]}}]}}"#
+    );
+    let loaded = DrsSnapshot::from_json(old.as_bytes()).unwrap();
+    assert_eq!(
+        loaded.profiles[0].applications[0],
+        snapshot(0).profiles[0].applications[0]
+    );
+    assert_eq!(String::from_utf8(loaded.to_json().unwrap()).unwrap(), old);
+
+    let mut full = snapshot(0);
+    full.profiles[0].applications[0].launcher = "launcher.exe".into();
+    full.profiles[0].applications[0].flags = 2;
+    assert_eq!(
+        DrsSnapshot::from_json(&full.to_json().unwrap()).unwrap(),
+        full
+    );
+}
+
+#[test]
+fn drs_bounds_and_round_trip_are_checked() {
     let original = snapshot(1);
     let encoded = original.to_json().unwrap();
     assert_eq!(DrsSnapshot::from_json(&encoded).unwrap(), original);
-    let incoming = snapshot(2);
-    let reconciliation = original.reconcile(&incoming);
-    let setting = reconciliation
-        .items
-        .iter()
-        .find(|item| item.key.kind == DrsItemKind::Setting)
-        .unwrap()
-        .key
-        .clone();
-    assert!(matches!(
-        original.merge_accepting(&incoming, &BTreeSet::new()),
-        Err(DriverLifecycleError::IncompatibleDrsItems(_))
-    ));
-    let merged = original
-        .merge_accepting(&incoming, &[setting].into_iter().collect())
-        .unwrap();
-    assert_eq!(merged.merged, incoming);
 }
 
 #[test]
@@ -160,6 +163,7 @@ fn drs_collection_bounds_are_enforced() {
                 applications: (0..MAX_DRS_ITEMS_PER_PROFILE)
                     .map(|application_index| DrsApplicationSnapshot {
                         executable: format!("app-{profile_index}-{application_index}"),
+                        ..Default::default()
                     })
                     .collect(),
                 settings: Vec::new(),

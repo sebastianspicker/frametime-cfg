@@ -15,6 +15,7 @@ use crate::{
         BindingReceiptId, NATIVE_BINDING_SCHEMA_VERSION, NetworkAdapterBinding, PciDeviceBinding,
     },
     handoff::TransactionId,
+    runtime::valid_generation_id,
 };
 
 pub const EVIDENCE_SCHEMA_VERSION: u8 = 1;
@@ -247,7 +248,7 @@ impl ObservationReceipt {
         }
         require_text(&self.captured_at_utc, "capturedAtUtc")?;
         if let Some(generation) = &self.runtime_generation
-            && !valid_generation(generation)
+            && !valid_generation_id(generation)
         {
             return Err(EvidenceError::InvalidField("runtimeGeneration"));
         }
@@ -364,13 +365,6 @@ fn require_sha256(value: &str, field: &'static str) -> Result<(), EvidenceError>
     } else {
         Err(EvidenceError::InvalidField(field))
     }
-}
-
-fn valid_generation(value: &str) -> bool {
-    value.len() == 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]

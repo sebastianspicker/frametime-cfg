@@ -74,89 +74,99 @@ pub struct RuntimeCurrent {
     pub unknown: BTreeMap<String, serde_json::Value>,
 }
 
-pub fn validate_selected_runtime(
-    current: &RuntimeCurrent,
-    manifest_bytes: &[u8],
-    manifest: &RuntimeManifest,
-    payload_hashes: &BTreeMap<String, String>,
-) -> Result<String, String> {
-    let generation = selected_generation(current)?;
-    let selector_hash = selected_manifest_hash(current)?;
-    if hex_sha256(manifest_bytes) != selector_hash {
-        return Err("runtime selector manifest hash mismatch".into());
-    }
-    if manifest.schema_version != RUNTIME_SCHEMA_VERSION || manifest.generation != generation {
-        return Err("runtime selector and manifest generation differ".into());
-    }
-    validate_runtime_file_sets(manifest, payload_hashes)?;
-    validate_runtime_executable(manifest)?;
-    validate_runtime_hashes(manifest, payload_hashes)?;
-    Ok(generation.to_owned())
-}
-
-fn selected_generation(current: &RuntimeCurrent) -> Result<&str, String> {
+/// Returns the selected generation when the selector is exact and rooted in
+/// `runtime-generations`.
+pub fn selected_generation(current: &RuntimeCurrent) -> Result<&str, String> {
     if current.schema_version != RUNTIME_SCHEMA_VERSION {
         return Err("unsupported runtime selector schema".into());
     }
     let prefix = format!("{RUNTIME_GENERATIONS_DIR}/");
-    current
-        .relative_path
-        .strip_prefix(&prefix)
-        .filter(|value| current.relative_path == format!("{prefix}{value}"))
-        .filter(|value| valid_generation_id(value))
-        .ok_or_else(|| "unsafe selected runtime generation".into())
+    let Some(generation) = current.relative_path.strip_prefix(&prefix) else {
+        return Err("runtime selector is not rooted in runtime-generations".into());
+    };
+    if current.relative_path != format!("{prefix}{generation}") || !valid_generation_id(generation)
+    {
+        return Err("runtime selector generation is not exact lower-hex".into());
+    }
+    if !current.manifest_sha256.as_deref().is_some_and(valid_sha256) {
+        return Err("runtime selector is missing a valid manifest hash".into());
+    }
+    Ok(generation)
 }
 
-fn selected_manifest_hash(current: &RuntimeCurrent) -> Result<&str, String> {
-    current
-        .manifest_sha256
-        .as_deref()
-        .filter(|value| valid_sha256(value))
-        .ok_or_else(|| "runtime selector missing manifest hash".into())
-}
-
-fn validate_runtime_file_sets(
+/// Validates host-observed selector, manifest hash, manifest, and payload
+/// hashes against the compiled runtime payload contract.
+pub fn validate_runtime_contract(
+    current: &RuntimeCurrent,
+    manifest_hash: &str,
     manifest: &RuntimeManifest,
     payload_hashes: &BTreeMap<String, String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
+    let generation = selected_generation(current)?;
+    if current.manifest_sha256.as_deref() != Some(manifest_hash)
+        || manifest.schema_version != RUNTIME_SCHEMA_VERSION
+        || manifest.generation != generation
+    {
+        return Err("runtime selector and manifest differ".into());
+    }
     let expected = RUNTIME_PAYLOAD_PATHS
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    for actual in [manifest.files.keys(), payload_hashes.keys()] {
-        if actual.map(String::as_str).collect::<BTreeSet<_>>() != expected {
-            return Err("runtime file set differs from compiled payload contract".into());
+    if !payload_sets_are_exact(manifest, payload_hashes, &expected)
+        || !executable_record_is_valid(manifest)
+    {
+        return Err("runtime payload contract is invalid".into());
+    }
+    for (path, declared_hash) in &manifest.files {
+        if !valid_sha256(declared_hash)
+            || payload_hashes
+                .get(path)
+                .is_none_or(|actual| actual != declared_hash)
+        {
+            return Err(format!("runtime payload hash mismatch: {path}"));
         }
     }
-    Ok(())
+    Ok(generation.to_owned())
 }
 
-fn validate_runtime_executable(manifest: &RuntimeManifest) -> Result<(), String> {
-    let contract_matches = manifest.payload_contract_hash == portable_payload_contract_hash();
-    let executable_path_matches = manifest.executable.path == "frametime.exe";
-    let executable_hash_matches =
-        manifest.files.get("frametime.exe") == Some(&manifest.executable.sha256);
-    if !contract_matches
-        || !executable_path_matches
-        || !executable_hash_matches
-        || !valid_sha256(&manifest.executable.sha256)
-    {
-        Err("runtime executable record is invalid".into())
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_runtime_hashes(
+fn payload_sets_are_exact(
     manifest: &RuntimeManifest,
     payload_hashes: &BTreeMap<String, String>,
-) -> Result<(), String> {
-    for (path, hash) in &manifest.files {
-        if !valid_sha256(hash) || payload_hashes.get(path) != Some(hash) {
-            return Err(format!("runtime hash mismatch: {path}"));
+    expected: &BTreeSet<&str>,
+) -> bool {
+    let declared = manifest
+        .files
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let observed = payload_hashes
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    declared == *expected
+        && observed == *expected
+        && manifest.payload_contract_hash == portable_payload_contract_hash()
+}
+
+fn executable_record_is_valid(manifest: &RuntimeManifest) -> bool {
+    manifest.executable.path == "frametime.exe"
+        && manifest.files.get("frametime.exe") == Some(&manifest.executable.sha256)
+        && valid_sha256(&manifest.executable.sha256)
+}
+
+/// Every ancestor directory of a compiled payload path, parents first.
+#[must_use]
+pub fn runtime_payload_directories() -> BTreeSet<&'static str> {
+    let mut directories = BTreeSet::new();
+    for path in RUNTIME_PAYLOAD_PATHS {
+        let mut candidate = path;
+        while let Some((parent, _)) = candidate.rsplit_once('/') {
+            directories.insert(parent);
+            candidate = parent;
         }
     }
-    Ok(())
+    directories
 }
 
 #[must_use]
@@ -168,15 +178,20 @@ pub fn portable_payload_contract_hash() -> String {
     hex_sha256(paths.into_iter().collect::<Vec<_>>().join("\n").as_bytes())
 }
 
-fn valid_generation_id(value: &str) -> bool {
-    value.len() == 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+/// A runtime generation ID: exactly 32 lowercase hex digits.
+#[must_use]
+pub fn valid_generation_id(value: &str) -> bool {
+    value.len() == 32 && is_lower_hex(value)
 }
 
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+pub(crate) fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && is_lower_hex(value)
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -194,5 +209,135 @@ mod tests {
             RUNTIME_PAYLOAD_PATHS.len()
         );
         assert_eq!(portable_payload_contract_hash().len(), 64);
+    }
+
+    const GENERATION: &str = "0123456789abcdef0123456789abcdef";
+    const MANIFEST_HASH: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    fn valid_case() -> (RuntimeCurrent, RuntimeManifest, BTreeMap<String, String>) {
+        let hashes = RUNTIME_PAYLOAD_PATHS
+            .iter()
+            .map(|path| ((*path).to_owned(), hex_sha256(path.as_bytes())))
+            .collect::<BTreeMap<_, _>>();
+        let current = RuntimeCurrent {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            relative_path: format!("{RUNTIME_GENERATIONS_DIR}/{GENERATION}"),
+            published_utc: None,
+            manifest_sha256: Some(MANIFEST_HASH.into()),
+            unknown: BTreeMap::new(),
+        };
+        let manifest = RuntimeManifest {
+            schema_version: RUNTIME_SCHEMA_VERSION,
+            generation: GENERATION.into(),
+            files: hashes.clone(),
+            payload_contract_hash: portable_payload_contract_hash(),
+            executable: RuntimeExecutableRecord {
+                path: "frametime.exe".into(),
+                sha256: hashes["frametime.exe"].clone(),
+                unknown: BTreeMap::new(),
+            },
+            unknown: BTreeMap::new(),
+        };
+        (current, manifest, hashes)
+    }
+
+    fn check(
+        current: &RuntimeCurrent,
+        manifest: &RuntimeManifest,
+        hashes: &BTreeMap<String, String>,
+    ) -> Result<String, String> {
+        validate_runtime_contract(current, MANIFEST_HASH, manifest, hashes)
+    }
+
+    #[test]
+    fn valid_runtime_contract_is_accepted() {
+        let (current, manifest, hashes) = valid_case();
+        assert_eq!(check(&current, &manifest, &hashes), Ok(GENERATION.into()));
+    }
+
+    #[test]
+    fn differing_payload_hash_is_rejected() {
+        let (current, manifest, mut hashes) = valid_case();
+        hashes.insert("frametime.toml".into(), MANIFEST_HASH.into());
+        assert_eq!(
+            check(&current, &manifest, &hashes),
+            Err("runtime payload hash mismatch: frametime.toml".into())
+        );
+    }
+
+    #[test]
+    fn extra_or_missing_files_are_rejected() {
+        let (current, manifest, mut hashes) = valid_case();
+        hashes.insert("extra.dll".into(), MANIFEST_HASH.into());
+        assert!(check(&current, &manifest, &hashes).is_err());
+
+        let (current, manifest, mut hashes) = valid_case();
+        hashes.remove("licenses/LICENSE");
+        assert!(check(&current, &manifest, &hashes).is_err());
+
+        let (current, mut manifest, hashes) = valid_case();
+        manifest.files.remove("licenses/LICENSE");
+        assert!(check(&current, &manifest, &hashes).is_err());
+    }
+
+    #[test]
+    fn uppercase_hash_is_rejected() {
+        let (current, mut manifest, mut hashes) = valid_case();
+        let upper = hashes["frametime.toml"].to_ascii_uppercase();
+        hashes.insert("frametime.toml".into(), upper.clone());
+        manifest.files.insert("frametime.toml".into(), upper);
+        assert!(check(&current, &manifest, &hashes).is_err());
+    }
+
+    #[test]
+    fn executable_path_other_than_frametime_exe_is_rejected() {
+        let (current, mut manifest, hashes) = valid_case();
+        manifest.executable.path = "frametime-gui.exe".into();
+        assert!(check(&current, &manifest, &hashes).is_err());
+    }
+
+    #[test]
+    fn selector_and_manifest_mismatches_are_rejected() {
+        let (current, mut manifest, hashes) = valid_case();
+        manifest.generation = "fedcba9876543210fedcba9876543210".into();
+        assert!(check(&current, &manifest, &hashes).is_err());
+
+        let (current, manifest, hashes) = valid_case();
+        let other_hash = "2".repeat(64);
+        assert!(validate_runtime_contract(&current, &other_hash, &manifest, &hashes).is_err());
+
+        let (current, mut manifest, hashes) = valid_case();
+        manifest.payload_contract_hash = other_hash;
+        assert!(check(&current, &manifest, &hashes).is_err());
+    }
+
+    #[test]
+    fn generation_ids_are_exact_lower_hex() {
+        assert!(valid_generation_id(GENERATION));
+        assert!(!valid_generation_id(&GENERATION.to_ascii_uppercase()));
+        assert!(!valid_generation_id(&GENERATION[1..]));
+    }
+
+    #[test]
+    fn payload_directories_cover_every_payload_parent() {
+        assert_eq!(
+            runtime_payload_directories()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["assets", "assets/cfgs", "docs", "docs/native", "licenses"]
+        );
+    }
+
+    #[test]
+    fn every_runtime_payload_is_in_the_package_layout() {
+        let layout = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../package-layout.txt"
+        ))
+        .expect("read package-layout.txt");
+        let lines = layout.lines().map(str::trim).collect::<BTreeSet<_>>();
+        for path in RUNTIME_PAYLOAD_PATHS {
+            assert!(lines.contains(path), "package-layout.txt lacks {path}");
+        }
     }
 }

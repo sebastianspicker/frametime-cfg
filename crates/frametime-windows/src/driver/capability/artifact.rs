@@ -202,7 +202,7 @@ pub(super) fn verify_nvidia_signature_against_policy<V: NvidiaSignatureVerifier>
     })
 }
 
-fn parse_utc_seconds(value: &str) -> Result<i64, AdapterFailure> {
+pub(crate) fn parse_utc_seconds(value: &str) -> Result<i64, AdapterFailure> {
     utc_parts_to_seconds(parse_utc_parts(value)?)
 }
 

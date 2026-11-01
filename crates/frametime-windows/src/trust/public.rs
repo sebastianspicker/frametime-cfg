@@ -109,8 +109,7 @@ pub(crate) fn requested_root_is_exact(work_dir: &Path) -> bool {
 }
 pub(crate) fn timestamp() -> String {
     use time::{OffsetDateTime, macros::format_description};
-    OffsetDateTime::now_local()
-        .unwrap_or_else(|_| OffsetDateTime::now_utc())
+    OffsetDateTime::now_utc()
         .format(format_description!(
             "[year]-[month]-[day] [hour]:[minute]:[second]"
         ))

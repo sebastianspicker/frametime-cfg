@@ -64,6 +64,10 @@ pub struct InterruptPolicyBackup {
     pub existed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_value: Option<InterruptPolicyValue>,
+    /// Registry key levels (from `HKLM`, shallowest first) this tool created below
+    /// `Device Parameters`; restore removes them again when they are empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub created_key_levels: Vec<String>,
     #[serde(flatten, default)]
     pub unknown: BTreeMap<String, Value>,
 }
@@ -80,6 +84,8 @@ pub enum InterruptPolicyBackupError {
     ExistenceMismatch,
     #[error("interrupt-policy backup value type does not match its policy")]
     ValueTypeMismatch,
+    #[error("interrupt-policy backup created key levels are not ancestors of its policy key")]
+    InvalidCreatedKeyLevel,
     #[error("interrupt-policy backup timestamp is invalid")]
     InvalidTimestamp,
 }
@@ -103,6 +109,21 @@ impl InterruptPolicyBackup {
             .map_err(|error| InterruptPolicyBackupError::InvalidDevice(error.to_string()))?;
         if self.existed != self.original_value.is_some() {
             return Err(InterruptPolicyBackupError::ExistenceMismatch);
+        }
+        let key = self.registry_key();
+        let parameters = format!(
+            "SYSTEM\\CurrentControlSet\\Enum\\{}\\Device Parameters\\",
+            self.device.instance_id
+        );
+        // Only P3:3 creates key levels; any other step listing them is tampered.
+        let wrong_step = !self.created_key_levels.is_empty() && self.step != "P3:3";
+        if wrong_step
+            || self.created_key_levels.iter().any(|level| {
+                !level.starts_with(&parameters)
+                    || !(key == *level || key.starts_with(&format!("{level}\\")))
+            })
+        {
+            return Err(InterruptPolicyBackupError::InvalidCreatedKeyLevel);
         }
         match (&self.policy, &self.original_value) {
             (_, None)
@@ -162,6 +183,7 @@ mod tests {
             policy: InterruptPolicyKind::MsiSupported,
             existed: true,
             original_value: Some(InterruptPolicyValue::Dword(0)),
+            created_key_levels: Vec::new(),
             unknown: BTreeMap::new(),
         };
         backup.validate().expect("valid backup");
@@ -181,6 +203,7 @@ mod tests {
             policy: InterruptPolicyKind::AssignmentSetOverride,
             existed: true,
             original_value: Some(InterruptPolicyValue::Dword(4)),
+            created_key_levels: Vec::new(),
             unknown: BTreeMap::new(),
         };
         assert_eq!(
@@ -191,6 +214,45 @@ mod tests {
         assert_eq!(
             backup.validate(),
             Err(InterruptPolicyBackupError::ExistenceMismatch)
+        );
+    }
+
+    #[test]
+    fn created_key_levels_must_be_ancestors_below_device_parameters() {
+        let mut backup = InterruptPolicyBackup {
+            step: "P3:3".into(),
+            timestamp: "now".into(),
+            device: device(),
+            policy: InterruptPolicyKind::DevicePolicy,
+            existed: false,
+            original_value: None,
+            created_key_levels: Vec::new(),
+            unknown: BTreeMap::new(),
+        };
+        let key = backup.registry_key();
+        backup.created_key_levels = vec![
+            key.trim_end_matches("\\Affinity Policy").into(),
+            key.clone(),
+        ];
+        assert_eq!(backup.validate(), Ok(()));
+        for bad in [
+            key.trim_end_matches("\\Interrupt Management\\Affinity Policy"),
+            "SYSTEM\\CurrentControlSet\\Enum",
+            "SYSTEM\\CurrentControlSet\\Enum\\Other\\Device Parameters\\X",
+        ] {
+            backup.created_key_levels = vec![bad.into()];
+            assert_eq!(
+                backup.validate(),
+                Err(InterruptPolicyBackupError::InvalidCreatedKeyLevel),
+                "{bad}"
+            );
+        }
+        backup.step = "P3:2".into();
+        backup.policy = InterruptPolicyKind::MsiSupported;
+        backup.created_key_levels = vec![backup.registry_key()];
+        assert_eq!(
+            backup.validate(),
+            Err(InterruptPolicyBackupError::InvalidCreatedKeyLevel)
         );
     }
 }

@@ -2,6 +2,7 @@
 
 use std::{ffi::c_void, mem::size_of, os::windows::ffi::OsStrExt};
 
+use crate::system::wide;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
@@ -492,8 +493,4 @@ pub(crate) fn write_all(handle: HANDLE, bytes: &[u8], label: &str) -> Result<(),
 pub(crate) fn seek_start(handle: HANDLE, label: &str) -> Result<(), String> {
     unsafe { SetFilePointerEx(handle, 0, None, FILE_BEGIN) }
         .map_err(|error| format!("rewind {label}: {error}"))
-}
-
-pub(crate) fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
 }

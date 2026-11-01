@@ -91,8 +91,9 @@ pub enum FinalBenchmarkStatus {
     Incoherent(String),
 }
 
-/// Inspect the P3:13 receipt under the suite lock without writing benchmark
-/// state, history, progress, or the Phase 3 handoff.
+/// Inspect the P3:13 receipt without the suite lock, so a status read never
+/// collides with a running workflow. It writes no benchmark state, history,
+/// progress, or Phase 3 handoff.
 pub fn final_benchmark_status() -> Result<FinalBenchmarkStatus, String> {
     final_benchmark_status_at(TrustedWorkDir::acquire_fixed()?.path())
 }
@@ -100,7 +101,6 @@ pub fn final_benchmark_status() -> Result<FinalBenchmarkStatus, String> {
 pub(crate) fn final_benchmark_status_at(work_dir: &Path) -> Result<FinalBenchmarkStatus, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     let work_dir = trusted.path();
-    let _lock = WorkLock::acquire(work_dir)?;
     let state = match read_state_for_final(&trusted, work_dir) {
         Ok(state) => state,
         Err(error) => return Ok(FinalBenchmarkStatus::Incoherent(error)),

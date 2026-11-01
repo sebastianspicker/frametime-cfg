@@ -264,6 +264,9 @@ pub fn remove_prepared_nvidia_driver(
     super::capability::verify_basic_display_fallback().map_err(|error| error.to_string())?;
     let inspection = WindowsDriverInspection::native();
     let removal = PnpUtilDriverRemoval::new(NativeSystem32ToolRunner, inspection);
+    let removal_freshness = CaptureFreshnessPolicy {
+        maximum_age_seconds: 900,
+    };
     let capture = match lifecycle.stage {
         DriverTransactionV2Stage::ProfileBackupPersisted => {
             let capture = frametime_domain::driver::capture_driver_execution(
@@ -271,11 +274,16 @@ pub fn remove_prepared_nvidia_driver(
                 &WindowsSafeModeInspection,
                 &removal,
                 &NativeDriverClock,
-                CaptureFreshnessPolicy {
-                    maximum_age_seconds: 900,
-                },
+                removal_freshness,
             )
             .map_err(|error| error.to_string())?;
+            // An expired approval must refuse before the capture is persisted.
+            validate_driver_authorization(
+                &transaction,
+                &capture,
+                removal_freshness,
+                &trusted_current_utc(),
+            )?;
             transaction.capture = Some(capture.clone());
             transaction.lifecycle = Some(
                 lifecycle
@@ -291,9 +299,6 @@ pub fn remove_prepared_nvidia_driver(
             .clone()
             .ok_or("v2 capture stage lacks persisted capture evidence")?,
         _ => return Err("P2:2 driver lifecycle is not at a resumable Safe Mode boundary".into()),
-    };
-    let removal_freshness = CaptureFreshnessPolicy {
-        maximum_age_seconds: 900,
     };
     let resuming_partial_removal = armed_removal
         && frametime_domain::driver::captured_package_removal_started(&capture, &removal)
@@ -515,6 +520,45 @@ pub(crate) fn trusted_current_utc() -> String {
     crate::driver::capability::trusted_utc_timestamp()
 }
 
+/// Whether the approval still has at least `margin_seconds` left at `now_utc`.
+pub(crate) fn authorization_has_margin(
+    expires_at_utc: &str,
+    now_utc: &str,
+    margin_seconds: i64,
+) -> Result<bool, String> {
+    let expires =
+        super::capability::parse_utc_seconds(expires_at_utc).map_err(|error| error.to_string())?;
+    let now = super::capability::parse_utc_seconds(now_utc).map_err(|error| error.to_string())?;
+    Ok(now
+        .checked_add(margin_seconds)
+        .is_some_and(|deadline| expires >= deadline))
+}
+
+/// P1:38 refuses to arm Safe Mode unless the prepared NVIDIA approval outlives
+/// the reboot into P2:2 by a 2 h margin.
+#[cfg(windows)]
+pub(crate) fn require_driver_authorization_margin(work_dir: &Path) -> Result<(), String> {
+    let transaction = load_driver_transaction_at(work_dir)?.ok_or(
+        "P1:38 requires a prepared NVIDIA driver transaction; run frametime driver prepare-nvidia",
+    )?;
+    if authorization_has_margin(
+        &transaction.authorization.expires_at_utc,
+        &trusted_current_utc(),
+        2 * 60 * 60,
+    )
+    .map_err(|error| format!("P1:38 driver approval expiry: {error}"))?
+    {
+        Ok(())
+    } else {
+        Err("P1:38 NVIDIA driver approval expires within 2 hours; run frametime driver prepare-nvidia again; Safe Mode was not armed".into())
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn require_driver_authorization_margin(_work_dir: &Path) -> Result<(), String> {
+    Err("P1:38 driver approval check requires supported Windows x64".into())
+}
+
 #[cfg(not(windows))]
 pub fn remove_prepared_nvidia_driver(
     _runtime: &VerifiedSelectedRuntime,
@@ -560,4 +604,24 @@ pub fn reconcile_nvidia_profiles(
     _yes: bool,
 ) -> Result<DriverTransaction, String> {
     Err("NVIDIA profile reconciliation is supported only on Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::authorization_has_margin;
+
+    const NOW: &str = "2026-11-01T12:00:00Z";
+
+    #[test]
+    fn authorization_margin_refuses_one_hour_and_allows_three() {
+        assert_eq!(
+            authorization_has_margin("2026-11-01T13:00:00Z", NOW, 7200),
+            Ok(false)
+        );
+        assert_eq!(
+            authorization_has_margin("2026-11-01T15:00:00Z", NOW, 7200),
+            Ok(true)
+        );
+        assert!(authorization_has_margin("tomorrow", NOW, 7200).is_err());
+    }
 }

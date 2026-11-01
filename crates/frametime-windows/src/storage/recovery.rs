@@ -2,7 +2,6 @@ use crate::*;
 mod power_plan;
 
 use power_plan::restore_power_plan;
-pub(crate) use power_plan::validate_power_plan_guid;
 
 pub(crate) struct RegistryRestore<'a> {
     pub(crate) step: &'a str,
@@ -148,6 +147,14 @@ pub(crate) fn restore_registry(restore: RegistryRestore<'_>) -> Result<(), Strin
         name: restore.name,
     };
     let autostart_restore = validate_registry_restore_request(&restore, identity)?;
+    if restore.step == "P1:30" && !identity.name.starts_with(r"\\?\") {
+        // Earlier builds saved the GPU preference under the `\\?\` form; only this tool wrote it.
+        registry_delete(
+            identity.hive,
+            identity.key,
+            &format!(r"\\?\{}", identity.name),
+        )?;
+    }
     if !restore.existed {
         return delete_registry_restore_value(identity);
     }

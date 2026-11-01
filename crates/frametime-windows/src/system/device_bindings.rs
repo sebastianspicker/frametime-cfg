@@ -4,6 +4,14 @@ use frametime_domain::binding::{
     NetworkAdapterBinding as CoreNetworkAdapterBinding, PciDeviceBinding as CorePciDeviceBinding,
 };
 
+/// Only PCI devices carry the `VEN_/DEV_/SUBSYS_/REV_` identity; HDAUDIO, ROOT and VMBUS
+/// devices in the same SetupAPI classes must be skipped, not parsed.
+pub(crate) fn is_pci_instance_id(instance_id: &str) -> bool {
+    instance_id
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("PCI\\"))
+}
+
 /// SetupAPI class identities accepted by the interrupt-policy workflow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PciDeviceClass {
@@ -138,9 +146,10 @@ pub(crate) mod windows_setupapi {
                     SetupDiGetDevicePropertyW,
                 },
                 Properties::{
-                    DEVPKEY_Device_ContainerId, DEVPKEY_Device_DriverInfPath,
-                    DEVPKEY_Device_DriverProvider, DEVPKEY_Device_DriverVersion, DEVPROP_TYPE_GUID,
-                    DEVPROP_TYPE_STRING, DEVPROPTYPE,
+                    DEVPKEY_Device_ContainerId, DEVPKEY_Device_DeviceDesc,
+                    DEVPKEY_Device_DriverInfPath, DEVPKEY_Device_DriverProvider,
+                    DEVPKEY_Device_DriverVersion, DEVPROP_TYPE_GUID, DEVPROP_TYPE_STRING,
+                    DEVPROPTYPE,
                 },
             },
             Foundation::{
@@ -181,10 +190,13 @@ pub(crate) mod windows_setupapi {
             |index| format!("SetupDiEnumDeviceInfo at index {index} failed"),
             "SetupAPI network enumeration exceeded u32::MAX entries",
             |data| {
-                Ok((
+                if !is_pci_instance_id(&instance_id(set, data)?) {
+                    return Ok(None);
+                }
+                Ok(Some((
                     binding(set, data, PciDeviceClass::Network)?,
                     driver_net_cfg_instance_id(set, data)?,
-                ))
+                )))
             },
         )
     }
@@ -263,6 +275,31 @@ pub(crate) mod windows_setupapi {
         Ok(format_guid(guid))
     }
 
+    /// Description and PCI vendor (when the instance is PCI) of every started Display device.
+    pub(crate) fn display_devices() -> Result<Vec<(String, Option<u16>)>, DeviceBindingError> {
+        with_present_class_set(PciDeviceClass::Display, |set| {
+            status_ok_records(
+                set,
+                |index| format!("SetupDiEnumDeviceInfo at index {index} failed"),
+                "SetupAPI display enumeration exceeded u32::MAX entries",
+                |data| {
+                    let vendor = if is_pci_instance_id(&instance_id(set, data)?) {
+                        Some(parse_pci_identity(&instance_id(set, data)?)?.0)
+                    } else {
+                        None
+                    };
+                    let description = string_property(
+                        set,
+                        data,
+                        &DEVPKEY_Device_DeviceDesc,
+                        "device description",
+                    )?;
+                    Ok(Some((description, vendor)))
+                },
+            )
+        })
+    }
+
     pub(crate) fn enumerate_class(
         class: PciDeviceClass,
     ) -> Result<Vec<PciDeviceObservation>, DeviceBindingError> {
@@ -304,12 +341,15 @@ pub(crate) mod windows_setupapi {
             },
             "SetupAPI device enumeration exceeded u32::MAX entries",
             |data| {
+                if !is_pci_instance_id(&instance_id(set, data)?) {
+                    return Ok(None);
+                }
                 let binding = binding(set, data, expected_class)?;
-                Ok(PciDeviceObservation {
+                Ok(Some(PciDeviceObservation {
                     binding,
                     present: true,
                     status_ok: true,
-                })
+                }))
             },
         )
     }
@@ -318,7 +358,7 @@ pub(crate) mod windows_setupapi {
         set: windows::Win32::Devices::DeviceAndDriverInstallation::HDEVINFO,
         enumeration_error: impl Fn(u32) -> String,
         exhausted_error: &'static str,
-        mut record: impl FnMut(&SP_DEVINFO_DATA) -> Result<T, DeviceBindingError>,
+        mut record: impl FnMut(&SP_DEVINFO_DATA) -> Result<Option<T>, DeviceBindingError>,
     ) -> Result<Vec<T>, DeviceBindingError> {
         let mut records = Vec::new();
         for index in 0..u32::MAX {
@@ -337,7 +377,7 @@ pub(crate) mod windows_setupapi {
             if problem != 0 || status & DN_STARTED.0 == 0 {
                 continue;
             }
-            records.push(record(&data)?);
+            records.extend(record(&data)?);
         }
         Err(error(exhausted_error))
     }
@@ -572,5 +612,37 @@ pub(crate) mod windows_setupapi {
 
     pub(crate) fn error(message: impl Into<String>) -> DeviceBindingError {
         DeviceBindingError::InvalidPciBinding(message.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_pci_instance_id;
+
+    #[test]
+    fn only_pci_instances_are_candidates() {
+        for skipped in [
+            "HDAUDIO\\FUNC_01&VEN_10DE&DEV_0097&SUBSYS_10DE1234&REV_1001\\5&1&0&0001",
+            "ROOT\\MS_NDISWANIP\\0000",
+            "VMBUS\\{f8615163-df3e-46c5-913f-f2d2f965ed0e}",
+            "",
+            "PC",
+        ] {
+            assert!(!is_pci_instance_id(skipped), "{skipped}");
+        }
+        assert!(is_pci_instance_id(
+            "PCI\\VEN_10DE&DEV_2684&SUBSYS_16F110DE&REV_A1\\4&1&0&0008"
+        ));
+        assert!(is_pci_instance_id("pci\\ven_10de&dev_2684"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_pci_instance_parses() {
+        let parsed = super::windows_setupapi::parse_pci_identity(
+            "PCI\\VEN_10DE&DEV_2684&SUBSYS_16F110DE&REV_A1\\4&1&0&0008",
+        )
+        .unwrap();
+        assert_eq!((parsed.0, parsed.1), (0x10de, 0x2684));
     }
 }

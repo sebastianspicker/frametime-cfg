@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    os::windows::ffi::OsStrExt,
     path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
@@ -11,6 +10,7 @@ use frametime_domain::{
     handoff::RuntimeRecord,
     runtime::{
         RUNTIME_GENERATIONS_DIR, RUNTIME_PAYLOAD_PATHS, RUNTIME_SCHEMA_VERSION, RuntimeCurrent,
+        runtime_payload_directories, valid_generation_id,
     },
 };
 use sha2::{Digest, Sha256};
@@ -22,16 +22,14 @@ use windows::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_DELETE_ON_CLOSE, FILE_FLAG_OPEN_REPARSE_POINT,
             FILE_FLAG_WRITE_THROUGH, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ,
             FlushFileBuffers, GetFileSizeEx, OPEN_EXISTING, READ_CONTROL, ReadFile,
-            SetFilePointerEx, WriteFile,
+            SetFilePointerEx, WRITE_DAC, WRITE_OWNER, WriteFile,
         },
     },
     core::PCWSTR,
 };
 
-use super::{
-    AuthenticatedPackage, VerifiedPublishedRuntime, manifest_for, payload_directories,
-    valid_generated_id,
-};
+use super::{AuthenticatedPackage, VerifiedPublishedRuntime, manifest_for};
+use crate::system::wide_path;
 use crate::{TrustedWorkDir, trusted_work_dir, write_json_atomic_trusted};
 
 const MAX_ATTEMPTS: usize = 32;
@@ -63,7 +61,7 @@ pub(super) fn publish(package: &AuthenticatedPackage) -> Result<VerifiedPublishe
     let (generation, generation_handle) = create_generation(&trusted)?;
     let generation_relative = format!("{RUNTIME_GENERATIONS_DIR}\\{generation}");
     let _ = generations;
-    for directory in payload_directories() {
+    for directory in runtime_payload_directories() {
         let relative = format!("{generation_relative}\\{}", directory.replace('/', "\\"));
         ensure_directory(&trusted, &relative, &mut retained)?;
     }
@@ -178,7 +176,11 @@ fn ensure_directory(
     let handle = open_existing(
         &path,
         true,
-        FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0 | READ_CONTROL.0,
+        FILE_LIST_DIRECTORY.0
+            | FILE_READ_ATTRIBUTES.0
+            | READ_CONTROL.0
+            | WRITE_DAC.0
+            | WRITE_OWNER.0,
     )?;
     if created {
         trusted_work_dir::harden_created_child(handle.0)?;
@@ -201,7 +203,11 @@ fn create_generation(trusted: &TrustedWorkDir) -> Result<(String, RetainedHandle
                 let handle = open_existing(
                     &path,
                     true,
-                    FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0 | READ_CONTROL.0,
+                    FILE_LIST_DIRECTORY.0
+                        | FILE_READ_ATTRIBUTES.0
+                        | READ_CONTROL.0
+                        | WRITE_DAC.0
+                        | WRITE_OWNER.0,
                 )?;
                 trusted_work_dir::harden_created_child(handle.0)?;
                 trusted_work_dir::validate_descendant_handle(handle.0, &relative, true)?;
@@ -223,7 +229,12 @@ fn create_destination_file(
     let handle = unsafe {
         CreateFileW(
             PCWSTR(wide_path(&path).as_ptr()),
-            GENERIC_READ.0 | GENERIC_WRITE.0 | FILE_READ_ATTRIBUTES.0 | READ_CONTROL.0,
+            GENERIC_READ.0
+                | GENERIC_WRITE.0
+                | FILE_READ_ATTRIBUTES.0
+                | READ_CONTROL.0
+                | WRITE_DAC.0
+                | WRITE_OWNER.0,
             windows::Win32::Storage::FileSystem::FILE_SHARE_MODE(0),
             Some(attributes.as_ptr()),
             CREATE_NEW,
@@ -333,7 +344,7 @@ fn generated_id() -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    debug_assert!(valid_generated_id(&value));
+    debug_assert!(valid_generation_id(&value));
     value
 }
 
@@ -398,10 +409,6 @@ fn flush(handle: HANDLE, action: &str) -> Result<(), String> {
     unsafe { FlushFileBuffers(handle) }.map_err(|error| format!("{action}: {error}"))
 }
 
-fn wide_path(path: &Path) -> Vec<u16> {
-    path.as_os_str().encode_wide().chain(Some(0)).collect()
-}
-
 struct PublicationLock {
     _handle: RetainedHandle,
 }
@@ -417,7 +424,9 @@ impl PublicationLock {
                     | GENERIC_WRITE.0
                     | DELETE.0
                     | FILE_READ_ATTRIBUTES.0
-                    | READ_CONTROL.0,
+                    | READ_CONTROL.0
+                    | WRITE_DAC.0
+                    | WRITE_OWNER.0,
                 windows::Win32::Storage::FileSystem::FILE_SHARE_MODE(0),
                 Some(attributes.as_ptr()),
                 CREATE_NEW,

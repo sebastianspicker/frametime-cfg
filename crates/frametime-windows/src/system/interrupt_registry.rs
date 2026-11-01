@@ -17,6 +17,41 @@ pub(crate) trait InterruptRegistryStore: InterruptRegistryReader {
         key: &str,
         name: &'static str,
     ) -> Result<(), DeviceBindingError>;
+
+    fn key_exists(&self, key: &str) -> Result<bool, DeviceBindingError>;
+
+    /// Creates the missing levels of `key` below an existing `Device Parameters` key.
+    fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError>;
+
+    /// Deletes `key` only when it has no subkeys and no values.
+    fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError>;
+}
+
+/// The keys from the first level below `Device Parameters` down to `key`, shallowest first.
+fn key_levels_below_parameters(key: &str) -> Vec<String> {
+    const MARKER: &str = "\\Device Parameters\\";
+    let Some(start) = key.find(MARKER).map(|index| index + MARKER.len()) else {
+        return Vec::new();
+    };
+    key[start..]
+        .match_indices('\\')
+        .map(|(index, _)| &key[..start + index])
+        .chain(Some(key))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn missing_key_levels(
+    store: &impl InterruptRegistryStore,
+    key: &str,
+) -> Result<Vec<String>, DeviceBindingError> {
+    let mut missing = Vec::new();
+    for level in key_levels_below_parameters(key) {
+        if !store.key_exists(&level)? {
+            missing.push(level);
+        }
+    }
+    Ok(missing)
 }
 
 pub(crate) fn policy_for_change(
@@ -92,6 +127,12 @@ pub(crate) fn capture_interrupt_backups(
             let original_value = store
                 .read_interrupt_value(&change.key, change.name)?
                 .map(backup_value);
+            // Only P3:3 may create its `Affinity Policy` key; P3:2 still refuses when it is absent.
+            let created_key_levels = if step == "P3:3" {
+                missing_key_levels(store, &change.key)?
+            } else {
+                Vec::new()
+            };
             let backup = InterruptPolicyBackup {
                 step: step.into(),
                 timestamp: timestamp.into(),
@@ -99,6 +140,7 @@ pub(crate) fn capture_interrupt_backups(
                 policy,
                 existed: original_value.is_some(),
                 original_value,
+                created_key_levels,
                 unknown: BTreeMap::new(),
             };
             backup
@@ -131,7 +173,9 @@ pub(crate) fn apply_interrupt_changes(
     changes: &[InterruptRegistryChange],
 ) -> Result<(), DeviceBindingError> {
     for change in changes {
-        policy_for_change(device, change)?;
+        if policy_for_change(device, change)?.expected_step() == "P3:3" {
+            store.create_key_levels(&change.key)?;
+        }
         store.write_interrupt_value(&change.key, change.name, &change.value)?;
     }
     Ok(())
@@ -237,6 +281,10 @@ pub(crate) fn restore_interrupt_backup(
         if store.read_interrupt_value(&key, name)?.is_some() {
             return Err(DeviceBindingError::RegistryReadbackMismatch { key, name });
         }
+    }
+    // Deepest first; a level still holding the sibling policy's value is removed by that restore.
+    for level in backup.created_key_levels.iter().rev() {
+        store.delete_key_if_empty(level)?;
     }
     Ok(())
 }
@@ -483,5 +531,126 @@ impl InterruptRegistryStore for UnavailableInterruptRegistry {
         Err(DeviceBindingError::PlatformAdapterUnavailable(
             "interrupt registry",
         ))
+    }
+
+    fn key_exists(&self, _: &str) -> Result<bool, DeviceBindingError> {
+        Err(DeviceBindingError::PlatformAdapterUnavailable(
+            "interrupt registry",
+        ))
+    }
+
+    fn create_key_levels(&self, _: &str) -> Result<(), DeviceBindingError> {
+        Err(DeviceBindingError::PlatformAdapterUnavailable(
+            "interrupt registry",
+        ))
+    }
+
+    fn delete_key_if_empty(&self, _: &str) -> Result<(), DeviceBindingError> {
+        Err(DeviceBindingError::PlatformAdapterUnavailable(
+            "interrupt registry",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod created_key_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+
+    const PARAMETERS: &str = "SYSTEM\\CurrentControlSet\\Enum\\PCI\\VEN_8086&DEV_15F3&SUBSYS_00008086&REV_03\\1\\Device Parameters";
+
+    #[derive(Default)]
+    struct FakeStore {
+        keys: RefCell<BTreeSet<String>>,
+        values: RefCell<BTreeMap<String, InterruptRegistryValue>>,
+    }
+
+    impl InterruptRegistryReader for FakeStore {
+        fn read_interrupt_value(
+            &self,
+            key: &str,
+            _: &'static str,
+        ) -> Result<Option<InterruptRegistryValue>, DeviceBindingError> {
+            Ok(self.values.borrow().get(key).cloned())
+        }
+    }
+
+    impl InterruptRegistryStore for FakeStore {
+        fn write_interrupt_value(
+            &self,
+            key: &str,
+            _: &'static str,
+            value: &InterruptRegistryValue,
+        ) -> Result<(), DeviceBindingError> {
+            self.values.borrow_mut().insert(key.into(), value.clone());
+            Ok(())
+        }
+
+        fn delete_interrupt_value(
+            &self,
+            key: &str,
+            _: &'static str,
+        ) -> Result<(), DeviceBindingError> {
+            self.values.borrow_mut().remove(key);
+            Ok(())
+        }
+
+        fn key_exists(&self, key: &str) -> Result<bool, DeviceBindingError> {
+            Ok(self.keys.borrow().contains(key))
+        }
+
+        fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError> {
+            self.keys
+                .borrow_mut()
+                .extend(key_levels_below_parameters(key));
+            Ok(())
+        }
+
+        fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError> {
+            let occupied = self.values.borrow().contains_key(key)
+                || self
+                    .keys
+                    .borrow()
+                    .iter()
+                    .any(|other| other.starts_with(&format!("{key}\\")));
+            if !occupied {
+                self.keys.borrow_mut().remove(key);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn levels_are_listed_shallowest_first_and_only_below_device_parameters() {
+        let key = format!("{PARAMETERS}\\Interrupt Management\\Affinity Policy");
+        assert_eq!(
+            key_levels_below_parameters(&key),
+            [format!("{PARAMETERS}\\Interrupt Management"), key.clone()]
+        );
+        assert!(key_levels_below_parameters("SYSTEM\\Other").is_empty());
+    }
+
+    #[test]
+    fn missing_levels_are_recorded_and_removed_deepest_first() {
+        let key = format!("{PARAMETERS}\\Interrupt Management\\Affinity Policy");
+        let store = FakeStore::default();
+        store.keys.borrow_mut().insert(PARAMETERS.into());
+        let created = missing_key_levels(&store, &key).unwrap();
+        assert_eq!(created.len(), 2);
+        store.create_key_levels(&key).unwrap();
+        store
+            .write_interrupt_value(&key, "DevicePolicy", &InterruptRegistryValue::Dword(4))
+            .unwrap();
+        assert!(missing_key_levels(&store, &key).unwrap().is_empty());
+
+        store.delete_interrupt_value(&key, "DevicePolicy").unwrap();
+        for level in created.iter().rev() {
+            store.delete_key_if_empty(level).unwrap();
+        }
+        assert_eq!(
+            *store.keys.borrow(),
+            BTreeSet::from([PARAMETERS.to_owned()])
+        );
     }
 }

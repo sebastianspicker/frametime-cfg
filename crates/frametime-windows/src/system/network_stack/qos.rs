@@ -5,6 +5,7 @@
 //! future separately acknowledged QoS experiment after the local network and
 //! congestion test demonstrate that DSCP is actually honored.
 
+use crate::system::wide;
 use frametime_domain::backup::{
     NetworkStackNlaBackup, NetworkStackPolicy, NetworkStackPolicySnapshot,
     NetworkStackRawRegistryValue,
@@ -451,8 +452,4 @@ pub(crate) fn policy_name(policy: NetworkStackPolicy) -> &'static str {
         NetworkStackPolicy::Cs2UdpPorts => QOS_NAME_PORTS,
         NetworkStackPolicy::Cs2App => QOS_NAME_APP,
     }
-}
-
-pub(crate) fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
 }

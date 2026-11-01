@@ -73,18 +73,6 @@ pub struct VprofBenchmarkRequest {
 }
 
 #[derive(Debug, Clone)]
-pub enum DriverCommand {
-    Plan {
-        input: PathBuf,
-    },
-    PrepareNvidia {
-        artifact_id: String,
-        artifact_file_name: String,
-        server_path: String,
-    },
-}
-
-#[derive(Debug, Clone)]
 pub enum NvidiaInstallerSource {
     OfficialUrl(String),
     LocalInstaller(PathBuf),
@@ -123,23 +111,11 @@ pub enum HardwareCommand {
 /// fixed trusted Windows work root.
 #[derive(Debug, Clone)]
 pub enum Command {
-    DryRun {
-        branch: Branch,
-    },
-    FpsCap(FpsRequest),
-    BaselineBenchmark(VprofBenchmarkRequest),
-    FinalBenchmark(VprofBenchmarkRequest),
-    Driver(DriverCommand),
-    Hardware(HardwareCommand),
-    SmokeTest,
-    PackageAuthSmoke,
-    Exit,
     Optimize {
         yes: bool,
     },
     Configure {
         profile: Profile,
-        dry_run: bool,
     },
     Cs2Cfg {
         assets: Vec<OptionalCfgAsset>,

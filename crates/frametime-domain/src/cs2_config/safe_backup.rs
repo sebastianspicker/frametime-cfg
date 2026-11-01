@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::{
-    AutoexecBackup, CfgAssetDeployment, Cs2ConfigError, Cs2ConfigFs, Cs2ConfigRequest,
-    OptimizationBackup, OptionalCfgAsset,
+    CfgAssetDeployment, Cs2ConfigError, Cs2ConfigFs, Cs2ConfigRequest, OptimizationBackup,
+    OptionalCfgAsset,
 };
 use crate::steam::Cs2Install;
 
@@ -14,8 +14,6 @@ pub(super) struct Cs2Paths {
     pub(super) cfg_directory: PathBuf,
     pub(super) optimization_path: PathBuf,
     pub(super) optimization_backup_path: PathBuf,
-    pub(super) autoexec_path: PathBuf,
-    pub(super) autoexec_backup_path: PathBuf,
 }
 
 impl Cs2Paths {
@@ -107,10 +105,6 @@ pub(super) fn read_optional(
     }
 }
 
-pub(super) fn bytes_as_autoexec(bytes: &[u8]) -> Result<&str, Cs2ConfigError> {
-    std::str::from_utf8(bytes).map_err(|_| Cs2ConfigError::AutoexecNotUtf8)
-}
-
 pub(super) fn create_optimization_backup(
     files: &mut dyn Cs2ConfigFs,
     path: &Path,
@@ -151,41 +145,5 @@ pub(super) fn backup_path(backup: &OptimizationBackup) -> Option<PathBuf> {
             Some(path.clone())
         }
         OptimizationBackup::NotNeeded => None,
-    }
-}
-
-pub(super) fn create_autoexec_backup(
-    files: &mut dyn Cs2ConfigFs,
-    path: &Path,
-    original: Option<&[u8]>,
-    autoexec_updated: bool,
-) -> Result<AutoexecBackup, Cs2ConfigError> {
-    if !autoexec_updated {
-        return Ok(AutoexecBackup::NotNeeded);
-    }
-    let Some(original) = original else {
-        return Ok(AutoexecBackup::NotNeeded);
-    };
-    match files.create_file_new(path, original) {
-        Ok(()) => match files.read_file(path) {
-            Ok(readback) if readback == original => Ok(AutoexecBackup::Created(path.to_path_buf())),
-            Ok(_) => Err(Cs2ConfigError::ReadbackMismatch {
-                target: path.to_path_buf(),
-                recovery: None,
-            }),
-            Err(source) => Err(Cs2ConfigError::Mutation {
-                stage: "autoexec.cfg backup readback",
-                recovery: None,
-                source,
-            }),
-        },
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            Ok(AutoexecBackup::Retained(path.to_path_buf()))
-        }
-        Err(source) => Err(Cs2ConfigError::Mutation {
-            stage: "autoexec.cfg backup",
-            recovery: None,
-            source,
-        }),
     }
 }

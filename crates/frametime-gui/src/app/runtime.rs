@@ -3,6 +3,7 @@ use super::*;
 pub(super) fn calculate_fps_cap(window: HWND) {
     benchmark::command(window, FPS_BASE + 2, 0);
 }
+
 pub(super) fn control_text(handle: HWND) -> String {
     bounded_control_text(handle, 32_768).unwrap_or_default()
 }
@@ -62,60 +63,13 @@ pub(super) fn cancel(window: HWND) {
         );
         return;
     }
-    let child_id = with_state(window, |app| {
-        app.child.as_ref().map(|child| child.child.id())
-    })
-    .flatten();
-    match child_id {
-        Some(process_group) => match request_ctrl_break(process_group) {
-            Ok(()) => update_status(
-                window,
-                StatusKind::Warning,
-                &OperationState::cancellation_requested().detail,
-            ),
-            Err(error) => update_status(
-                window,
-                StatusKind::Failed,
-                &format!("Could not request Ctrl-Break cancellation: {error}"),
-            ),
-        },
-        None => update_status(
-            window,
-            StatusKind::Ready,
-            "No terminal operation is running.",
-        ),
-    }
+    update_status(
+        window,
+        StatusKind::Ready,
+        "No terminal operation is running.",
+    );
 }
-pub(super) fn request_ctrl_break(process_group: u32) -> Result<(), String> {
-    // The child is a new console/process-group leader. Attach only long enough to target
-    // its group, then detach without terminating or waiting for it.
-    unsafe {
-        AttachConsole(process_group).map_err(|error| error.to_string())?;
-        let result = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, process_group)
-            .map_err(|error| error.to_string());
-        let _ = FreeConsole();
-        result
-    }
-}
-pub(super) fn poll_terminal(window: HWND) {
-    let result = with_state(window, |app| {
-        app.child.as_mut().and_then(|child| {
-            child
-                .child
-                .try_wait()
-                .ok()
-                .flatten()
-                .map(|status| status.code())
-        })
-    })
-    .flatten();
-    if let Some(code) = result {
-        let _ = with_state(window, |app| app.child = None);
-        invalidate_after_operation(window);
-        let outcome = OperationState::terminal_result(code);
-        update_status(window, outcome.status, &outcome.detail);
-    }
-
+pub(super) fn poll_native(window: HWND) {
     poll_elevation_watchdog(window);
     if let Some(native) = take_native_result(window) {
         if !matches!(

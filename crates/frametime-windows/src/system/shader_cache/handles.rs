@@ -13,7 +13,7 @@ use std::{
 
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, HANDLE},
+        Foundation::{CloseHandle, ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION, HANDLE},
         Storage::FileSystem::{
             CreateFileW, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
             FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_FORCE_IMAGE_SECTION_CHECK,
@@ -25,14 +25,14 @@ use windows::{
             FileIdType, GetDriveTypeW, GetFileInformationByHandleEx, OPEN_EXISTING, OpenFileById,
             SetFileInformationByHandle,
         },
-        System::WindowsProgramming::DRIVE_FIXED,
+        System::WindowsProgramming::{DRIVE_FIXED, DRIVE_NO_ROOT_DIR},
     },
     core::PCWSTR,
 };
 
 use super::validation::{
-    ensure_direct_child, observe_node, parse_directory_buffer, validate_directory_entry,
-    validate_node,
+    HARD_LINKED_OBJECT, ensure_direct_child, observe_node, parse_directory_buffer,
+    validate_directory_entry, validate_node,
 };
 use crate::normalize_windows_dos_path;
 
@@ -106,35 +106,70 @@ pub(crate) struct ObservedNode {
     pub(crate) final_path: Vec<u16>,
 }
 
+/// A file left alone because another program holds it (or it is hard-linked).
+#[derive(Debug)]
+struct SkippedEntry {
+    parent: usize,
+    id: i64,
+    name: Vec<u16>,
+    attributes: u32,
+}
+
 #[derive(Debug)]
 struct CacheTree {
     nodes: Vec<Node>,
     roots: Vec<usize>,
     memory: usize,
+    skipped: Vec<SkippedEntry>,
+    /// Directories that hold a skipped file and therefore must not be deleted.
+    retained: BTreeSet<usize>,
+}
+
+/// What a deletion pass did; `skipped` files were in use and were left in place.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct DeleteOutcome {
+    pub(crate) deleted: usize,
+    pub(crate) skipped: usize,
 }
 
 /// Delete the contents, but never the supplied roots, of fixed native paths.
 /// Callers may pass only roots selected by their own exact allowlist.
-pub(crate) fn delete_fixed_roots(paths: &[std::path::PathBuf]) -> Result<usize, String> {
+pub(crate) fn delete_fixed_roots(paths: &[std::path::PathBuf]) -> Result<DeleteOutcome, String> {
     let tree = CacheTree::preflight(paths)?;
-    let count = tree.nodes.len().saturating_sub(tree.roots.len());
+    let retained_dirs = tree
+        .retained
+        .iter()
+        .filter(|index| !tree.nodes[**index].root)
+        .count();
+    let deleted = (tree.nodes.len())
+        .saturating_sub(tree.roots.len())
+        .saturating_sub(retained_dirs);
+    let skipped = tree.skipped.len();
     tree.reenumerate_retained_handles()?;
     tree.delete_postorder()?;
-    Ok(count)
+    Ok(DeleteOutcome { deleted, skipped })
 }
 
 /// Delete only leaf `.pf` files from a fixed Prefetch root. Directories and
 /// non-prefetch siblings remain retained and are never dispositioned.
-pub(crate) fn delete_prefetch_pf_files(root: &std::path::Path) -> Result<usize, String> {
+pub(crate) fn delete_prefetch_pf_files(root: &std::path::Path) -> Result<DeleteOutcome, String> {
     let roots = [root.to_path_buf()];
     let mut tree = CacheTree::preflight(&roots)?;
     tree.reenumerate_retained_handles()?;
-    tree.delete_leaf_files(|name| {
+    let is_pf = |name: &[u16]| {
         name.len() >= 3
             && name[name.len() - 3] == u16::from(b'.')
             && matches!(name[name.len() - 2], 112 | 80)
             && matches!(name[name.len() - 1], 102 | 70)
-    })
+    };
+    // Only `.pf` files are targets, so only they count as skipped.
+    let skipped = tree
+        .skipped
+        .iter()
+        .filter(|entry| is_pf(&entry.name))
+        .count();
+    let deleted = tree.delete_leaf_files(is_pf)?;
+    Ok(DeleteOutcome { deleted, skipped })
 }
 
 impl CacheTree {
@@ -143,6 +178,8 @@ impl CacheTree {
             nodes: Vec::new(),
             roots: Vec::new(),
             memory: 0,
+            skipped: Vec::new(),
+            retained: BTreeSet::new(),
         };
         let mut seen = BTreeSet::new();
         for root in roots {
@@ -192,8 +229,17 @@ impl CacheTree {
                 return Err("P1:3 cache tree contains a reparse point".into());
             }
             let directory = entry.attributes & FILE_ATTRIBUTE_DIRECTORY_BITS != 0;
-            let handle = open_by_id(self.nodes[parent].handle.0, entry.id, directory)?;
-            let index = self.push_node(
+            let skipped = SkippedEntry {
+                parent,
+                id: entry.id,
+                name: entry.name.clone(),
+                attributes: entry.attributes,
+            };
+            let Some(handle) = open_by_id(self.nodes[parent].handle.0, entry.id, directory)? else {
+                self.skip(skipped);
+                continue;
+            };
+            let pushed = self.push_node(
                 handle,
                 NodeInput {
                     parent: Some(parent),
@@ -206,12 +252,29 @@ impl CacheTree {
                     entry_attributes: Some(entry.attributes),
                 },
                 seen,
-            )?;
+            );
+            let index = match pushed {
+                Err(error) if !directory && error == HARD_LINKED_OBJECT => {
+                    self.skip(skipped);
+                    continue;
+                }
+                other => other?,
+            };
             if directory {
                 self.walk_directory(index, seen)?;
             }
         }
         Ok(())
+    }
+
+    /// Leaves the file in place and keeps every ancestor directory, which would not be empty.
+    fn skip(&mut self, entry: SkippedEntry) {
+        let mut ancestor = Some(entry.parent);
+        while let Some(index) = ancestor {
+            self.retained.insert(index);
+            ancestor = self.nodes[index].parent;
+        }
+        self.skipped.push(entry);
     }
 
     fn push_node(
@@ -292,6 +355,12 @@ impl CacheTree {
             expected.insert((parent, entry_id, node.name.clone()), entry_attributes);
             validate_node(node, Some(parent_node))?;
         }
+        for entry in &self.skipped {
+            expected.insert(
+                (entry.parent, entry.id, entry.name.clone()),
+                entry.attributes,
+            );
+        }
         let mut actual = BTreeMap::new();
         for (parent, node) in self
             .nodes
@@ -318,7 +387,7 @@ impl CacheTree {
         for index in (0..self.nodes.len()).rev() {
             let (ancestors, current) = self.nodes.split_at_mut(index);
             let node = &mut current[0];
-            if node.root {
+            if node.root || self.retained.contains(&index) {
                 continue;
             }
             if let Err(error) =
@@ -426,7 +495,9 @@ pub(crate) struct DirectoryEntry {
 }
 
 fn open_root(path: &Path) -> Result<Option<OwnedHandle>, String> {
-    reject_remote_drive(path)?;
+    if !drive_is_present(path)? {
+        return Ok(None);
+    }
     let wide = wide_path(path)?;
     let handle = unsafe {
         CreateFileW(
@@ -446,7 +517,9 @@ fn open_root(path: &Path) -> Result<Option<OwnedHandle>, String> {
     }
 }
 
-fn open_by_id(root: HANDLE, id: i64, directory: bool) -> Result<OwnedHandle, String> {
+/// `Ok(None)` for a file another program holds open (or denies delete access to);
+/// every other failure, and any directory failure, still aborts.
+fn open_by_id(root: HANDLE, id: i64, directory: bool) -> Result<Option<OwnedHandle>, String> {
     let descriptor = FILE_ID_DESCRIPTOR {
         dwSize: u32::try_from(size_of::<FILE_ID_DESCRIPTOR>())
             .map_err(|_| "P1:3 file-id descriptor size overflow")?,
@@ -468,8 +541,14 @@ fn open_by_id(root: HANDLE, id: i64, directory: bool) -> Result<OwnedHandle, Str
             None,
             flags,
         )
-        .map(OwnedHandle)
-        .map_err(|error| format!("open P1:3 cache entry by file ID: {error}"))
+        .map(|handle| Some(OwnedHandle(handle)))
+        .or_else(|error| {
+            if !directory && is_in_use(&error) {
+                Ok(None)
+            } else {
+                Err(format!("open P1:3 cache entry by file ID: {error}"))
+            }
+        })
     }
 }
 
@@ -506,7 +585,8 @@ fn enumerate_directory(handle: HANDLE) -> Result<Vec<DirectoryEntry>, String> {
     Ok(output)
 }
 
-fn reject_remote_drive(path: &Path) -> Result<(), String> {
+/// `Ok(false)` for a drive letter that does not exist; remote, removable and CD-ROM drives are errors.
+fn drive_is_present(path: &Path) -> Result<bool, String> {
     let path = path.to_string_lossy();
     let root: Vec<u16> = path
         .chars()
@@ -518,10 +598,11 @@ fn reject_remote_drive(path: &Path) -> Result<(), String> {
     if root.len() != 4 {
         return Err("P1:3 cache root is not an exact drive path".into());
     }
-    if unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) } != DRIVE_FIXED {
-        return Err("P1:3 cache root is not a fixed local drive".into());
+    match unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) } {
+        DRIVE_FIXED => Ok(true),
+        DRIVE_NO_ROOT_DIR => Ok(false),
+        _ => Err("P1:3 cache root is not a fixed local drive".into()),
     }
-    Ok(())
 }
 
 fn wide_path(path: &Path) -> Result<Vec<u16>, String> {
@@ -554,6 +635,39 @@ fn is_not_found(error: &windows::core::Error) -> bool {
         || error.code().0 == -2147024893 // HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND)
 }
 
+fn is_in_use(error: &windows::core::Error) -> bool {
+    error.code() == ERROR_SHARING_VIOLATION.to_hresult()
+        || error.code() == ERROR_ACCESS_DENIED.to_hresult()
+}
+
 fn is_no_more_files(error: &windows::core::Error) -> bool {
     error.code().0 == -2147024878 // HRESULT_FROM_WIN32(ERROR_NO_MORE_FILES)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    #[test]
+    fn a_file_held_open_is_skipped_and_the_rest_is_deleted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // The walk opens with DELETE access, so a holder without FILE_SHARE_DELETE blocks it.
+        let root = std::fs::canonicalize(dir.path()).expect("canonical tempdir");
+        let root = std::path::PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
+        std::fs::create_dir(root.join("sub")).expect("sub");
+        std::fs::write(root.join("sub").join("free.bin"), b"x").expect("free");
+        std::fs::write(root.join("other.bin"), b"x").expect("other");
+        let _held = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+            .open(root.join("sub").join("held.bin"))
+            .expect("held");
+        let outcome = delete_fixed_roots(std::slice::from_ref(&root)).expect("cleanup continues");
+        assert_eq!(outcome.skipped, 1);
+        assert!(!root.join("other.bin").exists());
+        assert!(!root.join("sub").join("free.bin").exists());
+        assert!(root.join("sub").join("held.bin").exists());
+    }
 }

@@ -60,7 +60,6 @@ struct BenchmarkControls {
 
 struct PreferenceControls {
     profile: HWND,
-    dry_run: HWND,
 }
 
 struct CatalogControls {
@@ -201,15 +200,7 @@ fn create_preference_controls(
     unsafe {
         SendMessageW(profile, CB_SETCURSEL, Some(WPARAM(1)), Some(LPARAM(0)));
     }
-    let dry_run = create_text_control(
-        parent,
-        instance,
-        "BUTTON",
-        "Dry run preference",
-        WS_CHILD | WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
-        DRY_RUN,
-    )?;
-    Ok(PreferenceControls { profile, dry_run })
+    Ok(PreferenceControls { profile })
 }
 
 fn create_catalog_controls(
@@ -389,7 +380,6 @@ fn install_state(
         min_input: controls.benchmark.min_input,
         vprof_input: controls.benchmark.vprof_input,
         profile: controls.preference.profile,
-        dry_run: controls.preference.dry_run,
         filter_label: controls.catalog.filter_label,
         catalog_filter: controls.catalog.catalog_filter,
         video_root_label: controls.video.video_root_label,
@@ -400,12 +390,10 @@ fn install_state(
         cs2_cfg_asset: controls.cs2_cfg.cs2_cfg_asset,
         reads: model::snapshots::SnapshotWorker::new(model::read_presentation),
         package,
-        child: None,
         elevation_watchdog: None,
         native_result: None,
         native_operation: None,
         critical_operation: false,
-        benchmark_preview: Vec::new(),
         vprof_input_state: model::VprofInputState::default(),
         diagnostics: DiagnosticPresentation::empty(),
         operation,

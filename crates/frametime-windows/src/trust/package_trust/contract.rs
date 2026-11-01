@@ -130,8 +130,14 @@ pub(crate) fn valid_hex(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+const MAX_MANIFEST_DEPTH: usize = 64;
+
 pub(crate) fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), String> {
-    let mut scanner = ManifestScanner { bytes, at: 0 };
+    let mut scanner = ManifestScanner {
+        bytes,
+        at: 0,
+        depth: 0,
+    };
     scanner.value()?;
     scanner.gap();
     if scanner.at == bytes.len() {
@@ -144,6 +150,7 @@ pub(crate) fn reject_duplicate_keys(bytes: &[u8]) -> Result<(), String> {
 pub(crate) struct ManifestScanner<'a> {
     pub(crate) bytes: &'a [u8],
     pub(crate) at: usize,
+    pub(crate) depth: usize,
 }
 
 impl ManifestScanner<'_> {
@@ -176,8 +183,20 @@ impl ManifestScanner<'_> {
     pub(crate) fn value(&mut self) -> Result<(), String> {
         self.gap();
         match self.bytes.get(self.at) {
-            Some(b'{') => self.object(),
-            Some(b'[') => self.array(),
+            Some(&open @ (b'{' | b'[')) => {
+                // Bounded before serde_json so crafted nesting cannot overflow the stack.
+                if self.depth == MAX_MANIFEST_DEPTH {
+                    return Err("package manifest nests too deeply".into());
+                }
+                self.depth += 1;
+                let result = if open == b'{' {
+                    self.object()
+                } else {
+                    self.array()
+                };
+                self.depth -= 1;
+                result
+            }
             Some(b'"') => {
                 self.string()?;
                 Ok(())
@@ -352,6 +371,19 @@ mod tests {
     fn manifest_parser_rejects_malformed_or_oversized_json() {
         assert!(parse_manifest(b"{").is_err());
         assert!(parse_manifest(&vec![b' '; MAX_MANIFEST_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn duplicate_key_scanner_bounds_nesting_depth() {
+        assert_eq!(
+            reject_duplicate_keys(&[b'['; 10_000]),
+            Err("package manifest nests too deeply".into())
+        );
+        let nested = format!("{}{}", "[".repeat(64), "]".repeat(64));
+        assert!(reject_duplicate_keys(nested.as_bytes()).is_ok());
+        assert!(
+            reject_duplicate_keys(&serde_json::to_vec(&valid_manifest()).expect("json")).is_ok()
+        );
     }
 
     #[test]

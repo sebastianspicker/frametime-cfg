@@ -147,11 +147,6 @@ pub(super) fn verify_loaded_module_path(module: HMODULE, expected: &Path) -> Res
     }
 }
 
-pub(super) fn wide_path(path: &std::path::Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    path.as_os_str().encode_wide().chain(Some(0)).collect()
-}
-
 pub(super) fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| error.to_string())?;
     let mut hasher = Sha256::new();

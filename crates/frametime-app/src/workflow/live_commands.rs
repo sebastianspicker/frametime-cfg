@@ -37,14 +37,14 @@ fn run_live_command(command: Command) -> Result<CommandOutcome, ApplicationError
             let package = require_authenticated_package()?;
             run_phase_one(yes, &package).map(CommandOutcome::Run)
         }
-        Command::Configure { profile, dry_run } => {
+        Command::Configure { profile } => {
             let package = require_authenticated_package()?;
             require_clean_native_reboot_state("configure")?;
-            let state = frametime_windows::configure_profile(&package, profile, dry_run)
+            let state = frametime_windows::configure_profile(&package, profile)
                 .map_err(ApplicationError::failed)?;
             Ok(CommandOutcome::Run(RunSummary::message(format!(
-                "Profile: {:?}; mode: {}; GUI preview preference: {}",
-                state.profile, state.mode, dry_run
+                "Profile: {:?}; mode: {}",
+                state.profile, state.mode
             ))))
         }
         Command::Cs2Cfg { assets, yes } => {
@@ -90,7 +90,6 @@ fn run_live_command(command: Command) -> Result<CommandOutcome, ApplicationError
         }
         Command::AbortHandoff { yes } => abort_handoff(yes).map(CommandOutcome::Run),
         Command::ShowLog => crate::read_log().map(CommandOutcome::Log),
-        command => unreachable!("{command:?} is routed outside the live workflow"),
     }
 }
 

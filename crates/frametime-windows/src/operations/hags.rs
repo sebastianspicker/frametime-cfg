@@ -161,8 +161,18 @@ pub(crate) fn compatible_adapter_states() -> Result<Vec<HagsAdapterState>, Strin
     native::inspect()
 }
 
+/// PCI `SubSysId` packs the subsystem device in the high half and the vendor in the low half.
+#[cfg(any(test, windows))]
+fn subsystem_ids(subsystem: u32) -> (u16, u16) {
+    (
+        u16::try_from(subsystem & 0xffff).expect("lower subsystem half fits u16"),
+        u16::try_from(subsystem >> 16).expect("upper subsystem half fits u16"),
+    )
+}
+
 #[cfg(windows)]
 mod native {
+    use crate::system::wide_path;
     use crate::{HagsAdapterState, PciDeviceClass, PciDeviceEnumerator, WindowsSetupApiEnumerator};
     use raw_cpuid::CpuId;
     use std::{
@@ -251,12 +261,10 @@ mod native {
                         && observed.status_ok
                         && observed.binding.vendor_id == adapter.vendor
                         && observed.binding.device_id == adapter.device
-                        && observed.binding.subsystem_vendor_id
-                            == u16::try_from(adapter.subsystem >> 16)
-                                .expect("upper subsystem half fits u16")
-                        && observed.binding.subsystem_device_id
-                            == u16::try_from(adapter.subsystem & 0xffff)
-                                .expect("lower subsystem half fits u16")
+                        && (
+                            observed.binding.subsystem_vendor_id,
+                            observed.binding.subsystem_device_id,
+                        ) == super::subsystem_ids(adapter.subsystem)
                         && observed.binding.revision_id == adapter.revision
                 })
                 .collect::<Vec<_>>();
@@ -331,7 +339,7 @@ mod native {
             let path = system32_gdi32_path()?;
             let module = unsafe {
                 LoadLibraryExW(
-                    PCWSTR(wide(&path).as_ptr()),
+                    PCWSTR(wide_path(&path).as_ptr()),
                     None,
                     LOAD_LIBRARY_SEARCH_SYSTEM32,
                 )
@@ -396,13 +404,6 @@ mod native {
             }
         }
     }
-    pub(crate) fn wide(path: &std::path::Path) -> Vec<u16> {
-        path.as_os_str()
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(Some(0))
-            .collect()
-    }
     pub(crate) fn system32_gdi32_path() -> Result<PathBuf, String> {
         let mut buffer = vec![0_u16; 32_768];
         let copied = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
@@ -436,5 +437,10 @@ mod hags_tests {
         assert_eq!(hags_change(2).name, HAGS_NAME);
         assert_eq!(hags_change(2).value, RegValue::Dword(2));
         assert_eq!(HAGS_MIN_BUILD, 26_100);
+    }
+
+    #[test]
+    fn subsystem_id_is_vendor_low_device_high() {
+        assert_eq!(subsystem_ids(0x16f1_10de), (0x10de, 0x16f1));
     }
 }

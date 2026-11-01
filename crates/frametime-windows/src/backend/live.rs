@@ -9,6 +9,9 @@ pub struct LiveBackend<'authority> {
     /// Keeps the non-cloneable source of mutation authority alive for the
     /// whole engine transaction. `VerifiedConfig` is retained only as data.
     pub(crate) _authority: MutationAuthority<'authority>,
+    /// Holds the suite work lock for the whole engine run so another process
+    /// cannot interleave steps; inner writers re-enter it on this thread.
+    pub(crate) _run_lock: WorkLock,
     pub(crate) captured_steps: BTreeSet<String>,
     pub(crate) captured_msi_batches: BTreeMap<String, Vec<MsiDeviceBatch>>,
     pub(crate) captured_nic_affinity_bindings: BTreeMap<String, NicAffinityBinding>,
@@ -97,7 +100,7 @@ impl Backend for LiveBackend<'_> {
                 return baseline_benchmark_inspection(baseline_benchmark_is_persisted(
                     &self.work_dir,
                     &self._trusted_work_dir,
-                ));
+                )?);
             }
             Action::FinalBenchmark => return Ok(Inspection::Unsupported),
             Action::ObserveChipsetDriver => {
@@ -236,23 +239,6 @@ impl Backend for LiveBackend<'_> {
             }
         };
         for entry in entries {
-            if let BackupEntry::Powerplan { step, original_guid, suite_owned_guids, .. } = entry
-                && step == "P1:6"
-                && let Some(BackupEntry::Powerplan { suite_owned_guids: existing_owned, unknown, .. }) = backup.entries.iter_mut().find(|existing| matches!(existing, BackupEntry::Powerplan { step, original_guid: known, .. } if step == "P1:6" && known.eq_ignore_ascii_case(original_guid)))
-            {
-                if !unknown.is_empty() || existing_owned.iter().any(|guid| validate_power_plan_guid(guid).is_err()) {
-                    return Err("existing P1:6 backup provenance is not exact".into());
-                }
-                for guid in suite_owned_guids {
-                    if validate_power_plan_guid(guid).is_err() {
-                        return Err("captured P1:6 suite GUID is invalid".into());
-                    }
-                    if !existing_owned.iter().any(|known| known.eq_ignore_ascii_case(guid)) {
-                        existing_owned.push(guid.clone());
-                    }
-                }
-                continue;
-            }
             backup.push_first_value(entry.clone());
         }
         let result = write_json_atomic_trusted(&self._trusted_work_dir, BACKUP_FILE, &backup)

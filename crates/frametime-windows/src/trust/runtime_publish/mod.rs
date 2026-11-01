@@ -1,7 +1,5 @@
 #[cfg(windows)]
-use self::contract::{
-    SAFE_MODE_HANDOFF_ARGUMENTS, manifest_for, payload_directories, valid_generated_id,
-};
+use self::contract::{SAFE_MODE_HANDOFF_ARGUMENTS, manifest_for};
 use crate::*;
 /// Non-cloneable capability for the runtime generation just published from the
 /// current package. On Windows it retains the copied executable handle and its

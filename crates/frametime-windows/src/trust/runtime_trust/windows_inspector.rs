@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use crate::{TrustedWorkDir, VerifiedConfig};
 use frametime_domain::runtime::{
     RUNTIME_GENERATIONS_DIR, RUNTIME_PAYLOAD_PATHS, RuntimeCurrent, RuntimeManifest,
+    runtime_payload_directories,
 };
 
 use super::retained_runtime::InspectedRuntimeIntegrity;
@@ -48,6 +49,17 @@ impl Drop for RetainedRuntimeNode {
 }
 
 pub(crate) fn inspect(trusted: &TrustedWorkDir) -> Result<InspectedRuntimeIntegrity, String> {
+    let (inspected, executable_node) = inspect_integrity(trusted)?;
+    ensure_current_process_is_selected(inspected._nodes[executable_node].handle)?;
+    Ok(inspected)
+}
+
+/// Validates the selected runtime without binding it to the current process
+/// image, so a packaged executable can observe an intact published copy.
+/// Returns the retained node index of the selected `frametime.exe`.
+pub(crate) fn inspect_integrity(
+    trusted: &TrustedWorkDir,
+) -> Result<(InspectedRuntimeIntegrity, usize), String> {
     let mut nodes = Vec::new();
     let selector = open_walked_node(trusted, "runtime-current.json", false, &mut nodes)?;
     let selector_bytes = read_bounded(nodes[selector].handle, MAX_RUNTIME_METADATA_BYTES)?;
@@ -99,7 +111,6 @@ pub(crate) fn inspect(trusted: &TrustedWorkDir) -> Result<InspectedRuntimeIntegr
     let generation =
         validate_runtime_contract(&current, &manifest_hash, &manifest, &payload_hashes)?;
     let executable_node = executable_node.ok_or("compiled runtime payload lacks frametime.exe")?;
-    ensure_current_process_is_selected(nodes[executable_node].handle)?;
     let config_node = config_node.ok_or("compiled runtime payload lacks frametime.toml")?;
     let config_bytes = read_bounded(nodes[config_node].handle, MAX_RUNTIME_METADATA_BYTES)?;
     let config_size = u64::try_from(config_bytes.len())
@@ -108,17 +119,20 @@ pub(crate) fn inspect(trusted: &TrustedWorkDir) -> Result<InspectedRuntimeIntegr
         .files
         .get("frametime.toml")
         .ok_or("selected runtime manifest omits frametime.toml")?;
-    // The byte binder follows exact-tree, manifest, payload-hash, and
-    // current-process identity validation while the node remains retained.
+    // The byte binder follows exact-tree, manifest, and payload-hash
+    // validation while the node remains retained.
     let config = VerifiedConfig::from_verified_bytes(config_bytes, config_size, config_sha256)?;
 
-    Ok(InspectedRuntimeIntegrity {
-        generation,
-        manifest_sha256: manifest_hash,
-        manifest,
-        config,
-        _nodes: nodes,
-    })
+    Ok((
+        InspectedRuntimeIntegrity {
+            generation,
+            manifest_sha256: manifest_hash,
+            manifest,
+            config,
+            _nodes: nodes,
+        },
+        executable_node,
+    ))
 }
 
 pub(crate) fn open_walked_node(
@@ -183,7 +197,7 @@ pub(crate) fn enumerate_generation_tree(
     relative: &str,
     nodes: &mut Vec<RetainedRuntimeNode>,
 ) -> Result<BTreeSet<String>, String> {
-    let allowed_directories = compiled_directories();
+    let allowed_directories = runtime_payload_directories();
     let mut actual_files = BTreeSet::new();
     let mut file_identities = HashSet::new();
     enumerate_generation_directory(
@@ -202,7 +216,7 @@ pub(crate) fn enumerate_generation_directory(
     parent: HANDLE,
     selected: &str,
     relative: &str,
-    allowed_directories: &BTreeSet<String>,
+    allowed_directories: &BTreeSet<&'static str>,
     actual_files: &mut BTreeSet<String>,
     file_identities: &mut HashSet<(u32, u32, u32)>,
     nodes: &mut Vec<RetainedRuntimeNode>,
@@ -221,7 +235,7 @@ pub(crate) fn enumerate_generation_directory(
         crate::trusted_work_dir::validate_descendant_handle(handle, &full_relative, directory)?;
         nodes.push(RetainedRuntimeNode { handle });
         if directory {
-            if !allowed_directories.contains(&child_relative) {
+            if !allowed_directories.contains(child_relative.as_str()) {
                 return Err("selected runtime generation contains an extra directory".into());
             }
             enumerate_generation_directory(
@@ -251,18 +265,6 @@ pub(crate) fn enumerate_generation_directory(
         }
     }
     Ok(())
-}
-
-pub(crate) fn compiled_directories() -> BTreeSet<String> {
-    let mut directories = BTreeSet::new();
-    for payload in RUNTIME_PAYLOAD_PATHS {
-        let mut current = payload;
-        while let Some((parent, _)) = current.rsplit_once('/') {
-            directories.insert(parent.to_owned());
-            current = parent;
-        }
-    }
-    directories
 }
 
 pub(crate) fn directory_entries(

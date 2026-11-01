@@ -33,12 +33,10 @@ pub(crate) enum Command {
         #[arg(value_enum, default_value = "2")]
         branch: Branch,
     },
-    /// Persist the selected profile and GUI preview preference.
+    /// Persist the selected profile.
     Configure {
         #[arg(value_enum)]
         profile: ProfileValue,
-        #[arg(long, action = ArgAction::Set, default_value_t = false)]
-        dry_run: bool,
     },
     /// Back up, deploy, and verify one or more embedded optional CS2 CFGs.
     Cs2Cfg {

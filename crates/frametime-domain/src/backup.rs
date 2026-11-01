@@ -17,7 +17,7 @@ pub use network_stack::{
     NETWORK_STACK_TRANSACTION_STEP, NetworkStackBackupError, NetworkStackNlaBackup,
     NetworkStackPolicy, NetworkStackPolicyBackup, NetworkStackPolicySnapshot,
     NetworkStackRawRegistryValue, NetworkStackSetting, NetworkStackSettingBackup,
-    NetworkStackTransaction, NetworkStackValue,
+    NetworkStackTransaction, NetworkStackValue, is_decimal_text,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -392,6 +392,7 @@ fn dedupe_identity(entry: &BackupEntry) -> Option<String> {
             name.to_ascii_lowercase()
         )),
         BackupEntry::Hags { .. } => Some(format!("{step}:hags")),
+        BackupEntry::Drs { profile, .. } => Some(format!("{step}:drs:{profile}")),
         BackupEntry::Service { name, .. } => {
             Some(format!("{step}:service:{}", name.to_ascii_lowercase()))
         }
@@ -457,7 +458,36 @@ fn dedupe_identity(entry: &BackupEntry) -> Option<String> {
         BackupEntry::QosUro { .. }
         | BackupEntry::Defender { .. }
         | BackupEntry::Pagefile { .. }
-        | BackupEntry::Drs { .. }
         | BackupEntry::Unknown(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod drs_dedupe_tests {
+    use super::*;
+
+    fn drs(step: &str) -> BackupEntry {
+        BackupEntry::Drs {
+            step: step.into(),
+            timestamp: String::new(),
+            profile: "Counter-Strike 2".into(),
+            profile_created: true,
+            settings: Vec::new(),
+            application_bindings: Vec::new(),
+            unknown: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn the_p3_1_drs_original_is_recorded_once() {
+        let mut file = BackupFile {
+            entries: Vec::new(),
+            created: String::new(),
+            unknown: BTreeMap::new(),
+        };
+        file.push_first_value(drs("P3:1"));
+        file.push_first_value(drs("P3:1"));
+        file.push_first_value(drs("P3:4"));
+        assert_eq!(file.entries, vec![drs("P3:1"), drs("P3:4")]);
     }
 }

@@ -39,6 +39,8 @@ impl NetworkStackSetting {
         Self::UroEnabled,
         Self::QosNlaBypass,
     ];
+    /// What current builds capture and change in P1:16: RSS only, no QoS policies.
+    pub const AUTOMATIC_INVENTORY: [Self; 1] = [Self::RssEnabled];
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,9 +258,11 @@ impl NetworkStackTransaction {
         if has_duplicate_identities(&policies) {
             return Err(NetworkStackBackupError::DuplicateIdentity);
         }
-        let settings_are_complete = settings == NetworkStackSetting::P1_16_INVENTORY;
-        let policies_are_complete = policies == NetworkStackPolicy::P1_16_INVENTORY;
-        if !settings_are_complete || !policies_are_complete {
+        // Older backups hold the full inventory and must still restore.
+        let legacy = settings == NetworkStackSetting::P1_16_INVENTORY
+            && policies == NetworkStackPolicy::P1_16_INVENTORY;
+        let automatic = settings == NetworkStackSetting::AUTOMATIC_INVENTORY && policies.is_empty();
+        if !legacy && !automatic {
             return Err(NetworkStackBackupError::IncompleteInventory);
         }
         Ok(())
@@ -339,7 +343,16 @@ fn setting_value_type_matches(item: &NetworkStackSettingBackup) -> bool {
     };
     let expects_string = matches!(item.setting, NetworkStackSetting::InterruptModeration);
     let is_string = matches!(value, NetworkStackValue::String(_));
-    expects_string == is_string
+    // NDIS keywords are often REG_SZ decimal text; only that text may stand in for a DWORD.
+    let is_decimal_text = matches!(value, NetworkStackValue::String(text) if is_decimal_text(text));
+    expects_string == is_string || (!expects_string && is_decimal_text)
+}
+
+/// REG_SZ driver keywords hold decimal text such as `"1"`; the text must fit a DWORD.
+pub fn is_decimal_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.bytes().all(|byte| byte.is_ascii_digit())
+        && text.parse::<u32>().is_ok()
 }
 
 fn nla_existence_facts_are_coherent(
@@ -437,7 +450,7 @@ mod tests {
     fn transaction_requires_exact_identity_types_and_unknown_free_state() {
         let mut value = transaction();
         value.validate().expect("valid transaction");
-        value.settings[0].original_value = Some(NetworkStackValue::String("1".into()));
+        value.settings[0].original_value = Some(NetworkStackValue::String("on".into()));
         assert_eq!(
             value.validate(),
             Err(NetworkStackBackupError::ValueTypeMismatch)
@@ -448,6 +461,13 @@ mod tests {
             value.validate(),
             Err(NetworkStackBackupError::DuplicateIdentity)
         );
+    }
+
+    #[test]
+    fn decimal_text_may_stand_in_for_a_dword() {
+        let mut value = transaction();
+        value.settings[0].original_value = Some(NetworkStackValue::String("1".into()));
+        value.validate().expect("REG_SZ decimal text");
     }
 
     #[test]
@@ -492,6 +512,21 @@ mod tests {
         );
         let mut value = transaction();
         value.policies.pop();
+        assert_eq!(
+            value.validate(),
+            Err(NetworkStackBackupError::IncompleteInventory)
+        );
+    }
+
+    #[test]
+    fn rss_only_transaction_without_policies_is_complete() {
+        let mut value = transaction();
+        value
+            .settings
+            .retain(|item| item.setting == NetworkStackSetting::RssEnabled);
+        let policies = std::mem::take(&mut value.policies);
+        value.validate().expect("automatic RSS-only inventory");
+        value.policies = policies;
         assert_eq!(
             value.validate(),
             Err(NetworkStackBackupError::IncompleteInventory)

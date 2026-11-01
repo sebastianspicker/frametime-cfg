@@ -41,15 +41,13 @@ pub(crate) fn read_history_for_baseline(
     Ok(history)
 }
 
-pub(crate) fn baseline_benchmark_is_persisted(work_dir: &Path, trusted: &TrustedWorkDir) -> bool {
-    let Ok(state) = read_state_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    let Ok(progress) = read_progress_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    let Ok(history) = read_history_for_baseline(trusted, work_dir) else {
-        return false;
-    };
-    validate_persisted_baseline_benchmark(&state, &progress, &history).is_ok()
+/// `Err` means the saved files could not be read; `Ok(false)` means no coherent baseline.
+pub(crate) fn baseline_benchmark_is_persisted(
+    work_dir: &Path,
+    trusted: &TrustedWorkDir,
+) -> Result<bool, String> {
+    let state = read_state_for_baseline(trusted, work_dir)?;
+    let progress = read_progress_for_baseline(trusted, work_dir)?;
+    let history = read_history_for_baseline(trusted, work_dir)?;
+    Ok(validate_persisted_baseline_benchmark(&state, &progress, &history).is_ok())
 }

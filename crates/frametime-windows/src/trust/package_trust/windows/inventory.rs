@@ -1,4 +1,5 @@
 use super::*;
+use crate::system::wide_path;
 
 pub(crate) fn ancestors(path: &str) -> impl Iterator<Item = &str> {
     let mut at = Vec::new();
@@ -147,6 +148,21 @@ pub(crate) fn final_path(handle: HANDLE) -> Result<PathBuf, String> {
         units.resize(needed + 1, 0);
     }
 }
+/// Drops a `\\?\` prefix before a drive letter for display and shell launch;
+/// `ShellExecuteExW` does not accept extended-length paths. UNC and volume
+/// GUID forms are kept unchanged.
+pub(crate) fn dos_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest)
+            if rest.as_bytes().get(1) == Some(&b':')
+                && rest.as_bytes()[0].is_ascii_alphabetic() =>
+        {
+            PathBuf::from(rest)
+        }
+        _ => path.to_path_buf(),
+    }
+}
 pub(crate) fn file_id(handle: HANDLE) -> Result<FILE_ID_INFO, String> {
     let mut id = FILE_ID_INFO::default();
     unsafe {
@@ -218,8 +234,8 @@ pub(crate) fn hash(file: &RetainedFile) -> Result<String, String> {
     ))
 }
 
-pub(crate) fn is_fixed_local_drive(root: &Path) -> Result<bool, String> {
-    let path = wide(root);
+pub(crate) fn require_fixed_local_drive(root: &Path) -> Result<(), String> {
+    let path = wide_path(root);
     let mut volume = [0_u16; 32768];
     unsafe {
         windows::Win32::Storage::FileSystem::GetVolumePathNameW(PCWSTR(path.as_ptr()), &mut volume)
@@ -227,11 +243,9 @@ pub(crate) fn is_fixed_local_drive(root: &Path) -> Result<bool, String> {
     .map_err(|error| format!("resolve package volume root: {error}"))?;
     let kind =
         unsafe { windows::Win32::Storage::FileSystem::GetDriveTypeW(PCWSTR(volume.as_ptr())) };
-    Ok(kind == windows::Win32::System::WindowsProgramming::DRIVE_FIXED)
-}
-pub(crate) fn wide(value: &Path) -> Vec<u16> {
-    value.as_os_str().encode_wide().chain(Some(0)).collect()
-}
-pub(crate) fn wide_text(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
+    if kind == windows::Win32::System::WindowsProgramming::DRIVE_FIXED {
+        Ok(())
+    } else {
+        Err(rejection::not_fixed_drive())
+    }
 }

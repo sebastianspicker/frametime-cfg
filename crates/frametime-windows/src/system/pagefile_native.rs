@@ -3,6 +3,7 @@ use crate::*;
 mod native_pagefile_store {
     use super::{
         CreatedPagefileToken, PagefileInventory, PagefileSetting, PagefileStore,
+        pagefile_token_matches,
         wmi::{
             boolean, object, on_mta, put_bool, put_string, put_uint32, query, require_class,
             services, string, uint32, uint64,
@@ -88,7 +89,10 @@ mod native_pagefile_store {
                     "SeCreatePagefilePrivilege is not assigned to the elevated token".into(),
                 );
             }
-            if returned != privileges_size {
+            // An already-enabled privilege returns a header-only state (0 entries): nothing to restore.
+            if usize::try_from(returned).map_or(true, |used| {
+                used < size_of::<u32>() || used > size_of::<TOKEN_PRIVILEGES>()
+            }) {
                 close_token(token);
                 return Err(
                     "SeCreatePagefilePrivilege did not return a complete prior token state".into(),
@@ -117,15 +121,19 @@ mod native_pagefile_store {
     pub(crate) fn exact_pagefile(
         services: &IWbemServices,
         setting: &PagefileSetting,
+        check_sizes: bool,
     ) -> Result<windows::Win32::System::Wmi::IWbemClassObject, String> {
         let item = object(services, &setting.object_path)?;
-        let is_exact = string(&item, "__CLASS")? == PAGEFILE_CLASS
-            && string(&item, "__PATH")? == setting.object_path
-            && string(&item, "__RELPATH")? == setting.relative_path
-            && string(&item, "Name")? == setting.path
-            && uint32(&item, "InitialSize")? == setting.initial_size
-            && uint32(&item, "MaximumSize")? == setting.maximum_size;
-        if !is_exact {
+        let live = PagefileSetting {
+            path: string(&item, "Name")?,
+            initial_size: uint32(&item, "InitialSize")?,
+            maximum_size: uint32(&item, "MaximumSize")?,
+            object_path: string(&item, "__PATH")?,
+            relative_path: string(&item, "__RELPATH")?,
+        };
+        if string(&item, "__CLASS")? != PAGEFILE_CLASS
+            || !pagefile_token_matches(&live, setting, check_sizes)
+        {
             return Err(
                 "exact pagefile token no longer resolves to its captured class, identity, or values"
                     .into(),
@@ -259,7 +267,7 @@ mod native_pagefile_store {
             initial: u32,
             maximum: u32,
         ) -> Result<(), String> {
-            let item = exact_pagefile(&self.services, setting)?;
+            let item = exact_pagefile(&self.services, setting, false)?;
             put_uint32(&item, "InitialSize", initial)?;
             put_uint32(&item, "MaximumSize", maximum)?;
             unsafe {
@@ -293,15 +301,21 @@ mod native_pagefile_store {
                 )
             }
             .map_err(|error| format!("CREATE_ONLY pagefile: {error}"))?;
-            let created = self
-                .inventory()?
-                .settings
-                .into_iter()
-                .filter(|item| item.path.eq_ignore_ascii_case(path))
-                .collect::<Vec<_>>();
-            if created.len() != 1 {
-                return Err("CREATE_ONLY pagefile did not produce one exact instance".into());
-            }
+            // Retry once: the setting exists now, so a failed read must not orphan it silently.
+            let created = (0..2)
+                .find_map(|_| {
+                    let settings = self.inventory().ok()?.settings;
+                    let found = settings
+                        .into_iter()
+                        .filter(|item| item.path.eq_ignore_ascii_case(path))
+                        .collect::<Vec<_>>();
+                    (found.len() == 1).then_some(found)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "CREATE_ONLY pagefile {path} could not be confirmed; the setting may remain and must be removed manually"
+                    )
+                })?;
             let created = &created[0];
             Ok(CreatedPagefileToken {
                 object_path: created.object_path.clone(),
@@ -319,7 +333,7 @@ mod native_pagefile_store {
                 object_path: created.object_path.clone(),
                 relative_path: created.relative_path.clone(),
             };
-            let _ = exact_pagefile(&self.services, &setting)?;
+            let _ = exact_pagefile(&self.services, &setting, true)?;
             unsafe {
                 self.services.DeleteInstance(
                     &BSTR::from(&created.object_path),

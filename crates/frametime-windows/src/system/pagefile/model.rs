@@ -11,6 +11,21 @@ pub(crate) struct PagefileSetting {
     pub(crate) relative_path: String,
 }
 
+/// Identity always has to match; sizes only when a caller may rely on them (delete), not on update.
+#[cfg(any(test, windows))]
+pub(crate) fn pagefile_token_matches(
+    live: &PagefileSetting,
+    expected: &PagefileSetting,
+    check_sizes: bool,
+) -> bool {
+    live.object_path == expected.object_path
+        && live.relative_path == expected.relative_path
+        && live.path == expected.path
+        && (!check_sizes
+            || (live.initial_size == expected.initial_size
+                && live.maximum_size == expected.maximum_size))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PagefileInventory {
     pub(crate) automatic_managed: bool,

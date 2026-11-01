@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -32,10 +32,26 @@ pub enum DrsValue {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The optional fields were added after the first snapshots; they default so
+/// executable-only snapshots still load.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DrsApplicationSnapshot {
     pub executable: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub friendly_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub launcher: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file_in_folder: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command_line: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub flags: u32,
+}
+
+const fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +104,16 @@ impl DrsSnapshot {
             let mut applications = BTreeSet::new();
             for application in &profile.applications {
                 validate_drs_text(&application.executable, "application")?;
+                for text in [
+                    &application.friendly_name,
+                    &application.launcher,
+                    &application.file_in_folder,
+                    &application.command_line,
+                ] {
+                    if !text.is_empty() {
+                        validate_drs_text(text, "applicationField")?;
+                    }
+                }
                 if !applications.insert(&application.executable) {
                     return Err(DriverLifecycleError::InvalidDrsSnapshot("applications"));
                 }
@@ -132,135 +158,6 @@ impl DrsSnapshot {
         snapshot.validate()?;
         Ok(snapshot)
     }
-
-    #[must_use]
-    pub fn reconcile(&self, incoming: &Self) -> DrsReconciliation {
-        let current = self.item_values();
-        let proposed = incoming.item_values();
-        let mut items = Vec::new();
-        for key in current
-            .keys()
-            .chain(proposed.keys())
-            .collect::<BTreeSet<_>>()
-        {
-            let status = match (current.get(key), proposed.get(key)) {
-                (Some(left), Some(right)) if left == right => DrsReconciliationStatus::Equivalent,
-                (Some(_), Some(_)) => DrsReconciliationStatus::Incompatible,
-                (None, Some(_)) => DrsReconciliationStatus::IncomingOnly,
-                (Some(_), None) => DrsReconciliationStatus::CurrentOnly,
-                (None, None) => unreachable!("key came from a source map"),
-            };
-            items.push(DrsReconciliationItem {
-                key: (*key).clone(),
-                status,
-            });
-        }
-        DrsReconciliation { items }
-    }
-
-    /// Merges incoming data only when every conflict has an explicit key-based
-    /// acceptance. Accepted conflicts take the incoming value.
-    pub fn merge_accepting(
-        &self,
-        incoming: &Self,
-        accepted_incompatible: &BTreeSet<DrsItemKey>,
-    ) -> Result<DrsMergeResult, DriverLifecycleError> {
-        self.validate()?;
-        incoming.validate()?;
-        let reconciliation = self.reconcile(incoming);
-        let missing = reconciliation
-            .items
-            .iter()
-            .filter(|item| item.status == DrsReconciliationStatus::Incompatible)
-            .filter(|item| !accepted_incompatible.contains(&item.key))
-            .map(|item| item.key.clone())
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            return Err(DriverLifecycleError::IncompatibleDrsItems(missing));
-        }
-        let mut merged = self.item_values();
-        for (key, value) in incoming.item_values() {
-            merged.insert(key, value);
-        }
-        let merged = Self::from_item_values(merged)?;
-        Ok(DrsMergeResult {
-            reconciliation,
-            merged,
-        })
-    }
-
-    fn item_values(&self) -> BTreeMap<DrsItemKey, DrsItemValue> {
-        let mut values = BTreeMap::new();
-        for profile in &self.profiles {
-            for application in &profile.applications {
-                values.insert(
-                    DrsItemKey {
-                        profile: profile.name.clone(),
-                        kind: DrsItemKind::Application,
-                        key: application.executable.clone(),
-                    },
-                    DrsItemValue::Application,
-                );
-            }
-            for setting in &profile.settings {
-                values.insert(
-                    DrsItemKey {
-                        profile: profile.name.clone(),
-                        kind: DrsItemKind::Setting,
-                        key: setting.setting_id.to_string(),
-                    },
-                    DrsItemValue::Setting(setting.value.clone()),
-                );
-            }
-        }
-        values
-    }
-
-    fn from_item_values(
-        items: BTreeMap<DrsItemKey, DrsItemValue>,
-    ) -> Result<Self, DriverLifecycleError> {
-        let mut profiles = BTreeMap::<String, DrsProfileSnapshot>::new();
-        for (key, value) in items {
-            let profile =
-                profiles
-                    .entry(key.profile.clone())
-                    .or_insert_with(|| DrsProfileSnapshot {
-                        name: key.profile,
-                        applications: Vec::new(),
-                        settings: Vec::new(),
-                    });
-            match (key.kind, value) {
-                (DrsItemKind::Application, DrsItemValue::Application) => {
-                    profile.applications.push(DrsApplicationSnapshot {
-                        executable: key.key,
-                    });
-                }
-                (DrsItemKind::Setting, DrsItemValue::Setting(value)) => {
-                    let setting_id = key
-                        .key
-                        .parse()
-                        .map_err(|_| DriverLifecycleError::InvalidDrsSnapshot("settingId"))?;
-                    profile
-                        .settings
-                        .push(DrsSettingSnapshot { setting_id, value });
-                }
-                _ => return Err(DriverLifecycleError::InvalidDrsSnapshot("itemKind")),
-            }
-        }
-        let mut profiles = profiles.into_values().collect::<Vec<_>>();
-        for profile in &mut profiles {
-            profile
-                .applications
-                .sort_by(|left, right| left.executable.cmp(&right.executable));
-            profile.settings.sort_by_key(|setting| setting.setting_id);
-        }
-        let snapshot = Self {
-            schema_version: NVIDIA_DRS_SNAPSHOT_SCHEMA_VERSION,
-            profiles,
-        };
-        snapshot.validate()?;
-        Ok(snapshot)
-    }
 }
 
 fn validate_drs_text(value: &str, field: &'static str) -> Result<(), DriverLifecycleError> {
@@ -272,39 +169,4 @@ fn validate_drs_text(value: &str, field: &'static str) -> Result<(), DriverLifec
     } else {
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum DrsItemValue {
-    Application,
-    Setting(DrsValue),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum DrsReconciliationStatus {
-    Equivalent,
-    IncomingOnly,
-    CurrentOnly,
-    Incompatible,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DrsReconciliationItem {
-    pub key: DrsItemKey,
-    pub status: DrsReconciliationStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DrsReconciliation {
-    pub items: Vec<DrsReconciliationItem>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DrsMergeResult {
-    pub reconciliation: DrsReconciliation,
-    pub merged: DrsSnapshot,
 }

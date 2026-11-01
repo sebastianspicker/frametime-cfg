@@ -41,7 +41,7 @@ mod pagefile_tests {
                 .inventory
                 .settings
                 .iter_mut()
-                .find(|candidate| candidate.object_path == setting.object_path)
+                .find(|candidate| pagefile_token_matches(candidate, setting, false))
                 .ok_or("missing")?;
             item.initial_size = initial;
             item.maximum_size = maximum;
@@ -161,6 +161,30 @@ mod pagefile_tests {
         restore_pagefile_transaction(&mut store, &entry).expect("restore");
         assert_eq!(store.inventory.settings.len(), 1);
         assert_eq!(store.inventory.settings[0].path, "D:\\foreign.sys");
+    }
+    #[test]
+    pub(crate) fn restore_after_size_change_restores_original_sizes_and_automatic_flag() {
+        let mut before = inventory();
+        before.automatic_managed = false;
+        before.settings.push(PagefileSetting {
+            path: "C:\\pagefile.sys".into(),
+            initial_size: 8192,
+            maximum_size: 8192,
+            object_path: "target-object".into(),
+            relative_path: "target-relative".into(),
+        });
+        let binding =
+            capture_pagefile_binding("P1:8".into(), &explicit_pagefile_state(), before.clone())
+                .expect("binding");
+        let mut store = MockStore {
+            inventory: before.clone(),
+            fail: None,
+        };
+        begin_pagefile_mutation(&mut store, &binding).expect("mutate");
+        assert_eq!(store.inventory.settings[1].initial_size, 4096);
+        restore_pagefile_transaction(&mut store, &pagefile_backup_entry(&binding))
+            .expect("restore");
+        assert_eq!(store.inventory, before);
     }
     #[test]
     pub(crate) fn incomplete_create_journal_fails_closed() {

@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn audit_round_trip_retains_unknown_document_and_record_fields() {
+fn audit_round_trip_retains_unknown_document_fields_and_records() {
     let raw = serde_json::json!({
         "created": "now",
         "futureDocument": {"retained": true},
@@ -10,23 +10,20 @@ fn audit_round_trip_retains_unknown_document_and_record_fields() {
             "step": "P1:3",
             "capturedAt": "then",
             "targets": ["cs2_shader_cache"],
-            "state": "pending",
-            "futureRecord": [1, 2]
+            "state": "pending"
         }, {
             "type": "manual_recovery_mutation",
             "step": "P1:13",
             "capturedAt": "then",
             "target": "appx_removals",
             "state": "failed",
-            "failedAt": "later",
-            "futureManual": true
+            "failedAt": "later"
         }, {
             "type": "mixed_recovery_mutation",
             "step": "P3:1",
             "capturedAt": "then",
             "target": "driver_installation",
-            "state": "pending",
-            "futureMixed": {"retained": true}
+            "state": "pending"
         }, {"type": "future", "payload": true}]
     });
     let file: AuditFile = serde_json::from_value(raw.clone()).expect("audit");
@@ -35,17 +32,53 @@ fn audit_round_trip_retains_unknown_document_and_record_fields() {
         panic!("expected rebuildable audit");
     };
     assert!(record.is_pending());
-    assert_eq!(record.unknown["futureRecord"], serde_json::json!([1, 2]));
-    let AuditEntry::Manual(record) = &file.entries[1] else {
-        panic!("expected manual audit");
-    };
-    assert_eq!(record.unknown["futureManual"], true);
-    let AuditEntry::Mixed(record) = &file.entries[2] else {
-        panic!("expected mixed audit");
-    };
-    assert_eq!(record.unknown["futureMixed"]["retained"], true);
+    assert!(matches!(file.entries[1], AuditEntry::Manual(_)));
+    assert!(matches!(file.entries[2], AuditEntry::Mixed(_)));
     assert!(matches!(file.entries[3], AuditEntry::Unknown(_)));
     assert_eq!(serde_json::to_value(file).expect("encoded"), raw);
+}
+
+#[test]
+fn every_record_outcome_reads_back_equal_with_one_state_key() {
+    let rebuildable = RebuildableAudit::pending("P1:3", "captured", P1_3_REBUILDABLE_TARGETS)
+        .expect("pending audit");
+    let mut entries = vec![
+        AuditEntry::Rebuildable(rebuildable.finalized("verified")),
+        AuditEntry::Rebuildable(rebuildable),
+    ];
+    for audit in [
+        IrreversibleAudit::Manual(ManualRecoveryAudit::pending(
+            "P2:2",
+            "captured",
+            P2_2_MANUAL_RECOVERY_TARGET,
+        )),
+        IrreversibleAudit::Mixed(MixedRecoveryAudit::pending(
+            "P3:1",
+            "captured",
+            P3_1_MANUAL_RECOVERY_TARGET,
+        )),
+    ] {
+        for audit in [audit.finalized("verified"), audit.failed("failed"), audit] {
+            entries.push(match audit {
+                IrreversibleAudit::Manual(audit) => AuditEntry::Manual(audit),
+                IrreversibleAudit::Mixed(audit) => AuditEntry::Mixed(audit),
+            });
+        }
+    }
+    for entry in entries {
+        let record = serde_json::to_string(&entry).expect("record");
+        assert_eq!(record.matches("\"state\"").count(), 1, "{record}");
+        let file = AuditFile {
+            entries: vec![entry],
+            created: "now".into(),
+            unknown: BTreeMap::new(),
+        };
+        let encoded = serde_json::to_vec(&file).expect("encoded");
+        assert_eq!(
+            serde_json::from_slice::<AuditFile>(&encoded).expect("decoded"),
+            file
+        );
+    }
 }
 
 #[test]

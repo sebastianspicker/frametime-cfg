@@ -40,16 +40,11 @@ pub(super) fn install_selected_cs2_cfg(window: HWND) {
         return;
     };
     let asset = selected_cs2_cfg_asset(asset_control);
-    start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |package| {
-        let written = frametime_app::deploy_optional_cs2_cfgs(package, &[asset])
-            .map_err(|error| error.to_string())?;
-        Ok(format!(
-            "Deployed and verified: {}. Original bytes remain in backup.json for native recovery.",
-            written.first().map_or_else(
-                || "no optional CFG".into(),
-                |path| path.display().to_string()
-            )
-        ))
+    start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |_| {
+        run_live_message(frametime_app::Command::Cs2Cfg {
+            assets: vec![asset],
+            yes: true,
+        })
     });
 }
 
@@ -114,7 +109,7 @@ pub(super) fn start_network_apply(window: HWND) {
     );
 }
 
-pub(super) fn configure_profile(window: HWND, profile: &str, dry_run: bool) {
+pub(super) fn configure_profile(window: HWND, profile: &str) {
     let Some(profile) = profile_from_name(profile) else {
         update_status(
             window,
@@ -123,15 +118,8 @@ pub(super) fn configure_profile(window: HWND, profile: &str, dry_run: bool) {
         );
         return;
     };
-    start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |package| {
-        frametime_app::configure_profile(package, profile, dry_run)
-            .map_err(|error| error.to_string())
-            .map(|state| {
-                format!(
-                    "Profile: {:?}; mode: {}; GUI preview preference: {dry_run}",
-                    state.profile, state.mode
-                )
-            })
+    start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |_| {
+        run_live_message(frametime_app::Command::Configure { profile })
     });
 }
 
@@ -155,8 +143,6 @@ pub(super) fn secondary_action(window: HWND, tertiary: bool) {
         SecondaryCommand::Diagnostic(action) => start_diagnostic(window, action),
         SecondaryCommand::PhaseOne => start_phase_one(window),
         SecondaryCommand::Verify => start_verification(window),
-        SecondaryCommand::ParseVprof => parse_vprof_in_place(window),
-        SecondaryCommand::PersistVprof => add_vprof_with_application(window),
         SecondaryCommand::RestoreAll => restore_all(window),
         SecondaryCommand::RestoreSelected => restore_selected(window),
         SecondaryCommand::Warning(detail) => update_status(window, StatusKind::Warning, detail),
@@ -168,8 +154,6 @@ enum SecondaryCommand {
     Diagnostic(DiagnosticAction),
     PhaseOne,
     Verify,
-    ParseVprof,
-    PersistVprof,
     RestoreAll,
     RestoreSelected,
     Warning(&'static str),
@@ -183,8 +167,9 @@ fn secondary_command(area: Area, tertiary: bool) -> SecondaryCommand {
         (Area::Assess, true) => SecondaryCommand::Diagnostic(DiagnosticAction::Gpu),
         (Area::SetupVerify, false) => SecondaryCommand::PhaseOne,
         (Area::SetupVerify, true) => SecondaryCommand::Verify,
-        (Area::Benchmark, false) => SecondaryCommand::ParseVprof,
-        (Area::Benchmark, true) => SecondaryCommand::PersistVprof,
+        (Area::Benchmark, _) => SecondaryCommand::Warning(
+            "FPS cap evaluation is driven by the Benchmark page controls.",
+        ),
         (Area::Recovery, false) => SecondaryCommand::RestoreAll,
         (Area::Recovery, true) => SecondaryCommand::RestoreSelected,
         (Area::Video, _) => SecondaryCommand::Warning(
@@ -202,7 +187,23 @@ fn secondary_command(area: Area, tertiary: bool) -> SecondaryCommand {
     }
 }
 
+fn run_live_message(command: frametime_app::Command) -> Result<String, String> {
+    frametime_app::run_live(command)
+        .map_err(|error| error.to_string())
+        .map(|outcome| match outcome {
+            frametime_app::CommandOutcome::Run(summary) => summary.messages.join(" "),
+            _ => "Completed through the shared application service.".into(),
+        })
+}
+
 fn start_phase_one(window: HWND) {
+    if !confirm(
+        window,
+        "Phase 1 changes system settings and, on NVIDIA systems, prepares a restart into Safe Mode. Continue?",
+        "Run Phase 1",
+    ) {
+        return;
+    }
     start_native_recovery(window, model::NativeAccess::ElevatedWrite, |_| {
         frametime_app::run_live(frametime_app::Command::Optimize { yes: true })
             .map_err(|error| error.to_string())
@@ -437,74 +438,6 @@ pub(super) fn choose_backup_destination(window: HWND) -> Option<PathBuf> {
         return Some(PathBuf::from(String::from_utf16_lossy(&buffer[..length])));
     }
     None
-}
-
-pub(super) fn parse_vprof_in_place(window: HWND) {
-    let Some((input, target)) = with_state(window, |app| {
-        (
-            app.vprof_input,
-            control_text(app.min_input)
-                .trim()
-                .parse::<u32>()
-                .unwrap_or(0),
-        )
-    }) else {
-        return;
-    };
-    let Some(raw) = vprof_control_text(window, input) else {
-        return;
-    };
-    match frametime_domain::fps::parse_vprof_output_detailed(&raw) {
-        Ok(capture) => {
-            let _ = with_state(window, |app| {
-                app.benchmark_preview = model::capture_rows(&capture, target)
-            });
-            render_catalog(window, Area::Benchmark);
-            update_status(
-                window,
-                StatusKind::Complete,
-                "VProf parsed. Individual unrounded results, P1 range, and supporting run count are shown in the table.",
-            );
-        }
-        Err(error) => update_status(window, StatusKind::Warning, &error.to_string()),
-    }
-}
-
-pub(super) fn add_vprof_with_application(window: HWND) {
-    if !require_authenticated_package(window) {
-        return;
-    }
-    let Some(input) = with_state(window, |app| app.vprof_input) else {
-        return;
-    };
-    let Some(raw) = vprof_control_text(window, input) else {
-        return;
-    };
-    let capture = match frametime_domain::fps::parse_vprof_output_detailed(&raw) {
-        Ok(capture) => capture,
-        Err(error) => {
-            update_status(window, StatusKind::Warning, &error.to_string());
-            return;
-        }
-    };
-    let _ = with_state(window, |app| {
-        app.benchmark_preview = model::capture_rows(&capture, 0)
-    });
-    render_catalog(window, Area::Benchmark);
-    start_native_recovery(window, model::NativeAccess::Write, move |_| {
-        frametime_app::evaluate_fps_cap(frametime_app::ValidatedFpsRequest {
-            capture,
-            strategy: frametime_app::FpsStrategyValue::Raw,
-            measured_cap: 0,
-            refresh_hz: 0,
-            ceiling_margin_hz: 3,
-            label: "VProf capture".into(),
-            copy: false,
-            no_persist: false,
-        })
-        .map_err(|error| error.to_string())
-        .map(|_| "VProf capture persisted through the shared application service.".into())
-    });
 }
 
 pub(super) fn confirm(window: HWND, prompt: &str, caption: &str) -> bool {

@@ -18,6 +18,7 @@ pub(crate) fn persist_observation_receipt(
     trusted: &TrustedWorkDir,
     receipt: &frametime_domain::evidence::ObservationReceipt,
 ) -> Result<(), String> {
+    let _lock = WorkLock::acquire(trusted.path())?;
     receipt
         .validate_for(&receipt.step)
         .map_err(|error| format!("validate prerequisite evidence: {error}"))?;

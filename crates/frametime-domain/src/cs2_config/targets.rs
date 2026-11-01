@@ -32,9 +32,6 @@ impl Cs2ConfigTarget {
     #[must_use]
     pub fn for_request(request: &Cs2ConfigRequest) -> Vec<Self> {
         let mut targets = vec![Self::Optimization];
-        if request.bootstraps_autoexec() {
-            targets.push(Self::Autoexec);
-        }
         targets.extend(Self::for_optional_assets(request.optional_assets()));
         targets
     }

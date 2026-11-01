@@ -24,7 +24,7 @@ mod windows;
 // EEE, flow control, URO, interrupt moderation, buffer sizes, and checksum
 // offloads retain the adapter or Windows default unless an explicit measured
 // experiment authorizes a device-specific change.
-pub(crate) const SETTINGS: [NetworkStackSetting; 1] = [NetworkStackSetting::RssEnabled];
+pub(crate) const SETTINGS: [NetworkStackSetting; 1] = NetworkStackSetting::AUTOMATIC_INVENTORY;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DesiredSetting {
@@ -38,9 +38,13 @@ pub(crate) enum NetworkStackValueKind {
 }
 
 impl NetworkStackValueKind {
-    pub(crate) fn into_value(self) -> NetworkStackValue {
-        match self {
-            Self::Dword(value) => NetworkStackValue::Dword(value),
+    /// The target in the registry type the driver already stores (DWORD or REG_SZ text).
+    pub(crate) fn like(self, current: &NetworkStackValue) -> NetworkStackValue {
+        match (self, current) {
+            (Self::Dword(value), NetworkStackValue::String(_)) => {
+                NetworkStackValue::String(value.to_string())
+            }
+            (Self::Dword(value), _) => NetworkStackValue::Dword(value),
         }
     }
 }
@@ -125,8 +129,16 @@ pub(crate) fn desired(setting: NetworkStackSetting) -> DesiredSetting {
     DesiredSetting::Value(value)
 }
 
+/// REG_SZ driver keywords hold decimal text such as `"1"`; it must fit a DWORD.
+pub(crate) use frametime_domain::backup::is_decimal_text;
+
 pub(crate) fn accepted_type(setting: NetworkStackSetting, value: &NetworkStackValue) -> bool {
-    setting == NetworkStackSetting::RssEnabled && matches!(value, NetworkStackValue::Dword(_))
+    setting == NetworkStackSetting::RssEnabled
+        && match value {
+            NetworkStackValue::Dword(_) => true,
+            NetworkStackValue::String(text) => is_decimal_text(text),
+            _ => false,
+        }
 }
 
 pub(crate) fn capture_network_stack<H: NetworkStackHost>(
@@ -223,13 +235,13 @@ pub(crate) fn apply_network_stack<H: NetworkStackHost>(
             continue;
         };
         let adapter = reobserve(host, captured)?;
-        match host.read_setting(&adapter, setting)? {
+        let target = match host.read_setting(&adapter, setting)? {
             None => continue,
-            Some(current) if current == value.into_value() => continue,
-            Some(_) => {}
-        }
-        host.write_setting(&adapter, setting, &value.into_value())?;
-        if host.read_setting(&reobserve(host, captured)?, setting)? != Some(value.into_value()) {
+            Some(current) if current == value.like(&current) => continue,
+            Some(current) => value.like(&current),
+        };
+        host.write_setting(&adapter, setting, &target)?;
+        if host.read_setting(&reobserve(host, captured)?, setting)? != Some(target) {
             return Err(format!(
                 "P1:16 {setting:?} readback did not equal the fixed target"
             ));
@@ -247,7 +259,7 @@ pub(crate) fn verify_network_stack<H: NetworkStackHost>(
             continue;
         };
         let actual = host.read_setting(&reobserve(host, captured)?, setting)?;
-        if actual.is_some() && actual != Some(expected.into_value()) {
+        if actual.is_some_and(|actual| actual != expected.like(&actual)) {
             return Err(format!(
                 "P1:16 {setting:?} readback did not equal the fixed target"
             ));
@@ -508,6 +520,19 @@ mod tests {
     }
 
     #[test]
+    pub(crate) fn capture_of_one_wired_adapter_produces_a_valid_transaction() {
+        let host = FakeHost::new(vec![adapter(1)], Some(NetworkStackValue::Dword(0)));
+        let (_, entry) =
+            capture_network_stack(&host, NETWORK_STACK_TRANSACTION_STEP.into()).expect("capture");
+        let BackupEntry::NetworkStackTransaction { transaction } = entry else {
+            panic!("P1:16 capture must record a network-stack transaction");
+        };
+        transaction
+            .validate()
+            .expect("captured transaction validates");
+    }
+
+    #[test]
     pub(crate) fn inspection_without_an_adapter_is_inapplicable() {
         let host = FakeHost::new(Vec::new(), Some(NetworkStackValue::Dword(0)));
         assert_eq!(inspect_network_stack(&host), Ok(Inspection::Inapplicable));
@@ -543,9 +568,20 @@ mod tests {
     pub(crate) fn inspection_rejects_an_unsupported_value_type() {
         let host = FakeHost::new(
             vec![adapter(1)],
-            Some(NetworkStackValue::String("1".into())),
+            Some(NetworkStackValue::String("on".into())),
         );
         assert!(inspect_network_stack(&host).is_err());
+    }
+
+    #[test]
+    pub(crate) fn rss_stored_as_reg_sz_is_applied_and_read_back_as_reg_sz() {
+        let captured = adapter(1);
+        let text = |value: &str| Some(NetworkStackValue::String(value.into()));
+        let host = FakeHost::new(vec![captured.clone()], text("0"));
+        assert_eq!(inspect_network_stack(&host), Ok(Inspection::NeedsApply));
+        apply_network_stack(&host, &captured).expect("apply");
+        assert_eq!(*host.rss.borrow(), text("1"));
+        verify_network_stack(&host, &captured).expect("verify");
     }
 
     #[test]

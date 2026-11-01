@@ -44,7 +44,6 @@ test-results-*.xml
 /backup.*.json
 /backup.corrupt.*.json
 /benchmark_history.json
-/latency_history.json
 *.log
 *.log.*
 *.etl

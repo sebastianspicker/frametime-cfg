@@ -368,7 +368,8 @@ pub use artifact::{
     VerifiedDriverArtifact,
 };
 pub(crate) use artifact::{
-    validate_bounded_nvidia_authorization, validate_nvidia_authorization_structure,
+    parse_utc_seconds, validate_bounded_nvidia_authorization,
+    validate_nvidia_authorization_structure,
 };
 
 mod download;

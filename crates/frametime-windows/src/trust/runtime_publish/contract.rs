@@ -4,32 +4,11 @@ use crate::*;
 pub(crate) const SAFE_MODE_HANDOFF_ARGUMENTS: &str = "boot-safe-mode --yes";
 
 #[cfg(windows)]
-pub(crate) fn valid_generated_id(value: &str) -> bool {
-    value.len() == 32
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-#[cfg(windows)]
-pub(crate) fn payload_directories() -> Vec<&'static str> {
-    let mut directories = BTreeSet::new();
-    for path in frametime_domain::runtime::RUNTIME_PAYLOAD_PATHS {
-        let mut candidate = path;
-        while let Some((parent, _)) = candidate.rsplit_once('/') {
-            directories.insert(parent);
-            candidate = parent;
-        }
-    }
-    directories.into_iter().collect()
-}
-
-#[cfg(windows)]
 pub(crate) fn manifest_for(
     generation: String,
     files: std::collections::BTreeMap<String, String>,
 ) -> Result<frametime_domain::runtime::RuntimeManifest, String> {
-    if !valid_generated_id(&generation) {
+    if !frametime_domain::runtime::valid_generation_id(&generation) {
         return Err("published runtime generation is not lower-hex".into());
     }
     let actual = files

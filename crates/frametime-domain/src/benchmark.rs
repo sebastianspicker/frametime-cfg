@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::{
     catalog::{
         OrchestrationRole, PHASE_THREE_DRIVER_INSTALL, PHASE_THREE_FINAL_BENCHMARK, Phase,
-        step_catalog,
+        steps_for_phase_and_role,
     },
     config::Config,
     fps::{BenchmarkCapture, BenchmarkRunEvidence, ValidatedBenchmarkCapture},
@@ -18,6 +18,19 @@ pub const MAX_BENCHMARK_HISTORY: usize = 200;
 pub const FINAL_BENCHMARK_SCHEMA_VERSION: u8 = 1;
 pub const FINAL_BENCHMARK_LABEL: &str = "After all optimizations";
 pub const BASELINE_BENCHMARK_LABEL: &str = "Baseline (before optimizations)";
+
+/// Trim a user-supplied `fps-cap` label; empty and reserved labels would later
+/// block or impersonate the baseline and final benchmarks.
+pub fn normalize_fps_capture_label(label: &str) -> Result<String, &'static str> {
+    let label = label.trim();
+    if label.is_empty() {
+        Err("the benchmark label must not be empty")
+    } else if label == BASELINE_BENCHMARK_LABEL || label == FINAL_BENCHMARK_LABEL {
+        Err("the benchmark label is reserved for the baseline and final benchmarks")
+    } else {
+        Ok(label.into())
+    }
+}
 
 pub fn validate_benchmark_run_evidence(history: &[BenchmarkRecord]) -> Result<(), String> {
     for record in history {
@@ -35,11 +48,8 @@ pub fn validate_benchmark_run_evidence(history: &[BenchmarkRecord]) -> Result<()
 }
 
 fn phase_three_engine_steps() -> impl Iterator<Item = &'static crate::catalog::Step> {
-    step_catalog().iter().filter(|step| {
-        step.id.phase == Phase::Three
-            && step.orchestration_role == OrchestrationRole::Engine
-            && step.id != PHASE_THREE_DRIVER_INSTALL
-    })
+    steps_for_phase_and_role(Phase::Three, OrchestrationRole::Engine)
+        .filter(|step| step.id != PHASE_THREE_DRIVER_INSTALL)
 }
 
 mod baseline;

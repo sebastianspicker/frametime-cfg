@@ -34,9 +34,7 @@ pub fn read_presentable_step_messages(
 
 /// Returns persisted recovery-record counts without running an external tool.
 pub fn read_backup_summary() -> Result<BackupSummary, String> {
-    let trusted = TrustedWorkDir::acquire_fixed()?;
-    let backup: BackupFile = read_json_trusted(&trusted, BACKUP_FILE)
-        .map_err(|error| format!("read backup: {error}"))?;
+    let backup = load_backup()?;
     let mut counts = BTreeMap::<&str, usize>::new();
     for entry in &backup.entries {
         *counts.entry(backup_entry_kind(entry)).or_default() += 1;

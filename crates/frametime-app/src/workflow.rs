@@ -248,11 +248,7 @@ fn phase_three_receipt_route(
 }
 
 fn phase_three_engine_steps() -> Vec<frametime_domain::catalog::Step> {
-    step_catalog()
-        .iter()
-        .filter(|step| {
-            step.id.phase == Phase::Three && step.orchestration_role == OrchestrationRole::Engine
-        })
+    frametime_domain::catalog::steps_for_phase_and_role(Phase::Three, OrchestrationRole::Engine)
         .copied()
         .collect()
 }
@@ -550,6 +546,13 @@ fn run_live_steps(
         LiveMutationAuthority::Runtime(runtime) => LiveBackend::from_runtime(runtime),
     }
     .map_err(ApplicationError::failed)?;
+    // The backend now holds the run lock; progress read before it may be stale
+    // if another frametime process ran steps in between.
+    if load_progress().map_err(ApplicationError::failed)? != progress {
+        return Err(ApplicationError::failed(
+            "workflow progress changed while this command was starting; run it again",
+        ));
+    }
     let mut engine = Engine::new(backend, progress);
     let report = crate::live_log::run_steps_logged(
         &mut engine,

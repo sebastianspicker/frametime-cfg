@@ -21,8 +21,11 @@ cargo fmt --all --check || exit /b 1
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
 cargo test --workspace --all-targets --all-features --locked || exit /b 1
 cargo run -p frametime-cli --locked -- dry-run all || exit /b 1
-cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc || exit /b 1
-cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
+rem An x64 host build already targets x86_64-pc-windows-msvc; other hosts check it explicitly.
+if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+    cargo check --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc || exit /b 1
+    cargo clippy --workspace --all-targets --all-features --locked --target x86_64-pc-windows-msvc -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
+)
 
 where cargo-audit >nul 2>&1 || exit /b 2
 cargo audit --deny warnings || exit /b 1

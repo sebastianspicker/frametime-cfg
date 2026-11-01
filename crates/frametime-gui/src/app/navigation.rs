@@ -114,8 +114,8 @@ fn benchmark_controls(app: &AppState) -> [HWND; 5] {
         app.vprof_input,
     ]
 }
-fn setup_controls(app: &AppState) -> [HWND; 2] {
-    [app.profile, app.dry_run]
+fn setup_controls(app: &AppState) -> [HWND; 1] {
+    [app.profile]
 }
 fn video_controls(app: &AppState) -> [HWND; 4] {
     [
@@ -175,11 +175,11 @@ pub(super) fn update_status(window: HWND, kind: StatusKind, detail: &str) {
         app.operation = OperationState {
             status: kind,
             detail: detail.into(),
-            cancellable: app.is_cancellable(),
+            cancellable: false,
         };
         set_text(app.status, &format!("{}: {detail}", kind.text()));
         unsafe {
-            let _ = EnableWindow(app.cancel, app.is_cancellable());
+            let _ = EnableWindow(app.cancel, false);
             NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, app.status, OBJID_CLIENT.0, 0);
             let _ = InvalidateRect(Some(app.status), None, true);
         }

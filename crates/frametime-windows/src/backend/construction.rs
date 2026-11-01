@@ -18,6 +18,7 @@ impl<'authority> LiveBackend<'authority> {
             MutationAuthority::Runtime(runtime) => runtime.config().clone(),
         };
         let trusted_work_dir = TrustedWorkDir::acquire_fixed()?;
+        let run_lock = WorkLock::acquire(trusted_work_dir.path())?;
         require_elevation()?;
         let state = load_state_at(trusted_work_dir.path())?;
         let hardware = discover_hardware()?;
@@ -25,6 +26,7 @@ impl<'authority> LiveBackend<'authority> {
             work_dir: trusted_work_dir.path().to_path_buf(),
             _trusted_work_dir: trusted_work_dir,
             _authority: authority,
+            _run_lock: run_lock,
             captured_steps: BTreeSet::new(),
             captured_msi_batches: BTreeMap::new(),
             captured_nic_affinity_bindings: BTreeMap::new(),

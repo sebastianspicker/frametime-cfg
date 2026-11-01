@@ -4,6 +4,7 @@
 //! every operation.  It is never reconstructed from a class-key index, an
 //! adapter display name, or a registry path.
 
+use crate::system::wide;
 use frametime_domain::{backup::NetworkStackValue, binding::NetworkAdapterBinding};
 use windows::{
     Win32::{
@@ -44,25 +45,37 @@ impl Drop for DriverKey {
     }
 }
 
+/// NDIS keywords are REG_DWORD or REG_SZ decimal text; the type is part of the value.
+fn decode_driver_value(
+    name: &str,
+    kind: REG_VALUE_TYPE,
+    bytes: &[u8],
+) -> Result<NetworkStackValue, String> {
+    if kind == REG_DWORD && bytes.len() == std::mem::size_of::<u32>() {
+        let bytes = bytes
+            .try_into()
+            .map_err(|_| format!("P1:16 {name} DWORD length changed during read"))?;
+        return Ok(NetworkStackValue::Dword(u32::from_le_bytes(bytes)));
+    }
+    if kind == REG_SZ {
+        let text = utf16_bytes(bytes, name)?;
+        if super::is_decimal_text(&text) {
+            return Ok(NetworkStackValue::String(text));
+        }
+    }
+    Err(format!(
+        "P1:16 {name} has an unsupported driver registry type or size"
+    ))
+}
+
 pub(super) fn read_driver_setting(
     adapter: &NetworkAdapterBinding,
     name: &str,
 ) -> Result<Option<NetworkStackValue>, String> {
     let key = open_driver_key(adapter, KEY_QUERY_VALUE.0)?;
-    let Some((kind, bytes)) = read_raw_value(&key, name)? else {
-        return Ok(None);
-    };
-    if kind != REG_DWORD || bytes.len() != std::mem::size_of::<u32>() {
-        return Err(format!(
-            "P1:16 {name} has an unsupported driver registry type or size"
-        ));
-    }
-    let value = u32::from_le_bytes(
-        bytes
-            .try_into()
-            .map_err(|_| format!("P1:16 {name} DWORD length changed during read"))?,
-    );
-    Ok(Some(NetworkStackValue::Dword(value)))
+    read_raw_value(&key, name)?
+        .map(|(kind, bytes)| decode_driver_value(name, kind, &bytes))
+        .transpose()
 }
 
 pub(super) fn write_driver_setting(
@@ -70,28 +83,29 @@ pub(super) fn write_driver_setting(
     name: &str,
     value: &NetworkStackValue,
 ) -> Result<(), String> {
-    let NetworkStackValue::Dword(value) = value else {
-        return Err(format!("P1:16 {name} requires a DWORD driver value"));
+    let (kind, bytes) = match value {
+        NetworkStackValue::Dword(value) => (REG_DWORD, value.to_le_bytes().to_vec()),
+        NetworkStackValue::String(text) => (
+            REG_SZ,
+            wide(text).into_iter().flat_map(u16::to_le_bytes).collect(),
+        ),
+        _ => {
+            return Err(format!(
+                "P1:16 {name} requires a DWORD or REG_SZ driver value"
+            ));
+        }
     };
     let key = open_driver_key(adapter, KEY_QUERY_VALUE.0 | KEY_SET_VALUE.0)?;
-    let Some((kind, original)) = read_raw_value(&key, name)? else {
+    let Some((original_kind, original)) = read_raw_value(&key, name)? else {
         return Err(format!("P1:16 {name} became absent before its write"));
     };
-    if kind != REG_DWORD || original.len() != std::mem::size_of::<u32>() {
-        return Err(format!(
-            "P1:16 {name} has an unsupported driver registry type or size"
-        ));
+    // Writes keep the type the driver stores; restore passes the captured type back.
+    decode_driver_value(name, original_kind, &original)?;
+    if original_kind != kind {
+        return Err(format!("P1:16 {name} write would change its registry type"));
     }
-    let bytes = value.to_le_bytes();
-    let result = unsafe {
-        RegSetValueExW(
-            key.0,
-            PCWSTR(wide(name).as_ptr()),
-            None,
-            REG_DWORD,
-            Some(&bytes),
-        )
-    };
+    let result =
+        unsafe { RegSetValueExW(key.0, PCWSTR(wide(name).as_ptr()), None, kind, Some(&bytes)) };
     if result.0 != 0 {
         return Err(format!(
             "P1:16 RegSetValueExW({name}) failed with {}",
@@ -101,8 +115,8 @@ pub(super) fn write_driver_setting(
     let Some((written_kind, written)) = read_raw_value(&key, name)? else {
         return Err(format!("P1:16 {name} disappeared after its write"));
     };
-    if written_kind != REG_DWORD || written.as_slice() != bytes {
-        return Err(format!("P1:16 {name} did not retain its exact DWORD write"));
+    if written_kind != kind || written != bytes {
+        return Err(format!("P1:16 {name} did not retain its exact write"));
     }
     Ok(())
 }
@@ -232,10 +246,6 @@ pub(crate) fn utf16_text(units: &[u16], label: &str) -> Result<String, String> {
     }
     String::from_utf16(&units[..end])
         .map_err(|error| format!("P1:16 {label} is not UTF-16: {error}"))
-}
-
-pub(crate) fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
 }
 
 pub(crate) fn name_label(name: &[u16]) -> String {

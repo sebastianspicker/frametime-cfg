@@ -1,5 +1,6 @@
 use std::{ffi::c_void, mem::size_of};
 
+use crate::system::wide;
 use frametime_domain::driver::Sha256Digest;
 use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
@@ -105,13 +106,15 @@ impl RetainedArtifact {
             ..Default::default()
         };
         let (mut action, status) = verify_trust_state(&mut trust);
-        if status != 0 {
-            return Err(adapter(
+        let result = if status == 0 {
+            signer_from_verified_state(trust.hWVTStateData)
+        } else {
+            Err(adapter(
                 "verify NVIDIA artifact",
                 format!("WinVerifyTrust failed: {status}"),
-            ));
-        }
-        let result = signer_from_verified_state(trust.hWVTStateData);
+            ))
+        };
+        // A failed VERIFY can still allocate provider state, so CLOSE runs on every path.
         trust.dwStateAction = WTD_STATEACTION_CLOSE;
         close_trust_state(&mut trust, &mut action);
         result
@@ -407,9 +410,6 @@ fn leaf_from_path(path: &str) -> Result<&str, AdapterFailure> {
         .ok_or_else(|| adapter("revalidate artifact", "artifact path has no fixed leaf"))
 }
 
-fn wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(Some(0)).collect()
-}
 fn create_new(path: &str) -> Result<HANDLE, AdapterFailure> {
     let path = wide(path);
     unsafe {

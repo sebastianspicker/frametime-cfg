@@ -176,7 +176,10 @@ fn stage_copy(app: &AppState) -> (String, &'static str, &'static str) {
         FpsStage::Evaluate => {
             let title = app.fps_session.outcome().map_or_else(
                 || "Evaluate a frame-rate ceiling".into(),
-                |outcome| format!("{} FPS is supported", outcome.cap),
+                |outcome| match outcome.cap {
+                    0 => "Uncapped (fps_max 0)".into(),
+                    cap => format!("{cap} FPS is supported"),
+                },
             );
             let next = if app.fps_session.outcome().is_some() {
                 "&Review save >"

@@ -2,12 +2,23 @@ use crate::*;
 // The native registry implementation is intentionally a small, auditable API:
 // it admits only the typed values declared in `action_for`, never arbitrary CLI
 // paths or raw user input.
+/// UTF-16 with a trailing NUL, shared by every Windows API call in the crate.
+#[cfg(windows)]
+pub(crate) fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(Some(0)).collect()
+}
+/// A path as UTF-16 with a trailing NUL, preserving units that are not valid text.
+#[cfg(windows)]
+pub(crate) fn wide_path(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().chain(Some(0)).collect()
+}
 #[cfg(windows)]
 mod native_registry {
     use super::*;
     use windows::{
         Win32::{
-            Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR},
+            Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, WIN32_ERROR},
             System::Registry::{
                 HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE,
                 REG_BINARY, REG_DWORD, REG_SZ, REG_VALUE_TYPE, RegCloseKey, RegCreateKeyW,
@@ -16,9 +27,6 @@ mod native_registry {
         },
         core::PCWSTR,
     };
-    pub(crate) fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(Some(0)).collect()
-    }
     pub(crate) fn ok(value: WIN32_ERROR) -> Result<(), String> {
         if value.0 == 0 {
             Ok(())
@@ -31,23 +39,6 @@ mod native_registry {
             Hive::LocalMachine => HKEY_LOCAL_MACHINE,
             Hive::CurrentUser => HKEY_CURRENT_USER,
         }
-    }
-    pub(crate) fn open(
-        change: &RegistryChange,
-        rights: windows::Win32::System::Registry::REG_SAM_FLAGS,
-    ) -> Result<HKEY, String> {
-        let key = wide(change.key);
-        let mut handle = HKEY::default();
-        ok(unsafe {
-            RegOpenKeyExW(
-                hkey(change.hive),
-                PCWSTR(key.as_ptr()),
-                None,
-                rights,
-                &mut handle,
-            )
-        })?;
-        Ok(handle)
     }
     pub(crate) fn create(change: &RegistryChange) -> Result<HKEY, String> {
         let key = wide(change.key);
@@ -160,18 +151,30 @@ mod native_registry {
         }
         ok(result)
     }
+    /// A key or value that is already gone counts as deleted.
     pub(super) fn delete(hive: Hive, key: &str, name: &str) -> Result<(), String> {
-        let change = RegistryChange {
-            hive,
-            key: Box::leak(key.to_owned().into_boxed_str()),
-            name: Box::leak(name.to_owned().into_boxed_str()),
-            value: RegValue::Dword(0),
+        let key = wide(key);
+        let mut handle = HKEY::default();
+        let opened = unsafe {
+            RegOpenKeyExW(
+                hkey(hive),
+                PCWSTR(key.as_ptr()),
+                None,
+                KEY_SET_VALUE,
+                &mut handle,
+            )
         };
-        let handle = open(&change, KEY_SET_VALUE)?;
+        if opened == ERROR_FILE_NOT_FOUND || opened == ERROR_PATH_NOT_FOUND {
+            return Ok(());
+        }
+        ok(opened)?;
         let name = wide(name);
         let result = unsafe { RegDeleteValueW(handle, PCWSTR(name.as_ptr())) };
         unsafe {
             let _ = RegCloseKey(handle);
+        }
+        if result == ERROR_FILE_NOT_FOUND || result == ERROR_PATH_NOT_FOUND {
+            return Ok(());
         }
         ok(result)
     }

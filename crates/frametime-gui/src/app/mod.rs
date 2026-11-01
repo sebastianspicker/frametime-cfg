@@ -2,7 +2,6 @@ use std::{
     ffi::c_void,
     os::windows::ffi::OsStrExt,
     path::PathBuf,
-    process::Child,
     sync::mpsc::{self, Receiver, TryRecvError},
     thread,
 };
@@ -17,18 +16,14 @@ use windows::{
         Graphics::Gdi::{
             COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, HBRUSH, InvalidateRect, UpdateWindow,
         },
-        System::{
-            Console::{AttachConsole, CTRL_BREAK_EVENT, FreeConsole, GenerateConsoleCtrlEvent},
-            LibraryLoader::GetModuleHandleW,
-        },
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW, NotifyWinEvent},
             Controls::Dialogs::{GetSaveFileNameW, OFN_OVERWRITEPROMPT, OPENFILENAMEW},
             Controls::{
-                BST_CHECKED, EM_LIMITTEXT, InitCommonControls, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW,
-                LVIF_TEXT, LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW,
-                LVM_INSERTITEMW, LVM_SETITEMTEXTW, LVNI_SELECTED, LVS_REPORT, LVS_SHOWSELALWAYS,
-                LVS_SINGLESEL,
+                EM_LIMITTEXT, InitCommonControls, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT,
+                LVITEMW, LVM_DELETEALLITEMS, LVM_GETNEXTITEM, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
+                LVM_SETITEMTEXTW, LVNI_SELECTED, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
             },
             HiDpi::{
                 AdjustWindowRectExForDpi, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -58,7 +53,6 @@ const TERTIARY: usize = 206;
 const VPROF_INPUT: usize = 207;
 const QUATERNARY: usize = 208;
 const PROFILE: usize = 209;
-const DRY_RUN: usize = 210;
 const CATALOG_FILTER: usize = 211;
 const VIDEO_ROOT: usize = 212;
 const VIDEO_TIER: usize = 213;

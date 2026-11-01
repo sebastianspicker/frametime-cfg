@@ -33,6 +33,18 @@ impl InterruptRegistryStore for WindowsInterruptRegistry {
     ) -> Result<(), DeviceBindingError> {
         windows_interrupt_registry::delete(key, name)
     }
+
+    fn key_exists(&self, key: &str) -> Result<bool, DeviceBindingError> {
+        windows_interrupt_registry::key_exists(key)
+    }
+
+    fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError> {
+        windows_interrupt_registry::create_key_levels(key)
+    }
+
+    fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError> {
+        windows_interrupt_registry::delete_key_if_empty(key)
+    }
 }
 
 #[cfg(windows)]
@@ -43,17 +55,14 @@ mod windows_interrupt_registry {
             Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR},
             System::Registry::{
                 HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_BINARY, REG_DWORD,
-                REG_VALUE_TYPE, RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW,
+                REG_OPTION_NON_VOLATILE, REG_VALUE_TYPE, RegCloseKey, RegCreateKeyExW,
+                RegDeleteKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegSetValueExW,
             },
         },
         core::PCWSTR,
     };
 
     const MAX_INTERRUPT_VALUE_BYTES: usize = 64;
-
-    pub(crate) fn wide(value: &str) -> Vec<u16> {
-        value.encode_utf16().chain(Some(0)).collect()
-    }
 
     pub(crate) fn error(action: &str, code: WIN32_ERROR) -> DeviceBindingError {
         DeviceBindingError::RegistryAccess(format!("{action} failed with {}", code.0))
@@ -166,6 +175,100 @@ mod windows_interrupt_registry {
             Ok(())
         } else {
             Err(error("RegSetValueExW", written))
+        }
+    }
+
+    pub(super) fn key_exists(key: &str) -> Result<bool, DeviceBindingError> {
+        let Some(handle) = open(key, KEY_QUERY_VALUE)? else {
+            return Ok(false);
+        };
+        unsafe {
+            let _ = RegCloseKey(handle);
+        }
+        Ok(true)
+    }
+
+    pub(super) fn create_key_levels(key: &str) -> Result<(), DeviceBindingError> {
+        const PARAMETERS: &str = "\\Device Parameters";
+        let parameters_end = key
+            .find(PARAMETERS)
+            .map(|index| index + PARAMETERS.len())
+            .ok_or_else(|| {
+                DeviceBindingError::RegistryAccess("interrupt key has no Device Parameters".into())
+            })?;
+        if !key_exists(&key[..parameters_end])? {
+            return Err(DeviceBindingError::RegistryAccess(
+                "interrupt device registry key is absent".into(),
+            ));
+        }
+        let wide_key = wide(key);
+        let mut handle = HKEY::default();
+        let result = unsafe {
+            RegCreateKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(wide_key.as_ptr()),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut handle,
+                None,
+            )
+        };
+        if result.0 != 0 {
+            return Err(error("RegCreateKeyExW", result));
+        }
+        unsafe {
+            let _ = RegCloseKey(handle);
+        }
+        Ok(())
+    }
+
+    pub(super) fn delete_key_if_empty(key: &str) -> Result<(), DeviceBindingError> {
+        let Some(handle) = open(key, KEY_QUERY_VALUE)? else {
+            return Ok(());
+        };
+        let (mut subkeys, mut values) = (0, 0);
+        let queried = unsafe {
+            RegQueryInfoKeyW(
+                handle,
+                None,
+                None,
+                None,
+                Some(&mut subkeys),
+                None,
+                None,
+                Some(&mut values),
+                None,
+                None,
+                None,
+                None,
+            )
+        };
+        unsafe {
+            let _ = RegCloseKey(handle);
+        }
+        if queried.0 != 0 {
+            return Err(error("RegQueryInfoKeyW", queried));
+        }
+        if subkeys != 0 || values != 0 {
+            return Ok(());
+        }
+        let wide_key = wide(key);
+        let deleted = unsafe {
+            RegDeleteKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(wide_key.as_ptr()),
+                // Only registry-view flags belong here; 0 is the native 64-bit view.
+                0,
+                None,
+            )
+        };
+        if deleted.0 == 0 || deleted == ERROR_FILE_NOT_FOUND {
+            Ok(())
+        } else {
+            Err(error("RegDeleteKeyExW", deleted))
         }
     }
 

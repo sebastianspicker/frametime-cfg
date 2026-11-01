@@ -91,4 +91,19 @@ mod fixtures {
             ])
         );
     }
+
+    #[test]
+    pub(crate) fn dos_path_strips_only_extended_drive_prefixes() {
+        assert_eq!(
+            dos_path(Path::new(r"\\?\C:\pkg\frametime.exe")),
+            PathBuf::from(r"C:\pkg\frametime.exe")
+        );
+        for kept in [
+            r"\\?\UNC\server\share\frametime.exe",
+            r"\\?\Volume{00000000-0000-0000-0000-000000000000}\frametime.exe",
+            r"C:\pkg\frametime.exe",
+        ] {
+            assert_eq!(dos_path(Path::new(kept)), PathBuf::from(kept));
+        }
+    }
 }

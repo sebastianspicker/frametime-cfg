@@ -255,7 +255,42 @@ fn verify_selected_preparation(
 }
 
 fn nvidia_drs_preparation_matches(receipt: &ObservationReceipt) -> Result<bool, String> {
-    Ok(capture_nvidia_drs_preparation_receipt()?.subject == receipt.subject)
+    Ok(nvidia_drs_subjects_match(
+        &receipt.subject,
+        &capture_nvidia_drs_preparation_receipt()?.subject,
+    ))
+}
+
+/// Compares the GPU by stable PnP identity: `observed_at_utc` differs on every capture.
+fn nvidia_drs_subjects_match(expected: &ObservationSubject, current: &ObservationSubject) -> bool {
+    match (expected, current) {
+        (
+            ObservationSubject::NvidiaDrsPreparation {
+                target_gpu: expected_gpu,
+                driver_version: expected_driver,
+                nvapi_module_sha256: expected_sha,
+                nvapi_interface_version: expected_interface,
+                profile_name: expected_profile,
+                application_name: expected_application,
+            },
+            ObservationSubject::NvidiaDrsPreparation {
+                target_gpu: current_gpu,
+                driver_version: current_driver,
+                nvapi_module_sha256: current_sha,
+                nvapi_interface_version: current_interface,
+                profile_name: current_profile,
+                application_name: current_application,
+            },
+        ) => {
+            expected_gpu.same_pnp_device(current_gpu)
+                && expected_driver == current_driver
+                && expected_sha == current_sha
+                && expected_interface == current_interface
+                && expected_profile == current_profile
+                && expected_application == current_application
+        }
+        _ => false,
+    }
 }
 
 fn msi_device_set_matches(
@@ -344,4 +379,52 @@ pub(crate) fn same_stable_device_set(
             .iter()
             .zip(right)
             .all(|(left, right)| left.same_pnp_device(right))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn gpu(observed_at_utc: &str) -> frametime_domain::binding::PciDeviceBinding {
+        frametime_domain::binding::PciDeviceBinding {
+            schema_version: frametime_domain::binding::NATIVE_BINDING_SCHEMA_VERSION,
+            instance_id: "PCI\\VEN_10DE&DEV_2684&SUBSYS_16F110DE&REV_A1\\4&1&0&0008".into(),
+            container_id: "{00000000-0000-0000-0000-000000000000}".into(),
+            class_guid: "{4d36e968-e325-11ce-bfc1-08002be10318}".into(),
+            vendor_id: 0x10de,
+            device_id: 0x2684,
+            subsystem_vendor_id: 0x10de,
+            subsystem_device_id: 0x16f1,
+            revision_id: 0xa1,
+            driver_provider: "NVIDIA".into(),
+            driver_version: "32.0.15.1".into(),
+            published_inf: "oem1.inf".into(),
+            observed_at_utc: observed_at_utc.into(),
+            unknown: Default::default(),
+        }
+    }
+
+    fn subject(observed_at_utc: &str, driver_version: &str) -> ObservationSubject {
+        ObservationSubject::NvidiaDrsPreparation {
+            target_gpu: gpu(observed_at_utc),
+            driver_version: driver_version.into(),
+            nvapi_module_sha256: "00".repeat(32),
+            nvapi_interface_version: "1".into(),
+            profile_name: "Counter-Strike 2".into(),
+            application_name: "cs2.exe".into(),
+        }
+    }
+
+    #[test]
+    fn drs_subject_ignores_observation_time_only() {
+        let expected = subject("2026-11-01T10:00:00", "1.0");
+        assert!(nvidia_drs_subjects_match(
+            &expected,
+            &subject("2026-11-01T11:30:00", "1.0")
+        ));
+        assert!(!nvidia_drs_subjects_match(
+            &expected,
+            &subject("2026-11-01T10:00:00", "2.0")
+        ));
+    }
 }

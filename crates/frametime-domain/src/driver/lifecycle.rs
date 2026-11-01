@@ -23,7 +23,6 @@ pub enum DriverLifecycleError {
     UnsafeComponentDirectory(String),
     InvalidDrsSnapshot(&'static str),
     Serialization,
-    IncompatibleDrsItems(Vec<DrsItemKey>),
     InvalidTransaction(&'static str),
 }
 

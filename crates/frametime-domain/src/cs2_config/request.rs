@@ -11,7 +11,6 @@ use super::{Cs2ConfigError, OptionalCfgAsset};
 pub struct Cs2ConfigRequest {
     generated_at: String,
     optional_assets: BTreeSet<OptionalCfgAsset>,
-    bootstrap_autoexec: bool,
 }
 impl Cs2ConfigRequest {
     pub fn new(
@@ -38,16 +37,7 @@ impl Cs2ConfigRequest {
         Ok(Self {
             generated_at,
             optional_assets,
-            bootstrap_autoexec: false,
         })
-    }
-
-    /// Explicitly authorizes a conditional `exec optimization.cfg` bootstrap.
-    /// The default request only writes the generated optimization CFG.
-    #[must_use]
-    pub const fn with_autoexec_bootstrap(mut self) -> Self {
-        self.bootstrap_autoexec = true;
-        self
     }
 
     #[must_use]
@@ -58,11 +48,6 @@ impl Cs2ConfigRequest {
     #[must_use]
     pub fn optional_assets(&self) -> &BTreeSet<OptionalCfgAsset> {
         &self.optional_assets
-    }
-
-    #[must_use]
-    pub const fn bootstraps_autoexec(&self) -> bool {
-        self.bootstrap_autoexec
     }
 }
 
@@ -78,10 +63,7 @@ pub struct CfgAssetDeployment {
 pub struct Cs2ConfigPreview {
     pub cfg_directory: PathBuf,
     pub optimization_path: PathBuf,
-    pub autoexec_path: Option<PathBuf>,
-    pub autoexec_backup_path: Option<PathBuf>,
     pub optimization_bytes: Vec<u8>,
-    pub autoexec_would_change: bool,
     pub optional_assets: Vec<CfgAssetDeployment>,
 }
 
@@ -92,21 +74,10 @@ pub enum OptimizationBackup {
     NotNeeded,
 }
 
-/// A one-time sidecar backup of pre-existing user autoexec content.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AutoexecBackup {
-    Created(PathBuf),
-    Retained(PathBuf),
-    NotNeeded,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cs2ConfigWriteReport {
     pub optimization_path: PathBuf,
-    pub autoexec_path: Option<PathBuf>,
     pub optimization_backup: OptimizationBackup,
-    pub autoexec_backup: AutoexecBackup,
-    pub autoexec_updated: bool,
     pub optional_assets_written: Vec<PathBuf>,
 }
 

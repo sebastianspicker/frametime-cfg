@@ -4,7 +4,10 @@ use std::{
 };
 
 #[cfg(windows)]
-use super::{RetainedRuntimeNode, inspect_selected_runtime_integrity_windows};
+use super::{
+    RetainedRuntimeNode, inspect_runtime_integrity_windows,
+    inspect_selected_runtime_integrity_windows,
+};
 use crate::{TrustedWorkDir, VerifiedConfig, WINDOWS_WORK_DIR};
 
 use frametime_domain::{
@@ -64,7 +67,9 @@ pub(crate) fn runtime_inventory_incomplete_at(work_dir: &Path) -> bool {
     {
         match trusted.path().join("runtime-current.json").try_exists() {
             Ok(false) => false,
-            Ok(true) => inspect_selected_runtime_integrity(&trusted).is_err(),
+            // The packaged executable is never the published copy, so only
+            // integrity is observed here; retention still binds the process.
+            Ok(true) => inspect_runtime_integrity_windows(&trusted).is_err(),
             Err(_) => true,
         }
     }

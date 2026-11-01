@@ -21,6 +21,7 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
     if !reboot_workflow_supported(selected_gpu_branch(&state)?) {
         return Err("P1:38 is NVIDIA-only in this alpha; Safe Mode was not armed".into());
     }
+    require_driver_authorization_margin(work_dir)?;
     let transaction = match &state.active_reboot_transaction {
         Some(existing)
             if existing.is_authorized_at(&RebootStage::PhaseOneSafeModeArmed)
@@ -34,8 +35,9 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
         }
         None => new_transaction(runtime.record().clone(), sid)?,
     };
-    // Until state is persisted nothing records the arming, so a failure rolls
-    // back exactly what this call wrote; otherwise retry and `optimize` refuse.
+    // State is persisted first so a power cut after BCD still leaves a
+    // transaction for `abort-handoff`; a failure rolls back exactly what this
+    // call wrote and restores the previous state only if nothing remains.
     let wrote_handoff =
         read_handoff_value(Hive::LocalMachine, RUNONCE_KEY, PHASE2_HANDOFF)?.is_none();
     let set_safe_boot = match safeboot_evidence() {
@@ -50,27 +52,39 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
             return Err("P1:38 cannot read the current safeboot setting".into());
         }
     };
-    let mut next_state = state;
+    let mut next_state = state.clone();
     next_state.phase1_safe_mode_ready = true;
     next_state.active_reboot_transaction = Some(transaction);
-    ensure_handoff_value(
-        Hive::LocalMachine,
-        RUNONCE_KEY,
-        PHASE2_HANDOFF,
-        &phase2,
-        "P1:38",
-    )
-    .and_then(|()| set_safeboot_minimal())
-    .and_then(|()| persist_state_readback(work_dir, &next_state, "P1:38"))
-    .map_err(|error| {
-        roll_back_partial_arming(
-            &NativeArmingHost,
-            error,
-            &phase2,
-            wrote_handoff,
-            set_safe_boot,
-        )
-    })?;
+    persist_state_readback(work_dir, &next_state, "P1:38")
+        .and_then(|()| {
+            ensure_handoff_value(
+                Hive::LocalMachine,
+                RUNONCE_KEY,
+                PHASE2_HANDOFF,
+                &phase2,
+                "P1:38",
+            )
+        })
+        .and_then(|()| set_safeboot_minimal())
+        .map_err(|error| {
+            match roll_back_partial_arming(
+                &NativeArmingHost,
+                error,
+                &phase2,
+                wrote_handoff,
+                set_safe_boot,
+            ) {
+                Ok(message) => match persist_state_readback(work_dir, &state, "P1:38") {
+                    Ok(()) => message,
+                    Err(restore) => format!(
+                        "{message}; restoring the previous state failed ({restore}); run abort-handoff --yes"
+                    ),
+                },
+                Err(message) => format!(
+                    "{message}; the reboot transaction was kept so abort-handoff --yes can find and clean it"
+                ),
+            }
+        })?;
     let mut next_progress = progress;
     next_progress.complete_step(
         frametime_domain::catalog::PHASE_ONE_SAFE_MODE_HANDOFF,
@@ -103,6 +117,10 @@ pub fn complete_phase_two_safe_boot_clear(runtime: &VerifiedSelectedRuntime) -> 
         &handoff_command(runtime.executable_path(), "phase2 --yes")?,
         "P2:1",
     )?;
+    let sid = current_token_user_sid().map_err(|error| format!("P2:1 TokenUser: {error}"))?;
+    if transaction.initiator_user_sid.as_deref() != Some(sid.as_str()) {
+        return Err("P2:1 must run as the user who started the workflow; sign in as that user, or run abort-handoff --yes".into());
+    }
     clear_safeboot()?;
     transaction
         .transition_to(RebootStage::PhaseTwoSafeMode)
@@ -167,7 +185,7 @@ pub fn arm_phase_three_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), 
 pub fn relaunch_phase_three_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     let work_dir = trusted.path();
-    let _lock = WorkLock::acquire(work_dir)?;
+    let lock = WorkLock::acquire(work_dir)?;
     let (state, progress) = read_handoff_session(work_dir)?;
     let transaction = state
         .active_reboot_transaction
@@ -194,6 +212,8 @@ pub fn relaunch_phase_three_handoff(runtime: &VerifiedSelectedRuntime) -> Result
         &handoff_command(runtime.executable_path(), "phase3-handoff")?,
         "phase3-handoff",
     )?;
+    // The elevated child takes the run lock itself, so release it first.
+    drop(lock);
     shell_execute_phase_three(runtime.executable_path())
 }
 
@@ -484,6 +504,7 @@ pub(crate) fn random_transaction_id() -> Result<TransactionId, String> {
 pub(crate) fn shell_execute_phase_three(executable: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::{
+        Win32::Foundation::CloseHandle,
         Win32::UI::Shell::{
             SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
         },
@@ -509,8 +530,12 @@ pub(crate) fn shell_execute_phase_three(executable: &Path) -> Result<(), String>
         nShow: 1,
         ..Default::default()
     };
-    unsafe { ShellExecuteExW(&mut execute) }
-        .map_err(|error| format!("phase3-handoff ShellExecuteExW(runas): {error}"))
+    let result = unsafe { ShellExecuteExW(&mut execute) };
+    // The elevated process is not awaited; release its handle on every path.
+    if !execute.hProcess.is_invalid() {
+        let _ = unsafe { CloseHandle(execute.hProcess) };
+    }
+    result.map_err(|error| format!("phase3-handoff ShellExecuteExW(runas): {error}"))
 }
 
 #[cfg(not(windows))]

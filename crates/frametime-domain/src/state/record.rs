@@ -139,6 +139,12 @@ impl<'de> Deserialize<'de> for State {
     }
 }
 impl State {
+    /// Select a profile and the mode that profile implies.
+    pub fn set_profile(&mut self, profile: Profile) {
+        self.profile = profile;
+        self.mode = mode_for_profile(profile).into();
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.unknown.contains_key("activeRebootTransaction") {
             return Err("activeRebootTransaction is malformed");
