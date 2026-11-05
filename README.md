@@ -12,6 +12,8 @@ network, power, and Windows settings. It is built for x64 Windows machines
 managed by an administrator who wants to see the change, understand it, and
 have a way back.
 
+> _Claude was used to polish and proof-read the code and documentation of this repository._
+
 <details>
 <summary>Status and limitations</summary>
 

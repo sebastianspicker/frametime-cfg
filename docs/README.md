@@ -5,8 +5,8 @@ below is the focused source of truth for one subject.
 
 ## For maintainers and contributors
 
-- [Architecture](architecture.md) — component boundaries, dependency direction,
-  runtime flow, and who owns state.
+- [Architecture](architecture.md) — component boundaries, what each command
+  calls, the reboot phases, state files, CI, and a code map.
 - [Configuration](CONFIGURATION.md) — the exact TOML schema, validation rules,
   and authority precedence.
 - [Release packaging](DEPLOYMENT.md) — the unsigned and authenticated Windows
