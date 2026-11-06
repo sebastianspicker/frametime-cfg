@@ -23,6 +23,7 @@ pub mod policy;
 pub mod runtime;
 pub mod state;
 pub mod steam;
+pub(crate) mod validate;
 pub mod verification;
 pub mod video;
 

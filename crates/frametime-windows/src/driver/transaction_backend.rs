@@ -404,8 +404,26 @@ pub fn install_prepared_nvidia_driver(
         },
     )?;
     let pre_launch_utc = trusted_current_utc();
-    let (installed_artifact, post_install_packages, fresh_authenticode) =
-        install_prepared_artifact(&transaction, &pre_launch_utc)?;
+    // Recorded durably right after setup.exe exits 0, so a later failure or crash
+    // never reruns it, and nothing is recorded as installed without that exit.
+    let mut marked = None;
+    let mut mark_succeeded = || -> Result<(), String> {
+        let mut next = transaction.clone();
+        next.installer_succeeded_at_utc = Some(trusted_current_utc());
+        marked = Some(persist_driver_transaction(trusted.path(), &next)?);
+        Ok(())
+    };
+    let on_success: Option<&mut dyn FnMut() -> Result<(), String>> =
+        if transaction.should_launch_installer() {
+            Some(&mut mark_succeeded)
+        } else {
+            None
+        };
+    let installed = install_prepared_artifact(&transaction, &pre_launch_utc, on_success);
+    if let Some(next) = marked {
+        transaction = next;
+    }
+    let (installed_artifact, post_install_packages, fresh_authenticode) = installed?;
     let installation = InstallationEvidence {
         authorization: transaction.authorization.clone(),
         fresh_authenticode,
@@ -437,6 +455,7 @@ pub fn install_prepared_nvidia_driver(
 fn install_prepared_artifact(
     transaction: &DriverTransaction,
     pre_launch_utc: &str,
+    on_success: Option<&mut dyn FnMut() -> Result<(), String>>,
 ) -> Result<
     (
         frametime_domain::driver::InstalledArtifactObservation,
@@ -449,21 +468,29 @@ fn install_prepared_artifact(
         .prepared_package_sha256
         .as_ref()
         .ok_or("driver transaction lacks its prepared-package binding")?;
+    let spawn = on_success.is_some();
     let launch = super::capability::launch_prepared_nvidia_package(
         &transaction.artifact,
         package_sha256,
         pre_launch_utc,
+        spawn,
     )
     .map_err(|error| error.to_string())?;
-    if launch.outcome.exit_code != Some(0) {
-        return Err(
-            "prepared NVIDIA installer returned a nonzero or unavailable exit status".into(),
-        );
+    if let Some(mark_succeeded) = on_success {
+        if launch.outcome.exit_code != Some(0) {
+            return Err(
+                "prepared NVIDIA installer returned a nonzero or unavailable exit status".into(),
+            );
+        }
+        mark_succeeded()?;
     }
     let packages = WindowsDriverInspection::native()
         .inspect_published_packages(&transaction.plan.target_gpu)
         .map_err(|error| error.to_string())?;
     if packages.is_empty() {
+        if !spawn {
+            return Err("the NVIDIA installer already finished successfully in an earlier attempt, but no target-GPU package is present; it was not relaunched. Check Device Manager, then run restore if the driver is missing".into());
+        }
         return Err("prepared NVIDIA install produced no target-GPU package".into());
     }
     Ok((
@@ -600,6 +627,7 @@ pub fn prepare_nvidia_driver_with_options(
 
 #[cfg(not(windows))]
 pub fn reconcile_nvidia_profiles(
+    _package: &AuthenticatedPackage,
     _accept_driver_incompatible_profile_items: bool,
     _yes: bool,
 ) -> Result<DriverTransaction, String> {

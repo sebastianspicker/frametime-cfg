@@ -130,16 +130,22 @@ pub(crate) fn capture_actions(
     }
 }
 
+/// The value of the exact `safeboot` element; `safebootalternateshell` is a different element.
+fn safeboot_value(bcdedit_output: &str) -> Option<String> {
+    bcdedit_output.lines().find_map(|line| {
+        let line = line.trim();
+        let (name, value) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        name.eq_ignore_ascii_case("safeboot")
+            .then(|| value.trim().to_owned())
+    })
+}
+
 pub(crate) fn capture_action(action: &Action, step: String) -> Result<BackupEntry, String> {
     match action {
         Action::Tool(command) if command.command == CommandName::Bcdedit => {
             let current =
                 CommandVector::new(CommandName::Bcdedit, &["/enum", "{current}"])?.run()?;
-            let safe_boot = current.lines().find_map(|line| {
-                line.trim()
-                    .strip_prefix("safeboot")
-                    .map(|value| value.trim().to_owned())
-            });
+            let safe_boot = safeboot_value(&current);
             Ok(BackupEntry::Bootconfig {
                 step,
                 timestamp: timestamp(),
@@ -226,7 +232,7 @@ pub(crate) fn verify_tool(command: &CommandVector) -> Result<(), String> {
         {
             let current =
                 CommandVector::new(CommandName::Bcdedit, &["/enum", "{current}"])?.run()?;
-            if !current.to_ascii_lowercase().contains("safeboot") {
+            if safeboot_value(&current).is_none() {
                 Ok(())
             } else {
                 Err("Safe Mode remains armed after deletion".into())
@@ -238,3 +244,20 @@ pub(crate) fn verify_tool(command: &CommandVector) -> Result<(), String> {
 
 mod verify;
 pub(crate) use verify::*;
+
+#[cfg(test)]
+mod safeboot_tests {
+    use super::safeboot_value;
+
+    #[test]
+    fn alternate_shell_is_not_safeboot() {
+        let output = "identifier              {current}\nsafebootalternateshell  Yes\n";
+        assert_eq!(safeboot_value(output), None);
+    }
+
+    #[test]
+    fn exact_safeboot_is_read_case_insensitively() {
+        let output = "identifier              {current}\nSafeBoot                Minimal\n";
+        assert_eq!(safeboot_value(output).as_deref(), Some("Minimal"));
+    }
+}

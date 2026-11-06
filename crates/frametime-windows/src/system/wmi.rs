@@ -3,7 +3,7 @@ pub(crate) mod native {
     use std::{mem::ManuallyDrop, sync::OnceLock, thread};
     use windows::{
         Win32::{
-            Foundation::VARIANT_BOOL,
+            Foundation::{RPC_E_TOO_LATE, VARIANT_BOOL},
             System::{
                 Com::{
                     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
@@ -69,7 +69,14 @@ pub(crate) mod native {
                         EOAC_NONE,
                         None,
                     )
-                    .map_err(|error| format!("CoInitializeSecurity: {error}"))
+                    // Too late means the process (GUI, Task Scheduler restore) already set security.
+                    .or_else(|error| {
+                        if error.code() == RPC_E_TOO_LATE {
+                            Ok(())
+                        } else {
+                            Err(format!("CoInitializeSecurity: {error}"))
+                        }
+                    })
                 })
                 .clone()?;
             operation()

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::{CLI_EXECUTABLE_NAME, GUI_EXECUTABLE_NAME, PackageFile, PackageManifest};
+use super::{PackageFile, PackageManifest};
 
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 pub(crate) const PAYLOAD_LAYOUT: &str = include_str!("../../../../../package-layout.txt");
@@ -117,11 +117,6 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), String> {
             .all(|byte| byte.is_ascii_graphic() && byte != b'\\')
     {
         return Err("package manifest path is not a normalized forward relative path".into());
-    }
-    if path.eq_ignore_ascii_case(GUI_EXECUTABLE_NAME)
-        || path.eq_ignore_ascii_case(CLI_EXECUTABLE_NAME)
-    {
-        return Ok(());
     }
     Ok(())
 }

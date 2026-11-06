@@ -64,6 +64,8 @@ mod native_drs_windows {
     const SETTING_NOT_FOUND: Status = -160;
     const PROFILE_NOT_FOUND: Status = -163;
     const EXECUTABLE_NOT_FOUND: Status = -166;
+    /// Current drivers may ship more than 4096 predefined profiles.
+    const MAX_DRS_ITEMS: u32 = 65_536;
 
     #[path = "helpers.rs"]
     mod helpers;
@@ -160,7 +162,7 @@ mod native_drs_windows {
                     unsafe { (api.get_num_profiles)(session.0, &mut count) },
                     "DRS_GetNumProfiles",
                 )?;
-                if count > 4_096 {
+                if count > MAX_DRS_ITEMS {
                     return Err(error("DRS_EnumProfiles", "profile bound exceeded"));
                 }
                 let mut profiles = Vec::new();
@@ -180,7 +182,8 @@ mod native_drs_windows {
                         unsafe { (api.get_profile_info)(session.0, handle, &mut info) },
                         "DRS_GetProfileInfo",
                     )?;
-                    if info.application_count > 4_096 || info.setting_count > 4_096 {
+                    if info.application_count > MAX_DRS_ITEMS || info.setting_count > MAX_DRS_ITEMS
+                    {
                         return Err(error("DRS_GetProfileInfo", "profile item bound exceeded"));
                     }
                     let applications =
@@ -509,10 +512,13 @@ mod native_drs_windows {
         ) -> Result<(), DrsError> {
             let application = unicode_argument(application)
                 .map_err(|reason| error("encode application name", reason))?;
-            status(
-                unsafe { (self.delete_application)(session.0, profile.0, application.as_ptr()) },
-                "DRS_DeleteApplication",
-            )
+            let result =
+                unsafe { (self.delete_application)(session.0, profile.0, application.as_ptr()) };
+            // An already-removed binding keeps restore idempotent.
+            if result == EXECUTABLE_NOT_FOUND {
+                return Ok(());
+            }
+            status(result, "DRS_DeleteApplication")
         }
         fn delete_profile(
             &mut self,
@@ -564,10 +570,15 @@ mod native_drs_windows {
         ) -> Result<(), DrsError> {
             match original.value {
                 Some(value) => self.set_dword(session, profile, original.id, value),
-                None => status(
-                    unsafe { (self.delete_setting)(session.0, profile.0, original.id) },
-                    "DRS_DeleteProfileSetting",
-                ),
+                None => {
+                    let result =
+                        unsafe { (self.delete_setting)(session.0, profile.0, original.id) };
+                    // An already-deleted setting keeps restore idempotent.
+                    if result == SETTING_NOT_FOUND {
+                        return Ok(());
+                    }
+                    status(result, "DRS_DeleteProfileSetting")
+                }
             }
         }
     }

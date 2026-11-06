@@ -90,7 +90,9 @@ pub fn arm_safe_mode_handoff(runtime: &VerifiedSelectedRuntime) -> Result<(), St
         frametime_domain::catalog::PHASE_ONE_SAFE_MODE_HANDOFF,
         timestamp(),
     );
-    persist_progress_readback(work_dir, &next_progress, "P1:38")
+    persist_progress_readback(work_dir, &next_progress, "P1:38").map_err(|error| {
+        format!("{error}; Safe Mode IS armed; run `frametime abort-handoff --yes` to disarm it")
+    })
 }
 
 /// Finish P2:1 as one lock-held checkpoint. Safe Boot must be absent before
@@ -302,20 +304,17 @@ pub(crate) fn require_runtime_and_stage(
 
 pub(crate) fn read_handoff_session(work_dir: &Path) -> Result<(State, Progress), String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    let state = read_state_for_handoff(&trusted, work_dir)?;
-    let progress = read_progress_for_handoff(&trusted, work_dir)?;
+    let state = read_state_for_handoff(&trusted)?;
+    let progress = read_progress_for_handoff(&trusted)?;
     Ok((state, progress))
 }
 
-pub(crate) fn read_state_for_handoff(
-    trusted: &TrustedWorkDir,
-    work_dir: &Path,
-) -> Result<State, String> {
-    if !work_dir.join(STATE_FILE).exists() {
+pub(crate) fn read_state_for_handoff(trusted: &TrustedWorkDir) -> Result<State, String> {
+    let Some(state): Option<State> = read_json_if_present(trusted, STATE_FILE)
+        .map_err(|error| format!("read reboot transaction state: {error}"))?
+    else {
         return Ok(State::default());
-    }
-    let state: State = read_json_trusted(trusted, STATE_FILE)
-        .map_err(|error| format!("read reboot transaction state: {error}"))?;
+    };
     state.validate().map_err(str::to_owned)?;
     state
         .work_dir
@@ -324,14 +323,9 @@ pub(crate) fn read_state_for_handoff(
         .ok_or("state workDir must be C:\\FRAMETIME_CFG".into())
 }
 
-pub(crate) fn read_progress_for_handoff(
-    trusted: &TrustedWorkDir,
-    work_dir: &Path,
-) -> Result<Progress, String> {
-    if !work_dir.join(PROGRESS_FILE).exists() {
-        return Ok(Progress::default());
-    }
-    read_json_trusted(trusted, PROGRESS_FILE)
+pub(crate) fn read_progress_for_handoff(trusted: &TrustedWorkDir) -> Result<Progress, String> {
+    read_json_if_present(trusted, PROGRESS_FILE)
+        .map(Option::unwrap_or_default)
         .map_err(|error| format!("read reboot handoff progress: {error}"))
 }
 
@@ -343,7 +337,7 @@ pub(crate) fn persist_state_readback(
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     write_json_atomic_trusted(&trusted, STATE_FILE, state)
         .map_err(|error| format!("{prefix} persist state: {error}"))?;
-    let persisted = read_state_for_handoff(&trusted, work_dir)
+    let persisted = read_state_for_handoff(&trusted)
         .map_err(|error| format!("{prefix} read back state: {error}"))?;
     (persisted == *state)
         .then_some(())
@@ -358,7 +352,7 @@ pub(crate) fn persist_progress_readback(
     let trusted = TrustedWorkDir::acquire(work_dir)?;
     write_json_atomic_trusted(&trusted, PROGRESS_FILE, progress)
         .map_err(|error| format!("{prefix} persist progress: {error}"))?;
-    let persisted = read_progress_for_handoff(&trusted, work_dir)
+    let persisted = read_progress_for_handoff(&trusted)
         .map_err(|error| format!("{prefix} read back progress: {error}"))?;
     (persisted == *progress)
         .then_some(())
@@ -447,6 +441,10 @@ pub(crate) fn set_safeboot_minimal() -> Result<(), String> {
 }
 
 pub(crate) fn clear_safeboot() -> Result<(), String> {
+    // A rerun after bcdedit already cleared Safe Boot must not fail on a missing element.
+    if matches!(safeboot_evidence(), SafebootEvidence::Absent) {
+        return Ok(());
+    }
     CommandVector::new(
         CommandName::Bcdedit,
         &["/deletevalue", "{current}", "safeboot"],

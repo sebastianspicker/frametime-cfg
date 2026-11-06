@@ -180,22 +180,28 @@ fn phase_one_resolution_accepts_acknowledged_advisories_but_not_completion_guard
 }
 
 #[test]
-fn phase_one_resolution_rejects_advisory_receipts_for_other_steps() {
-    let state = State::default();
+fn phase_one_resolution_accepts_advisories_for_any_engine_step() {
     let mut progress = Progress::default();
-    for step in 1..=37 {
-        progress.skip(1, step);
+    for step in step_catalog().iter().filter(|step| {
+        step.id.phase == Phase::One && step.orchestration_role == OrchestrationRole::Engine
+    }) {
+        if matches!(step.id.number, 3 | 4 | 6) {
+            progress.acknowledge_step_advisory(step.id, "check-only guidance".into());
+        } else {
+            progress.complete_step(step.id, "2026-11-06 12:00:00".into());
+        }
     }
-    progress.acknowledge_advisory(1, 10, "untrusted advisory receipt".into());
-
+    assert_eq!(require_phase_one_handoff_ready(&progress), Ok(()));
     assert_eq!(
         authorize(
             PhaseRequest::ArmSafeMode,
-            &state,
+            &State::default(),
             &progress,
             facts(BootEnvironment::Normal)
         ),
-        Err(GuardError::MissingResolvedPhaseOneStep(10))
+        Ok(Transition::ArmSafeMode {
+            requires_readiness_transition: true
+        })
     );
 }
 
@@ -452,22 +458,5 @@ fn absent_invalid_or_unknown_reboot_stage_never_authorizes_a_reboot_phase() {
     assert_eq!(
         authorize(PhaseRequest::PhaseTwo, &invalid, &progress, facts),
         Err(GuardError::RebootTransactionStageInvalid)
-    );
-}
-
-#[test]
-fn recovery_is_a_plan_not_a_claim_of_windows_side_effects() {
-    assert_eq!(
-        recovery_for(
-            PhaseRequest::PhaseThree,
-            FailurePoint::FinalBenchmarkPersistence
-        ),
-        RecoveryPlan {
-            retain_handoff: true,
-            compensations: vec![
-                Compensation::RestoreCapturedPhaseBackups,
-                Compensation::RetainPhaseThreeHandoffUntilCompletion,
-            ]
-        }
     );
 }

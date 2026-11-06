@@ -187,16 +187,42 @@ mod pagefile_tests {
         assert_eq!(store.inventory, before);
     }
     #[test]
-    pub(crate) fn incomplete_create_journal_fails_closed() {
+    pub(crate) fn create_pending_crash_before_create_restores_automatic_management() {
         let binding =
             capture_pagefile_binding("P1:8".into(), &explicit_pagefile_state(), inventory())
                 .expect("binding");
         let entry = pagefile_backup_entry(&binding);
+        let mut crashed = binding.before.clone();
+        crashed.automatic_managed = false;
         let mut store = MockStore {
-            inventory: binding.before,
+            inventory: crashed,
+            fail: None,
+        };
+        restore_pagefile_transaction(&mut store, &entry).expect("restore");
+        assert!(store.inventory.automatic_managed);
+        assert_eq!(store.inventory.settings, binding.before.settings);
+    }
+    #[test]
+    pub(crate) fn create_pending_with_live_target_requires_manual_recovery() {
+        let binding =
+            capture_pagefile_binding("P1:8".into(), &explicit_pagefile_state(), inventory())
+                .expect("binding");
+        let entry = pagefile_backup_entry(&binding);
+        let mut live = binding.before.clone();
+        live.automatic_managed = false;
+        live.settings.push(PagefileSetting {
+            path: binding.target_path.clone(),
+            initial_size: 4096,
+            maximum_size: 4096,
+            object_path: "target-object".into(),
+            relative_path: "target-relative".into(),
+        });
+        let mut store = MockStore {
+            inventory: live.clone(),
             fail: None,
         };
         assert!(restore_pagefile_transaction(&mut store, &entry).is_err());
+        assert_eq!(store.inventory, live);
     }
     #[test]
     pub(crate) fn rejects_duplicate_or_hostile_cim_identities() {

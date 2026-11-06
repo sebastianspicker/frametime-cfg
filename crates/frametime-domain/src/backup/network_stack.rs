@@ -220,7 +220,7 @@ impl NetworkStackTransaction {
         if self.step != NETWORK_STACK_TRANSACTION_STEP {
             return Err(NetworkStackBackupError::WrongStep);
         }
-        if !valid_transaction_timestamp(&self.timestamp) {
+        if !crate::validate::timestamp_ok(&self.timestamp) {
             return Err(NetworkStackBackupError::InvalidTimestamp);
         }
         if !self.unknown.is_empty() {
@@ -320,13 +320,6 @@ impl NetworkStackTransaction {
     }
 }
 
-fn valid_transaction_timestamp(timestamp: &str) -> bool {
-    let is_present = !timestamp.trim().is_empty();
-    let is_bounded = timestamp.len() <= 64;
-    let has_no_control_characters = !timestamp.chars().any(char::is_control);
-    is_present && is_bounded && has_no_control_characters
-}
-
 fn has_duplicate_identities<T: Ord>(identities: &[T]) -> bool {
     identities.windows(2).any(|pair| pair[0] == pair[1])
 }
@@ -342,10 +335,15 @@ fn setting_value_type_matches(item: &NetworkStackSettingBackup) -> bool {
         return true;
     };
     let expects_string = matches!(item.setting, NetworkStackSetting::InterruptModeration);
-    let is_string = matches!(value, NetworkStackValue::String(_));
+    if expects_string {
+        return matches!(value, NetworkStackValue::String(_));
+    }
     // NDIS keywords are often REG_SZ decimal text; only that text may stand in for a DWORD.
-    let is_decimal_text = matches!(value, NetworkStackValue::String(text) if is_decimal_text(text));
-    expects_string == is_string || (!expects_string && is_decimal_text)
+    match value {
+        NetworkStackValue::Dword(_) => true,
+        NetworkStackValue::String(text) => is_decimal_text(text),
+        _ => false,
+    }
 }
 
 /// REG_SZ driver keywords hold decimal text such as `"1"`; the text must fit a DWORD.
@@ -460,6 +458,16 @@ mod tests {
         assert_eq!(
             value.validate(),
             Err(NetworkStackBackupError::DuplicateIdentity)
+        );
+    }
+
+    #[test]
+    fn dword_settings_reject_binary_values() {
+        let mut value = transaction();
+        value.settings[0].original_value = Some(NetworkStackValue::Binary(vec![1]));
+        assert_eq!(
+            value.validate(),
+            Err(NetworkStackBackupError::ValueTypeMismatch)
         );
     }
 

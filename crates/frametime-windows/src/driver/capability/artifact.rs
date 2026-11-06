@@ -1,14 +1,10 @@
 use frametime_domain::driver::{
-    AdapterFailure, ArtifactAcquisitionAuthorization, AuthenticodeEvidence, AuthenticodeStatus,
-    Sha256Digest, SignedArtifactDescriptor,
+    AdapterFailure, ArtifactAcquisitionAuthorization, Sha256Digest, SignedArtifactDescriptor,
 };
 
 #[cfg(windows)]
 use super::native;
-use super::{
-    DRIVER_ARTIFACTS_LEAF, NVIDIA_SIGNER_SHA256, NVIDIA_SUBJECT, NvidiaArtifactLocation,
-    ProcessOutcome, adapter,
-};
+use super::{NVIDIA_SIGNER_SHA256, NVIDIA_SUBJECT, NvidiaArtifactLocation, adapter};
 
 /// A non-cloneable file capability. It is the only value accepted by the
 /// installer, keeping the validated handle alive across verification and child
@@ -23,23 +19,6 @@ pub struct VerifiedDriverArtifact {
 }
 
 impl VerifiedDriverArtifact {
-    pub(super) fn validate_descriptor(
-        &self,
-        descriptor: &SignedArtifactDescriptor,
-    ) -> Result<(), AdapterFailure> {
-        let expected = format!(
-            "{DRIVER_ARTIFACTS_LEAF}/{}",
-            descriptor.locator.artifact_file_name
-        );
-        if self.protected_leaf != expected || self.payload_sha256 != descriptor.payload_sha256 {
-            return Err(adapter(
-                "install NVIDIA artifact",
-                "artifact capability does not match descriptor",
-            ));
-        }
-        self.revalidate()
-    }
-
     pub(crate) fn revalidate(&self) -> Result<(), AdapterFailure> {
         #[cfg(windows)]
         if let Some(retained) = &self.retained {
@@ -168,38 +147,6 @@ pub(super) fn accepts_compiled_nvidia_policy(subject: &str, thumbprint: &str) ->
             || (cfg!(test)
                 && thumbprint
                     == "abababababababababababababababababababababababababababababababab"))
-}
-
-pub(super) fn verify_nvidia_signature_against_policy<V: NvidiaSignatureVerifier>(
-    verifier: &V,
-    capability: &VerifiedDriverArtifact,
-    artifact: &SignedArtifactDescriptor,
-    observed_at_utc: &str,
-) -> Result<AuthenticodeEvidence, AdapterFailure> {
-    let (subject, thumbprint) = verifier.verify_nvidia(capability)?;
-    if !accepts_compiled_nvidia_policy(&subject, &thumbprint) {
-        return Err(adapter(
-            "install NVIDIA artifact",
-            "fresh WinVerifyTrust signer violates exact NVIDIA policy",
-        ));
-    }
-    let thumbprint = Sha256Digest::parse(thumbprint.to_ascii_lowercase())
-        .map_err(|error| adapter("verify NVIDIA artifact", error.to_string()))?;
-    if subject != artifact.authenticode.signer_subject
-        || thumbprint != artifact.authenticode.signer_thumbprint_sha256
-    {
-        return Err(adapter(
-            "install NVIDIA artifact",
-            "fresh WinVerifyTrust signer does not match acquisition evidence",
-        ));
-    }
-    Ok(AuthenticodeEvidence {
-        status: AuthenticodeStatus::Valid,
-        signer_subject: subject,
-        signer_thumbprint_sha256: thumbprint,
-        observed_at_utc: observed_at_utc.into(),
-        extensions: Default::default(),
-    })
 }
 
 pub(crate) fn parse_utc_seconds(value: &str) -> Result<i64, AdapterFailure> {
@@ -387,38 +334,6 @@ impl NvidiaSignatureVerifier for NativeNvidiaSignatureVerifier {
             let _ = artifact;
             Err(adapter(
                 "verify NVIDIA artifact",
-                "supported only on Windows",
-            ))
-        }
-    }
-}
-
-/// Only a capability may be launched. Implementations must keep it borrowed
-/// until the child exits and must revalidate it immediately before launch.
-pub trait NvidiaInstallerRunner {
-    fn launch_verified(
-        &self,
-        artifact: &VerifiedDriverArtifact,
-        argv: &[String],
-    ) -> Result<ProcessOutcome, AdapterFailure>;
-}
-
-/// Native argv-only launcher for a retained, verified package executable.
-#[derive(Debug, Default)]
-pub struct NativeNvidiaInstallerRunner;
-impl NvidiaInstallerRunner for NativeNvidiaInstallerRunner {
-    fn launch_verified(
-        &self,
-        artifact: &VerifiedDriverArtifact,
-        argv: &[String],
-    ) -> Result<ProcessOutcome, AdapterFailure> {
-        #[cfg(windows)]
-        return native::launch(artifact, argv);
-        #[cfg(not(windows))]
-        {
-            let _ = (artifact, argv);
-            Err(adapter(
-                "launch NVIDIA artifact",
                 "supported only on Windows",
             ))
         }

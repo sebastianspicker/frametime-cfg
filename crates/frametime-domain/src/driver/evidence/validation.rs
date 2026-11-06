@@ -113,9 +113,9 @@ const fn is_leap_year(year: i64) -> bool {
 }
 
 pub(super) fn text(value: &str, field: &'static str) -> Result<(), ValidationError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-        Err(ValidationError::Invalid { field })
-    } else {
+    if crate::validate::text_ok(value) {
         Ok(())
+    } else {
+        Err(ValidationError::Invalid { field })
     }
 }

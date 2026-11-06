@@ -227,17 +227,13 @@ impl Backend for LiveBackend<'_> {
         if self.transaction_lock.is_none() {
             return Err("backup persistence requires the capture transaction lock".into());
         }
-        let path = self.backup_path();
-        let mut backup = if path.exists() {
-            read_json_trusted(&self._trusted_work_dir, BACKUP_FILE)
-                .map_err(|error| format!("read backup: {error}"))?
-        } else {
-            BackupFile {
+        let mut backup = read_json_if_present(&self._trusted_work_dir, BACKUP_FILE)
+            .map_err(|error| format!("read backup: {error}"))?
+            .unwrap_or_else(|| BackupFile {
                 entries: Vec::new(),
                 created: timestamp(),
                 unknown: BTreeMap::new(),
-            }
-        };
+            });
         for entry in entries {
             backup.push_first_value(entry.clone());
         }
@@ -290,8 +286,17 @@ impl Backend for LiveBackend<'_> {
                     .get(&key)
                     .ok_or("P1:34 verification requires a captured CS2 config binding")?,
             )
-        } else if let Some(result) = self.verify_interrupt_action(&action, &key) {
-            result
+        } else if matches!(
+            &action,
+            Action::MsiInterrupts | Action::NicInterruptAffinity
+        ) {
+            // Guidance-only steps: verify re-reads the live policy that inspection found satisfied.
+            match self.inspect_interrupt_action(&action, operation)? {
+                Some(Inspection::Satisfied) => Ok(()),
+                _ => Err(format!(
+                    "{key}: interrupt policy no longer matches the guided target"
+                )),
+            }
         } else if matches!(&action, Action::NvidiaProfileApply) {
             self.verify_drs_backup(&key)
         } else if matches!(&action, Action::NetworkStack) {
@@ -392,16 +397,6 @@ impl LiveBackend<'_> {
                 self.captured_cs2_config_bindings
                     .get(key)
                     .ok_or("P1:34 mutation requires a captured CS2 config binding")?,
-            ),
-            Action::MsiInterrupts => apply_native_msi_batches(
-                self.captured_msi_batches
-                    .get(key)
-                    .ok_or("P3:2 mutation requires captured MSI device bindings")?,
-            ),
-            Action::NicInterruptAffinity => apply_native_nic_affinity(
-                self.captured_nic_affinity_bindings
-                    .get(key)
-                    .ok_or("P3:3 mutation requires a captured NIC affinity binding")?,
             ),
             Action::NvidiaProfileApply => self.apply_drs_backup(key),
             Action::NetworkStack => apply_network_stack(

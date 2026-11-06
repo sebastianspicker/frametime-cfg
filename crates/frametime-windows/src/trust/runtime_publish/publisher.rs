@@ -434,11 +434,11 @@ impl PublicationLock {
                 None,
             )
         }
+        .map(RetainedHandle)
         .map_err(|error| format!("runtime publication lock unavailable: {error}"))?;
-        trusted_work_dir::harden_created_child(handle)?;
-        trusted_work_dir::validate_descendant_handle(handle, "runtime-publication.lock", false)?;
-        Ok(Self {
-            _handle: RetainedHandle(handle),
-        })
+        // Owned before hardening so every error path below closes (and deletes) the lock file.
+        trusted_work_dir::harden_created_child(handle.0)?;
+        trusted_work_dir::validate_descendant_handle(handle.0, "runtime-publication.lock", false)?;
+        Ok(Self { _handle: handle })
     }
 }

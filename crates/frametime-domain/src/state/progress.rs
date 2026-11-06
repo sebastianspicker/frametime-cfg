@@ -128,8 +128,9 @@ fn tolerant_keys(value: Option<Value>) -> BTreeSet<String> {
         .collect()
 }
 
-fn valid_progress_key(key: &str) -> bool {
-    StepId::from_progress_key(key).is_some_and(|id| crate::catalog::step_by_id(id).is_some())
+pub(super) fn valid_progress_key(key: &str) -> bool {
+    StepId::from_progress_key(key)
+        .is_some_and(|id| id.progress_key() == key && crate::catalog::step_by_id(id).is_some())
 }
 
 impl Progress {
@@ -158,12 +159,19 @@ impl Progress {
         self.advisories.contains_key(&Self::key_for(id))
     }
 
+    /// An engine step is resolved once completed, skipped, or acknowledged as an
+    /// advisory; the engine never re-inspects an advisory step (D-53).
+    #[must_use]
+    pub fn is_resolved(&self, id: StepId) -> bool {
+        self.is_completed(id) || self.is_skipped(id) || self.has_advisory(id)
+    }
+
     #[must_use]
     pub fn resolved_count_in_phase(&self, phase: Phase) -> usize {
         crate::catalog::step_catalog()
             .iter()
             .filter(|step| step.id.phase == phase)
-            .filter(|step| self.is_completed(step.id) || self.is_skipped(step.id))
+            .filter(|step| self.is_resolved(step.id))
             .count()
     }
 

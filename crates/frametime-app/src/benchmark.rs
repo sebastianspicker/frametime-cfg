@@ -1,7 +1,7 @@
 use std::{fs::File, io::Read, path::PathBuf};
 
 use frametime_domain::fps::{
-    BenchmarkCapture, BenchmarkRunEvidence, FpsCapStrategy, MAX_VPROF_INPUT_BYTES,
+    BenchmarkCapture, BenchmarkRunEvidence, FPS_CAP_RANGE, FpsCapStrategy, MAX_VPROF_INPUT_BYTES,
     ValidatedBenchmarkCapture, measured_fps_cap, parse_vprof_bytes_detailed,
     parse_vprof_output_detailed,
 };
@@ -179,7 +179,7 @@ fn select_fps_strategy(
         FpsStrategyValue::Raw if measured_cap == 0 => {
             Ok(FpsCapStrategy::RawLatency { measured_cap: None })
         }
-        FpsStrategyValue::Raw if (30..=1000).contains(&measured_cap) => {
+        FpsStrategyValue::Raw if FPS_CAP_RANGE.contains(&measured_cap) => {
             Ok(FpsCapStrategy::RawLatency {
                 measured_cap: Some(measured_cap),
             })
@@ -188,7 +188,7 @@ fn select_fps_strategy(
             "--measured-cap must be zero (uncapped) or between 30 and 1000".into(),
         )),
         FpsStrategyValue::Vrr
-            if (30..=1000).contains(&refresh_hz)
+            if FPS_CAP_RANGE.contains(&refresh_hz)
                 && ceiling_margin_hz > 0
                 && ceiling_margin_hz < refresh_hz =>
         {

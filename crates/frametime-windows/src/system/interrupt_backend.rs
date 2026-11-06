@@ -77,26 +77,4 @@ impl LiveBackend<'_> {
         self.captured_steps.insert(key.to_owned());
         Ok(Some(entries))
     }
-
-    pub(crate) fn verify_interrupt_action(
-        &self,
-        action: &Action,
-        key: &str,
-    ) -> Option<Result<(), String>> {
-        match action {
-            Action::MsiInterrupts => Some(
-                self.captured_msi_batches
-                    .get(key)
-                    .ok_or_else(|| "P3:2 verification requires captured MSI devices".to_owned())
-                    .and_then(|batches| verify_native_msi_batches(batches)),
-            ),
-            Action::NicInterruptAffinity => Some(
-                self.captured_nic_affinity_bindings
-                    .get(key)
-                    .ok_or_else(|| "P3:3 verification requires captured NIC binding".to_owned())
-                    .and_then(verify_native_nic_affinity),
-            ),
-            _ => None,
-        }
-    }
 }

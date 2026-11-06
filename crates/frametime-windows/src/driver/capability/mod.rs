@@ -11,9 +11,8 @@ use std::{
 #[cfg(windows)]
 use frametime_domain::driver::SafeModeState;
 use frametime_domain::driver::{
-    AdapterFailure, ArtifactAcquisitionAuthorization, ArtifactIdentity, ArtifactLocator,
-    AuthenticodeEvidence, ExactGpuIdentity, GpuVendor, InspectionAdapter,
-    InstalledArtifactObservation, OemPublishedName, PublishedDriverPackage,
+    AdapterFailure, ArtifactIdentity, ArtifactLocator, AuthenticodeEvidence, ExactGpuIdentity,
+    GpuVendor, InspectionAdapter, OemPublishedName, PublishedDriverPackage,
     SafeModeInspectionAdapter, SafeModeObservation, Sha256Digest, SignedArtifactDescriptor,
 };
 
@@ -55,8 +54,14 @@ pub(crate) fn launch_prepared_nvidia_package(
     expected: &SignedArtifactDescriptor,
     expected_package_sha256: &Sha256Digest,
     observed_at_utc: &str,
+    spawn: bool,
 ) -> Result<PreparedNvidiaLaunchEvidence, AdapterFailure> {
-    native::launch_prepared_nvidia_package(expected, expected_package_sha256, observed_at_utc)
+    native::launch_prepared_nvidia_package(
+        expected,
+        expected_package_sha256,
+        observed_at_utc,
+        spawn,
+    )
 }
 
 #[cfg(windows)]
@@ -104,6 +109,10 @@ fn packages_for(
     let mut packages = BTreeMap::new();
     for (class, binding) in bindings {
         if class != PciDeviceClass::Display || exact_gpu(&binding)? != *target {
+            continue;
+        }
+        // The inbox basic display driver (e.g. after package removal) is not a vendor package.
+        if binding.published_inf.eq_ignore_ascii_case("display.inf") {
             continue;
         }
         let published_name = OemPublishedName::parse(binding.published_inf.to_ascii_lowercase())
@@ -224,9 +233,9 @@ impl<E: PciDeviceEnumerator> InspectionAdapter for WindowsDriverInspection<E> {
         Ok(packages)
     }
 }
-/// Native Safe Mode observation with a boot-session token.  The token is not
-/// an authorization secret; it prevents evidence from one boot being reused
-/// after a reboot.
+/// Native Safe Mode observation with a per-observation tick stamp. The stamp is
+/// not an authorization secret and is not a boot identity: it changes on every
+/// call and consumers only require it to be non-empty.
 #[derive(Debug, Default)]
 pub struct WindowsSafeModeInspection;
 
@@ -363,9 +372,8 @@ pub(crate) use artifact::authorization_expiry_after;
 #[cfg(windows)]
 pub(crate) use artifact::trusted_utc_timestamp;
 pub use artifact::{
-    DriverArtifactStore, NativeNvidiaArtifactStore, NativeNvidiaInstallerRunner,
-    NativeNvidiaSignatureVerifier, NvidiaInstallerRunner, NvidiaSignatureVerifier,
-    VerifiedDriverArtifact,
+    DriverArtifactStore, NativeNvidiaArtifactStore, NativeNvidiaSignatureVerifier,
+    NvidiaSignatureVerifier, VerifiedDriverArtifact,
 };
 pub(crate) use artifact::{
     parse_utc_seconds, validate_bounded_nvidia_authorization,
@@ -374,110 +382,3 @@ pub(crate) use artifact::{
 
 mod download;
 pub use download::NvidiaArtifactAcquirer;
-
-/// Authenticated NVIDIA installer capability. It is intentionally not a
-/// generic executable launcher: the fixed argument vector is the complete
-/// supported silent-install surface.
-pub struct NvidiaInstaller<R, E, V> {
-    runner: R,
-    inspection: WindowsDriverInspection<E>,
-    verifier: V,
-}
-
-impl<R, E, V> NvidiaInstaller<R, E, V> {
-    #[must_use]
-    pub fn new(runner: R, inspection: WindowsDriverInspection<E>, verifier: V) -> Self {
-        Self {
-            runner,
-            inspection,
-            verifier,
-        }
-    }
-
-    /// Installs and immediately returns fresh PnP package evidence. The
-    /// controller binds it to authorization/capture using InstallationEvidence.
-    pub fn install_and_reinspect(
-        &self,
-        artifact_capability: VerifiedDriverArtifact,
-        artifact: &SignedArtifactDescriptor,
-        authorization: &ArtifactAcquisitionAuthorization,
-        now_utc: &str,
-    ) -> Result<
-        (
-            InstalledArtifactObservation,
-            Vec<PublishedDriverPackage>,
-            AuthenticodeEvidence,
-        ),
-        AdapterFailure,
-    >
-    where
-        R: NvidiaInstallerRunner,
-        E: PciDeviceEnumerator,
-        V: NvidiaSignatureVerifier,
-    {
-        let (installed, fresh_authenticode) =
-            self.install_descriptor(artifact_capability, artifact, authorization, now_utc)?;
-        let packages = self
-            .inspection
-            .inspect_published_packages(&artifact.target_gpu)?;
-        if packages.is_empty() {
-            return Err(adapter(
-                "install NVIDIA artifact",
-                "post-install SetupAPI inventory contains no target-GPU package",
-            ));
-        }
-        Ok((installed, packages, fresh_authenticode))
-    }
-
-    fn install_descriptor(
-        &self,
-        artifact_capability: VerifiedDriverArtifact,
-        artifact: &SignedArtifactDescriptor,
-        authorization: &ArtifactAcquisitionAuthorization,
-        now_utc: &str,
-    ) -> Result<(InstalledArtifactObservation, AuthenticodeEvidence), AdapterFailure>
-    where
-        R: NvidiaInstallerRunner,
-        V: NvidiaSignatureVerifier,
-    {
-        artifact
-            .validate_for(&artifact.target_gpu)
-            .map_err(|e| adapter("install NVIDIA artifact", e.to_string()))?;
-        if artifact.target_gpu.vendor != GpuVendor::Nvidia
-            || artifact.authenticode.signer_subject != NVIDIA_SUBJECT
-        {
-            return Err(adapter(
-                "install driver",
-                "AMD and Intel installation are unsupported without a signed artifact policy",
-            ));
-        }
-        validate_bounded_nvidia_authorization(authorization, artifact, now_utc)?;
-        artifact_capability.validate_descriptor(artifact)?;
-        let argv = vec!["-s".into(), "-noreboot".into()];
-        let fresh_authenticode = artifact::verify_nvidia_signature_against_policy(
-            &self.verifier,
-            &artifact_capability,
-            artifact,
-            now_utc,
-        )?;
-        if self
-            .runner
-            .launch_verified(&artifact_capability, &argv)?
-            .exit_code
-            != Some(0)
-        {
-            return Err(adapter(
-                "install NVIDIA artifact",
-                "NVIDIA installer returned a nonzero or unavailable exit status",
-            ));
-        }
-        Ok((
-            InstalledArtifactObservation {
-                artifact: ArtifactIdentity::from_descriptor(artifact)
-                    .map_err(|e| adapter("install NVIDIA artifact", e.to_string()))?,
-                observed_at_utc: now_utc.into(),
-            },
-            fresh_authenticode,
-        ))
-    }
-}

@@ -17,6 +17,20 @@ use crate::{
 pub const MAX_BENCHMARK_HISTORY: usize = 200;
 pub const FINAL_BENCHMARK_SCHEMA_VERSION: u8 = 1;
 pub const FINAL_BENCHMARK_LABEL: &str = "After all optimizations";
+/// Trims to `MAX_BENCHMARK_HISTORY`, dropping the oldest records except the
+/// baseline, the final benchmark and any receipt-bound record.
+pub fn trim_benchmark_history(history: &mut Vec<BenchmarkRecord>) {
+    let mut excess = history.len().saturating_sub(MAX_BENCHMARK_HISTORY);
+    history.retain(|record| {
+        let protected = record.label == BASELINE_BENCHMARK_LABEL
+            || record.label == FINAL_BENCHMARK_LABEL
+            || record.receipt_id.is_some();
+        let drop = excess > 0 && !protected;
+        excess -= usize::from(drop);
+        !drop
+    });
+}
+
 pub const BASELINE_BENCHMARK_LABEL: &str = "Baseline (before optimizations)";
 
 /// Trim a user-supplied `fps-cap` label; empty and reserved labels would later
@@ -334,9 +348,7 @@ fn prepare_final_benchmark_commit_inner(
         transaction_id: Some(receipt.transaction_id.clone()),
         unknown: BTreeMap::new(),
     });
-    if next_history.len() > MAX_BENCHMARK_HISTORY {
-        next_history.drain(..next_history.len() - MAX_BENCHMARK_HISTORY);
-    }
+    trim_benchmark_history(&mut next_history);
     let persisted_record = next_history
         .last()
         .ok_or("final benchmark history did not retain its receipt")?;
@@ -397,8 +409,7 @@ fn final_benchmark_stage_is_ready(progress: &Progress) -> bool {
 }
 
 fn has_unresolved_phase_three_engine_steps(progress: &Progress) -> bool {
-    phase_three_engine_steps()
-        .any(|step| !progress.is_completed(step.id) && !progress.is_skipped(step.id))
+    phase_three_engine_steps().any(|step| !progress.is_resolved(step.id))
 }
 
 fn authorized_phase_three_transaction_id(state: &State) -> Result<TransactionId, String> {
@@ -580,20 +591,6 @@ pub fn decode_benchmark_history_checked(value: Value) -> Result<Vec<BenchmarkRec
 
 const fn one_run() -> u32 {
     1
-}
-
-/// Appends one record to supplied history and retains the newest 200.
-#[must_use]
-pub fn append_benchmark_record(
-    history: &[BenchmarkRecord],
-    record: BenchmarkRecord,
-) -> Vec<BenchmarkRecord> {
-    let mut history = history.to_vec();
-    history.push(record);
-    if history.len() > MAX_BENCHMARK_HISTORY {
-        history.drain(..history.len() - MAX_BENCHMARK_HISTORY);
-    }
-    history
 }
 
 #[cfg(test)]

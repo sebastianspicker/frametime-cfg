@@ -19,11 +19,7 @@ pub struct TransactionId(String);
 impl TransactionId {
     pub fn parse(value: impl Into<String>) -> Result<Self, &'static str> {
         let value = value.into();
-        if value.len() == 32
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if crate::validate::is_lower_hex(&value, 32) {
             Ok(Self(value))
         } else {
             Err("transaction id must be 32 lowercase hexadecimal characters")

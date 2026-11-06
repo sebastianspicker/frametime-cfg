@@ -7,8 +7,10 @@ use frametime_domain::audit::{
 pub(crate) fn load_audit_file(
     trusted: &TrustedWorkDir,
 ) -> Result<frametime_domain::audit::AuditFile, String> {
-    if trusted.path().join(AUDIT_FILE).exists() {
-        read_json_trusted(trusted, AUDIT_FILE).map_err(|error| format!("read audit: {error}"))
+    if let Some(file) =
+        read_json_if_present(trusted, AUDIT_FILE).map_err(|error| format!("read audit: {error}"))?
+    {
+        Ok(file)
     } else {
         Ok(frametime_domain::audit::AuditFile {
             entries: Vec::new(),

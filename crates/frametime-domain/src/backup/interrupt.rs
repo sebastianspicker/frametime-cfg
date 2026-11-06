@@ -98,10 +98,7 @@ impl InterruptPolicyBackup {
         if self.step != self.policy.expected_step() {
             return Err(InterruptPolicyBackupError::StepMismatch);
         }
-        if self.timestamp.trim().is_empty()
-            || self.timestamp.len() > 64
-            || self.timestamp.chars().any(char::is_control)
-        {
+        if !crate::validate::timestamp_ok(&self.timestamp) {
             return Err(InterruptPolicyBackupError::InvalidTimestamp);
         }
         self.device

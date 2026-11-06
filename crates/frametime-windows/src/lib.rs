@@ -21,9 +21,9 @@ use frametime_domain::binding::NetworkAdapterBinding as CoreNetworkAdapterBindin
 use frametime_domain::{
     backup::{BackupEntry, BackupFile, CS2_OPTIONAL_CONFIG_TRANSACTION_STEP},
     benchmark::{
-        BenchmarkRecord, FINAL_BENCHMARK_LABEL, MAX_BENCHMARK_HISTORY,
-        prepare_baseline_benchmark_commit_with_evidence, prepare_final_benchmark_commit,
-        prepare_final_benchmark_commit_with_evidence, prepare_final_benchmark_legacy_retry,
+        BenchmarkRecord, FINAL_BENCHMARK_LABEL, prepare_baseline_benchmark_commit_with_evidence,
+        prepare_final_benchmark_commit, prepare_final_benchmark_commit_with_evidence,
+        prepare_final_benchmark_legacy_retry, trim_benchmark_history,
         validate_benchmark_run_evidence, validate_persisted_baseline_benchmark,
         validate_persisted_final_benchmark,
     },
@@ -114,10 +114,9 @@ pub use self::backend::{
 pub use self::diagnostics::{WindowsHardwareDiagnostics, preview_video};
 pub use self::driver::{
     DriverArtifactStore, DriverLifecycleStatus, DriverTransaction, NativeNvidiaArtifactStore,
-    NativeNvidiaInstallerRunner, NativeNvidiaSignatureVerifier, NativeSystem32ToolRunner,
-    NvidiaArtifactAcquirer, NvidiaArtifactLocation, NvidiaDownloadHost, NvidiaInstaller,
-    NvidiaInstallerRunner, NvidiaInstallerSource, NvidiaLabBuildManifest, NvidiaLabBuildRequest,
-    NvidiaPreparationRequest, NvidiaSignatureVerifier, PnpUtilDriverRemoval,
+    NativeNvidiaSignatureVerifier, NativeSystem32ToolRunner, NvidiaArtifactAcquirer,
+    NvidiaArtifactLocation, NvidiaDownloadHost, NvidiaInstallerSource, NvidiaLabBuildManifest,
+    NvidiaLabBuildRequest, NvidiaPreparationRequest, NvidiaSignatureVerifier, PnpUtilDriverRemoval,
     PreparedNvidiaPackageManifest, ProcessOutcome, System32ToolRunner, VerifiedDriverArtifact,
     WindowsDriverInspection, WindowsSafeModeInspection, build_nvidia_lab, inspect_driver_status,
     prepare_nvidia_driver, prepare_nvidia_driver_with_options, reconcile_nvidia_profiles,

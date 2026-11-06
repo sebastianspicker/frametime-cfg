@@ -265,9 +265,8 @@ guessing the next action.
 
 ```mermaid
 flowchart LR
-    pr["Dependabot PR or<br/>manual dispatch"] --> classify["classify job"]
-    classify --> host["frametime-host<br/>fmt, clippy, test, dry-run"]
-    classify --> wingate["frametime-windows<br/>verify.cmd"]
+    pr["Dependabot PR or<br/>manual dispatch"] --> host["frametime-host<br/>fmt, clippy, test, dry-run"]
+    pr --> wingate["frametime-windows<br/>verify.cmd"]
     wingate -->|"cargo build --release"| unsigned["package.cmd /unsigned"]
     unsigned --> zip[("dist ZIP + .sha256")]
     rel["Release machine"] -->|"signing inputs"| release["package.cmd /release"]
@@ -277,11 +276,10 @@ flowchart LR
 ```
 
 CI ([`rust.yml`](../.github/workflows/rust.yml)) runs only for Dependabot pull
-requests or manual dispatch. `classify` decides whether a full run is needed
-([`classify-ci-change.sh`](../scripts/classify-ci-change.sh)). The Windows job
+requests or manual dispatch. The Windows job
 runs the same gate a contributor runs locally
-([`verify.cmd`](../scripts/verify.cmd): fmt, Clippy, tests, `dry-run all`,
-`cargo audit`) and then builds and structurally verifies the **unsigned**
+([`verify.cmd`](../scripts/verify.cmd): fmt, Clippy, tests with and without `--all-features`,
+`dry-run all`, `cargo audit`) and then builds and structurally verifies the **unsigned**
 package. The signed `/release` lane runs only on a controlled release machine
 ([`package.cmd`](../scripts/package.cmd), [deployment](DEPLOYMENT.md)).
 [`security.yml`](../.github/workflows/security.yml) (secret scan, workflow
@@ -319,7 +317,7 @@ In the order a newcomer would read it:
 | [`crates/frametime-windows/src/reboot`](../crates/frametime-windows/src/reboot) | Safe Mode / Run handoffs and abort |
 | [`crates/frametime-gui/src`](../crates/frametime-gui/src) | Win32 window (`app/`) and testable view model (`model/`) |
 | [`repo-checks/src`](../repo-checks/src) | Batch-label and CS2 cfg consistency tests |
-| [`scripts`](../scripts) | `verify.cmd` gate, `package.cmd` packaging, CI classifier |
+| [`scripts`](../scripts) | `verify.cmd` gate, `package.cmd` packaging |
 
 ## Invariants and non-goals
 

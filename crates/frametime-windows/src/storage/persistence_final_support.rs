@@ -44,40 +44,23 @@ pub(crate) fn random_final_receipt_id() -> Result<TransactionId, String> {
 
 pub(crate) fn read_state_for_final(
     trusted: &TrustedWorkDir,
-    work_dir: &Path,
+    _work_dir: &Path,
 ) -> Result<State, String> {
-    if !work_dir.join(STATE_FILE).exists() {
-        return Ok(State::default());
-    }
-    let state: State = read_json_trusted(trusted, STATE_FILE)
-        .map_err(|error| format!("read final benchmark state: {error}"))?;
-    state.validate().map_err(str::to_owned)?;
-    if !state.work_dir.eq_ignore_ascii_case(WINDOWS_WORK_DIR) {
-        return Err("state workDir must be C:\\FRAMETIME_CFG".into());
-    }
-    Ok(state)
+    read_state_labeled(trusted, "final benchmark")
 }
 
 pub(crate) fn read_progress_for_final(
     trusted: &TrustedWorkDir,
-    work_dir: &Path,
+    _work_dir: &Path,
 ) -> Result<Progress, String> {
-    if !work_dir.join(PROGRESS_FILE).exists() {
-        return Ok(Progress::default());
-    }
-    read_json_trusted(trusted, PROGRESS_FILE)
-        .map_err(|error| format!("read final benchmark progress: {error}"))
+    read_progress_labeled(trusted, "final benchmark")
 }
 
 pub(crate) fn read_history_for_final(
     trusted: &TrustedWorkDir,
-    work_dir: &Path,
+    _work_dir: &Path,
 ) -> Result<Vec<BenchmarkRecord>, String> {
-    if !work_dir.join("benchmark_history.json").exists() {
-        return Ok(Vec::new());
-    }
-    let history: Vec<BenchmarkRecord> = read_json_trusted(trusted, "benchmark_history.json")
-        .map_err(|error| format!("read final benchmark history: {error}"))?;
+    let history = read_history_labeled(trusted, "final benchmark")?;
     validate_benchmark_run_evidence(&history)?;
     Ok(history)
 }

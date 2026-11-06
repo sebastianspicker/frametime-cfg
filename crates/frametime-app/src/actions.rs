@@ -148,9 +148,13 @@ pub fn run_reconcile_nvidia_profiles(
     accept_driver_incompatible_profile_items: bool,
     yes: bool,
 ) -> Result<DriverPreparationOutcome, ApplicationError> {
-    let transaction =
-        frametime_windows::reconcile_nvidia_profiles(accept_driver_incompatible_profile_items, yes)
-            .map_err(ApplicationError::failed)?;
+    let package = require_authenticated_package()?;
+    let transaction = frametime_windows::reconcile_nvidia_profiles(
+        &package,
+        accept_driver_incompatible_profile_items,
+        yes,
+    )
+    .map_err(ApplicationError::failed)?;
     driver_json_outcome(&transaction)
 }
 
@@ -257,18 +261,13 @@ pub(crate) fn verify_snapshot() -> Result<VerificationSummary, ApplicationError>
     report
         .items
         .push(final_benchmark_verification_item(receipt_status));
-    if report.has_drift() {
-        Err(ApplicationError::failed(
-            "verification found missing or changed items",
-        ))
-    } else {
-        Ok(VerificationSummary {
-            state,
-            progress,
-            report,
-            work_dir: WINDOWS_WORK_DIR,
-        })
-    }
+    // Drift is reported by the frontends from `report`, so the items stay visible.
+    Ok(VerificationSummary {
+        state,
+        progress,
+        report,
+        work_dir: WINDOWS_WORK_DIR,
+    })
 }
 
 fn final_benchmark_verification_item(status: FinalBenchmarkStatus) -> VerificationItem {

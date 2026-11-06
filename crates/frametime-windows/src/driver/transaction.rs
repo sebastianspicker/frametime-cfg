@@ -13,7 +13,7 @@ use frametime_domain::driver::{
 use frametime_domain::driver::{DrsSnapshot, ProfileBackupDigestReference};
 use serde::{Deserialize, Serialize};
 
-use crate::{DrsBackup, TrustedWorkDir, read_json_trusted};
+use crate::{DrsBackup, TrustedWorkDir, read_json_if_present, read_json_trusted};
 #[cfg(windows)]
 use crate::{WorkLock, write_json_atomic_trusted};
 
@@ -63,6 +63,10 @@ pub struct DriverTransaction {
     pub accepted_profile_omissions: Vec<frametime_domain::driver::DrsItemKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cs2_backup: Option<DrsBackup>,
+    /// Set durably once the P3:1 installer exited 0, so a retry after a later
+    /// failure never reruns it. A launch with no recorded success is rerun.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer_succeeded_at_utc: Option<String>,
 }
 
 impl DriverTransaction {
@@ -94,6 +98,7 @@ impl DriverTransaction {
             profile_reconciliation: Vec::new(),
             accepted_profile_omissions: Vec::new(),
             cs2_backup: None,
+            installer_succeeded_at_utc: None,
         })
     }
 
@@ -133,7 +138,8 @@ impl DriverTransaction {
             || self.prepared_package_sha256.is_some()
             || !self.profile_reconciliation.is_empty()
             || !self.accepted_profile_omissions.is_empty()
-            || self.cs2_backup.is_some();
+            || self.cs2_backup.is_some()
+            || self.installer_succeeded_at_utc.is_some();
         if contains_v2_fields {
             Err("v1 driver transaction contains v2-only fields".into())
         } else {
@@ -224,6 +230,11 @@ impl DriverTransaction {
     }
 
     #[must_use]
+    pub fn should_launch_installer(&self) -> bool {
+        self.installer_succeeded_at_utc.is_none()
+    }
+
+    #[must_use]
     pub fn removal_complete(&self) -> bool {
         self.removal.is_some()
     }
@@ -299,11 +310,12 @@ pub(crate) fn load_driver_transaction_at(
     work_dir: &Path,
 ) -> Result<Option<DriverTransaction>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    if !trusted.path().join(DRIVER_TRANSACTION_FILE).exists() {
+    let Some(transaction): Option<DriverTransaction> =
+        read_json_if_present(&trusted, DRIVER_TRANSACTION_FILE)
+            .map_err(|error| format!("read driver transaction: {error}"))?
+    else {
         return Ok(None);
-    }
-    let transaction: DriverTransaction = read_json_trusted(&trusted, DRIVER_TRANSACTION_FILE)
-        .map_err(|error| format!("read driver transaction: {error}"))?;
+    };
     transaction.validate_persisted(CaptureFreshnessPolicy {
         maximum_age_seconds: 86_400,
     })?;

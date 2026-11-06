@@ -70,10 +70,6 @@ impl<'authority> LiveBackend<'authority> {
         operation.step.id.progress_key()
     }
 
-    pub(crate) fn backup_path(&self) -> PathBuf {
-        self.work_dir.join(BACKUP_FILE)
-    }
-
     pub(crate) fn require_descriptor_inputs(
         &self,
         descriptor: &ActionDescriptor,

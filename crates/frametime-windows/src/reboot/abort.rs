@@ -238,11 +238,10 @@ fn archive_aborted_transaction(
     final_benchmark: Option<&FinalBenchmarkReceipt>,
     report: &HandoffAbortReport,
 ) -> Result<(), String> {
-    let mut archive = if trusted.path().join(ABORTED_TRANSACTIONS_FILE).exists() {
-        let existing: AbortedRebootTransactions =
-            read_json_trusted(trusted, ABORTED_TRANSACTIONS_FILE).map_err(|error| {
-                format!("abort-handoff read aborted transaction evidence: {error}")
-            })?;
+    let existing: Option<AbortedRebootTransactions> =
+        read_json_if_present(trusted, ABORTED_TRANSACTIONS_FILE)
+            .map_err(|error| format!("abort-handoff read aborted transaction evidence: {error}"))?;
+    let mut archive = if let Some(existing) = existing {
         if existing.schema_version != ABORTED_TRANSACTIONS_SCHEMA {
             return Err("abort-handoff aborted transaction evidence has an unknown schema".into());
         }

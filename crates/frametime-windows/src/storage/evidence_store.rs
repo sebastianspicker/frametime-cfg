@@ -2,9 +2,10 @@ use crate::*;
 pub(crate) fn load_evidence_file(
     trusted: &TrustedWorkDir,
 ) -> Result<frametime_domain::evidence::EvidenceFile, String> {
-    if trusted.path().join(EVIDENCE_FILE).exists() {
-        read_json_trusted(trusted, EVIDENCE_FILE)
-            .map_err(|error| format!("read prerequisite evidence: {error}"))
+    if let Some(file) = read_json_if_present(trusted, EVIDENCE_FILE)
+        .map_err(|error| format!("read prerequisite evidence: {error}"))?
+    {
+        Ok(file)
     } else {
         Ok(frametime_domain::evidence::EvidenceFile {
             entries: Vec::new(),

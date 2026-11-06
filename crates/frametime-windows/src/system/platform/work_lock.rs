@@ -119,9 +119,12 @@ fn create_lock(work_dir: &Path, path: &Path) -> Result<LockHandle, String> {
     Ok(LockHandle(path.to_path_buf()))
 }
 
-#[cfg(all(test, not(windows)))]
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    // Runs against the real create_lock on every OS, always in a tempdir. On Windows that
+    // includes the protected-DACL hardening, which needs an elevated runner.
 
     fn acquire_on_other_thread(work_dir: &Path) -> Result<(), String> {
         let work_dir = work_dir.to_path_buf();

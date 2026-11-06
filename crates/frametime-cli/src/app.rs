@@ -7,7 +7,7 @@ use crate::{
         Branch, CleanupMode, Cli, Command, DriverCommand, FpsRequest, FpsStrategyValue,
         HardwareCommand, VprofBenchmarkRequest,
     },
-    console::{install_cancellation_handler, interactive_menu},
+    console::{install_cancellation_handler, interactive_menu, set_engine_active},
     error::AppError,
     package_auth::run_authentication_smoke,
     render,
@@ -36,7 +36,15 @@ fn run(mut cli: Cli) -> Result<(), AppError> {
     if cli.command.is_none() {
         cli.command = Some(interactive_menu()?);
     }
-    match cli.command.expect("set above") {
+    let command = cli.command.expect("set above");
+    set_engine_active(matches!(
+        command,
+        Command::Optimize { .. }
+            | Command::Phase2 { .. }
+            | Command::Phase3 { .. }
+            | Command::Phase3Handoff
+    ));
+    match command {
         Command::DryRun { branch } => {
             present(frametime_app::run_dry(map_branch(branch)), render::dry_run)
         }
@@ -103,10 +111,10 @@ fn run(mut cli: Cli) -> Result<(), AppError> {
             frametime_app::run_hardware_diagnostic(map_hardware(command)),
             |outcome| render::hardware(outcome).expect("serialize diagnostic"),
         ),
-        command => present(
-            frametime_app::run_live(map_live_command(command)),
-            |outcome| render::command(outcome).expect("serialize verification"),
-        ),
+        command => render::command(app_result(frametime_app::run_live(map_live_command(
+            command,
+        )))?)
+        .map_err(AppError::failed),
     }
 }
 

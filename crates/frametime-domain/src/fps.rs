@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Accepted range for any new frame cap, raw or VRR.
+pub const FPS_CAP_RANGE: std::ops::RangeInclusive<u32> = 30..=1000;
 pub const MAX_VPROF_INPUT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_VPROF_OBSERVATIONS: usize = 1_000;
 pub const MIN_CAP_AUTHORIZATION_RUNS: usize = 5;
@@ -299,7 +301,7 @@ pub fn measured_fps_cap(
             ceiling_margin_hz,
         } => refresh_hz
             .checked_sub(ceiling_margin_hz)
-            .filter(|cap| *cap > 0)
+            .filter(|cap| FPS_CAP_RANGE.contains(cap))
             .and_then(|cap| sustainable_cap(cap, capture)),
     }
 }
@@ -490,6 +492,16 @@ mod tests {
                 FpsCapStrategy::Vrr {
                     refresh_hz: 144,
                     ceiling_margin_hz: 144
+                },
+                &evidence
+            ),
+            None
+        );
+        assert_eq!(
+            measured_fps_cap(
+                FpsCapStrategy::Vrr {
+                    refresh_hz: 60,
+                    ceiling_margin_hz: 59
                 },
                 &evidence
             ),

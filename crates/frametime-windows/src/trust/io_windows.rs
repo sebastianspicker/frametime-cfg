@@ -6,14 +6,15 @@ use crate::system::wide;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE},
+        Foundation::{CloseHandle, ERROR_FILE_EXISTS, GENERIC_READ, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
             CREATE_NEW, CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY,
             FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BEGIN,
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH,
-            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_MODE, FileAttributeTagInfo,
-            FlushFileBuffers, GetDriveTypeW, GetFileInformationByHandleEx, GetFileSizeEx,
-            OPEN_ALWAYS, OPEN_EXISTING, ReadFile, SetEndOfFile, SetFilePointerEx, WriteFile,
+            FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, FlushFileBuffers,
+            GetDriveTypeW, GetFileInformationByHandleEx, GetFileSizeEx, OPEN_ALWAYS, OPEN_EXISTING,
+            ReadFile, SetFilePointerEx, WriteFile,
         },
         System::WindowsProgramming::DRIVE_FIXED,
     },
@@ -120,7 +121,8 @@ fn open_current_log_for_append(trusted: &TrustedWorkDir) -> Result<RetainedHandl
         CreateFileW(
             PCWSTR(path.as_ptr()),
             FILE_APPEND_DATA.0 | GENERIC_READ.0 | FILE_READ_ATTRIBUTES.0,
-            FILE_SHARE_MODE(0),
+            // Concurrent appenders and `read_log` must not collide with this handle.
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
             Some(attributes.as_ptr()),
             OPEN_ALWAYS,
             FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH,
@@ -160,6 +162,11 @@ pub(crate) fn export_backup(
     Ok(())
 }
 
+/// Read-only suite opens let a writer append to or rename over the file; the handle keeps the
+/// old content, and callers re-check length and hash.
+const READ_SHARE: FILE_SHARE_MODE =
+    FILE_SHARE_MODE(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0 | FILE_SHARE_DELETE.0);
+
 pub(crate) fn open_trusted_logs_directory(
     trusted: &TrustedWorkDir,
 ) -> Result<RetainedHandle, OpenError> {
@@ -168,6 +175,7 @@ pub(crate) fn open_trusted_logs_directory(
         &trusted.path().join(LOG_DIRECTORY),
         true,
         FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0 | GENERIC_READ.0,
+        READ_SHARE,
     )?;
     trusted_work_dir::validate_descendant_handle(handle.0, LOG_DIRECTORY, true)?;
     Ok(handle)
@@ -182,6 +190,7 @@ pub(crate) fn open_trusted_file(
         &trusted.path().join(relative),
         false,
         GENERIC_READ.0 | FILE_READ_ATTRIBUTES.0,
+        READ_SHARE,
     )?;
     trusted_work_dir::validate_descendant_handle(handle.0, relative, false)?;
     Ok(handle)
@@ -210,35 +219,28 @@ pub(crate) fn open_destination(
 ) -> Result<RetainedHandle, String> {
     let expected = destination.absolute_path();
     let path = wide(&expected);
-    let access = GENERIC_READ.0 | GENERIC_WRITE.0 | FILE_READ_ATTRIBUTES.0;
-    let flags = FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH;
+    // SAFETY: `path` is a NUL-terminated UTF-16 buffer kept alive for the call.
     let opened = unsafe {
         CreateFileW(
             PCWSTR(path.as_ptr()),
-            access,
+            GENERIC_READ.0 | GENERIC_WRITE.0 | FILE_READ_ATTRIBUTES.0,
+            // Exclusive: the export is verified through this handle only.
             FILE_SHARE_MODE(0),
             None,
-            OPEN_EXISTING,
-            flags,
+            // CREATE_NEW never truncates a previous export.
+            CREATE_NEW,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH,
             None,
         )
     };
     let handle = match opened {
         Ok(handle) => RetainedHandle(handle),
-        Err(error) if is_missing_path_hresult(error.code().0) => unsafe {
-            CreateFileW(
-                PCWSTR(path.as_ptr()),
-                access,
-                FILE_SHARE_MODE(0),
-                None,
-                CREATE_NEW,
-                flags,
-                None,
-            )
-            .map(RetainedHandle)
-            .map_err(|error| format!("create backup export destination: {error}"))?
-        },
-        Err(error) => return Err(format!("open backup export destination: {error}")),
+        Err(error) if error.code() == ERROR_FILE_EXISTS.to_hresult() => {
+            return Err(format!(
+                "backup export destination {expected} already exists; choose a new file name"
+            ));
+        }
+        Err(error) => return Err(format!("create backup export destination: {error}")),
     };
     validate_final_path(handle.0, &expected, "backup export destination")?;
     Ok(handle)
@@ -250,6 +252,7 @@ pub(crate) fn open_directory(path: &str) -> Result<RetainedHandle, String> {
         CreateFileW(
             PCWSTR(path.as_ptr()),
             FILE_LIST_DIRECTORY.0 | FILE_READ_ATTRIBUTES.0 | GENERIC_READ.0,
+            // Exclusive: pins each export parent so it cannot be swapped before the copy.
             FILE_SHARE_MODE(0),
             None,
             OPEN_EXISTING,
@@ -265,6 +268,7 @@ pub(crate) fn open_existing(
     path: &std::path::Path,
     directory: bool,
     access: u32,
+    share: FILE_SHARE_MODE,
 ) -> Result<RetainedHandle, OpenError> {
     let path = path
         .as_os_str()
@@ -280,7 +284,7 @@ pub(crate) fn open_existing(
         CreateFileW(
             PCWSTR(path.as_ptr()),
             access,
-            FILE_SHARE_MODE(0),
+            share,
             None,
             OPEN_EXISTING,
             flags,
@@ -423,8 +427,6 @@ pub(crate) fn copy_exact(
 ) -> Result<(), String> {
     seek_start(source, "backup source")?;
     seek_start(destination, "backup export destination")?;
-    unsafe { SetEndOfFile(destination) }
-        .map_err(|error| format!("truncate backup export destination: {error}"))?;
     let mut remaining = length;
     let mut copied = 0_usize;
     let mut hasher = Sha256::new();

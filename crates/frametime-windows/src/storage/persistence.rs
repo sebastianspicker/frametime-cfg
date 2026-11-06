@@ -21,14 +21,7 @@ pub fn load_progress_if_present() -> Result<Option<Progress>, String> {
 
 pub(crate) fn load_progress_if_present_at(work_dir: &Path) -> Result<Option<Progress>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    let work_dir = trusted.path();
-    let path = work_dir.join(PROGRESS_FILE);
-    if !path.exists() {
-        return Ok(None);
-    }
-    read_json_trusted(&trusted, PROGRESS_FILE)
-        .map(Some)
-        .map_err(|error| format!("read progress: {error}"))
+    read_json_if_present(&trusted, PROGRESS_FILE).map_err(|error| format!("read progress: {error}"))
 }
 
 /// Load and validate persisted state only from the fixed live location.
@@ -48,13 +41,11 @@ pub fn load_state_if_present() -> Result<Option<State>, String> {
 
 pub(crate) fn load_state_if_present_at(work_dir: &Path) -> Result<Option<State>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    let work_dir = trusted.path();
-    let path = work_dir.join(STATE_FILE);
-    if !path.exists() {
+    let Some(state): Option<State> = read_json_if_present(&trusted, STATE_FILE)
+        .map_err(|error| format!("read state: {error}"))?
+    else {
         return Ok(None);
-    }
-    let state: State =
-        read_json_trusted(&trusted, STATE_FILE).map_err(|error| format!("read state: {error}"))?;
+    };
     state.validate().map_err(str::to_owned)?;
     if !state.work_dir.eq_ignore_ascii_case(WINDOWS_WORK_DIR) {
         return Err("state workDir must be C:\\FRAMETIME_CFG".into());
@@ -69,12 +60,12 @@ pub fn load_benchmark_history() -> Result<Vec<BenchmarkRecord>, String> {
 
 pub(crate) fn load_benchmark_history_at(work_dir: &Path) -> Result<Vec<BenchmarkRecord>, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    let path = trusted.path().join("benchmark_history.json");
-    if !path.exists() {
+    let Some(value): Option<serde_json::Value> =
+        read_json_if_present(&trusted, "benchmark_history.json")
+            .map_err(|error| format!("read benchmark history: {error}"))?
+    else {
         return Ok(Vec::new());
-    }
-    let value: serde_json::Value = read_json_trusted(&trusted, "benchmark_history.json")
-        .map_err(|error| format!("read benchmark history: {error}"))?;
+    };
     frametime_domain::benchmark::decode_benchmark_history_checked(value)
 }
 
@@ -86,15 +77,13 @@ pub fn load_backup() -> Result<BackupFile, String> {
 
 pub(crate) fn load_backup_at(work_dir: &Path) -> Result<BackupFile, String> {
     let trusted = TrustedWorkDir::acquire(work_dir)?;
-    let path = trusted.path().join(BACKUP_FILE);
-    if !path.exists() {
-        return Ok(BackupFile {
+    Ok(read_json_if_present(&trusted, BACKUP_FILE)
+        .map_err(|error| format!("read backup: {error}"))?
+        .unwrap_or_else(|| BackupFile {
             entries: Vec::new(),
             created: String::new(),
             unknown: BTreeMap::new(),
-        });
-    }
-    read_json_trusted(&trusted, BACKUP_FILE).map_err(|error| format!("read backup: {error}"))
+        }))
 }
 
 /// Copy UTF-16 text through the native Windows clipboard.  Ownership of the
@@ -119,12 +108,9 @@ pub fn configure_profile(
     let trusted = TrustedWorkDir::acquire_fixed()?;
     let work_dir = trusted.path();
     let _lock = WorkLock::acquire(work_dir)?;
-    let path = work_dir.join(STATE_FILE);
-    let mut state = if path.exists() {
-        read_json_trusted(&trusted, STATE_FILE).map_err(|error| format!("read state: {error}"))?
-    } else {
-        State::default()
-    };
+    let mut state: State = read_json_if_present(&trusted, STATE_FILE)
+        .map_err(|error| format!("read state: {error}"))?
+        .unwrap_or_default();
     state.validate().map_err(str::to_owned)?;
     state.set_profile(profile);
     state.work_dir = WINDOWS_WORK_DIR.into();
@@ -172,12 +158,9 @@ pub fn persist_fps_capture(
         }
     }
     let _lock = WorkLock::acquire(work_dir)?;
-    let state_path = work_dir.join(STATE_FILE);
-    let mut state = if state_path.exists() {
-        read_json_trusted(&trusted, STATE_FILE).map_err(|error| format!("read state: {error}"))?
-    } else {
-        State::default()
-    };
+    let mut state: State = read_json_if_present(&trusted, STATE_FILE)
+        .map_err(|error| format!("read state: {error}"))?
+        .unwrap_or_default();
     state.validate().map_err(str::to_owned)?;
     if state.final_benchmark.is_some() {
         return Err(
@@ -187,13 +170,10 @@ pub fn persist_fps_capture(
     // Validate the label and history before any write so bad input saves nothing.
     let label =
         frametime_domain::benchmark::normalize_fps_capture_label(&label).map_err(str::to_owned)?;
-    let history_path = work_dir.join("benchmark_history.json");
-    let mut history: Vec<BenchmarkRecord> = if history_path.exists() {
-        read_json_trusted(&trusted, "benchmark_history.json")
+    let mut history: Vec<BenchmarkRecord> =
+        read_json_if_present(&trusted, "benchmark_history.json")
             .map_err(|error| format!("read benchmark history: {error}"))?
-    } else {
-        Vec::new()
-    };
+            .unwrap_or_default();
     validate_benchmark_run_evidence(&history)?;
     let captured_at = timestamp();
     state.fps_cap = cap;
@@ -221,9 +201,7 @@ pub fn persist_fps_capture(
             transaction_id: None,
             unknown: BTreeMap::new(),
         });
-        if history.len() > MAX_BENCHMARK_HISTORY {
-            history.drain(..history.len() - MAX_BENCHMARK_HISTORY);
-        }
+        trim_benchmark_history(&mut history);
         write_json_atomic_trusted(&trusted, "benchmark_history.json", &history)
             .map_err(|error| format!("persist benchmark history: {error}"))?;
         let verified: Vec<BenchmarkRecord> = read_json_trusted(&trusted, "benchmark_history.json")
@@ -368,6 +346,7 @@ pub fn persist_final_benchmark(
 pub fn cleanup_quick(package: &AuthenticatedPackage) -> Result<CleanupReport, String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     require_elevation()?;
+    let _lock = WorkLock::acquire(trusted.path())?;
     Ok(cleanup_native::run(
         frametime_domain::cleanup::CleanupMode::Quick,
         trusted.path(),
@@ -380,6 +359,7 @@ pub fn cleanup_quick(package: &AuthenticatedPackage) -> Result<CleanupReport, St
 pub fn cleanup_full(package: &AuthenticatedPackage) -> Result<CleanupReport, String> {
     let trusted = TrustedWorkDir::acquire_fixed()?;
     require_elevation()?;
+    let _lock = WorkLock::acquire(trusted.path())?;
     Ok(cleanup_native::run(
         frametime_domain::cleanup::CleanupMode::Full,
         trusted.path(),

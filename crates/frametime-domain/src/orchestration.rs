@@ -7,9 +7,8 @@
 
 use crate::{
     catalog::{
-        OrchestrationRole, PHASE_ONE_RESIZABLE_BAR_CHECK, PHASE_ONE_SAFE_MODE_HANDOFF,
-        PHASE_ONE_XMP_EXPO_CHECK, PHASE_THREE_DRIVER_INSTALL, PHASE_THREE_FINAL_BENCHMARK,
-        PHASE_TWO_SAFE_BOOT_CLEAR, Phase, StepId, step_catalog,
+        OrchestrationRole, PHASE_ONE_SAFE_MODE_HANDOFF, PHASE_THREE_DRIVER_INSTALL,
+        PHASE_THREE_FINAL_BENCHMARK, PHASE_TWO_SAFE_BOOT_CLEAR, Phase, StepId, step_catalog,
     },
     handoff::RebootStage,
     state::{Progress, State},
@@ -353,18 +352,11 @@ fn require_resolved_phase_one(progress: &Progress) -> Result<(), GuardError> {
         step.id.phase == Phase::One && step.orchestration_role == OrchestrationRole::Engine
     }) {
         let id = step.id;
-        let resolved = progress.is_completed(id)
-            || progress.is_skipped(id)
-            || (phase_one_advisory_is_authorized(id) && progress.has_advisory(id));
-        if !resolved {
+        if !progress.is_resolved(id) {
             return Err(GuardError::MissingResolvedPhaseOneStep(id.number));
         }
     }
     Ok(())
-}
-
-const fn phase_one_advisory_is_authorized(id: StepId) -> bool {
-    matches!(id, PHASE_ONE_XMP_EXPO_CHECK | PHASE_ONE_RESIZABLE_BAR_CHECK)
 }
 
 fn require_completed(progress: &Progress, id: StepId) -> Result<(), ()> {
@@ -424,70 +416,6 @@ fn has_phase_two_later_step(progress: &Progress) -> bool {
             && step.id != PHASE_TWO_SAFE_BOOT_CLEAR
             && (progress.is_completed(step.id) || progress.is_skipped(step.id))
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FailurePoint {
-    BeforeMutation,
-    SafeModeHandoffArmed,
-    PhaseTwoSafeBootClear,
-    PhaseTwoDriverWork,
-    PhaseThreeDriverWork,
-    FinalBenchmarkPersistence,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RecoveryPlan {
-    pub retain_handoff: bool,
-    pub compensations: Vec<Compensation>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Compensation {
-    NoneClaimed,
-    RestoreSafeBootFromCapturedBackup,
-    RestoreCapturedPhaseBackups,
-    RetainPhaseTwoHandoffForRecovery,
-    RetainPhaseThreeHandoffUntilCompletion,
-}
-
-/// Describes requested compensating work only. The caller must execute and
-/// verify these actions through a platform adapter before recording success.
-#[must_use]
-pub fn recovery_for(request: PhaseRequest, failure: FailurePoint) -> RecoveryPlan {
-    let compensations = match (request, failure) {
-        (_, FailurePoint::BeforeMutation) => vec![Compensation::NoneClaimed],
-        (PhaseRequest::ArmSafeMode, FailurePoint::SafeModeHandoffArmed) => vec![
-            Compensation::RestoreSafeBootFromCapturedBackup,
-            Compensation::RetainPhaseTwoHandoffForRecovery,
-        ],
-        (PhaseRequest::PhaseTwo, FailurePoint::PhaseTwoSafeBootClear) => vec![
-            Compensation::RestoreSafeBootFromCapturedBackup,
-            Compensation::RetainPhaseTwoHandoffForRecovery,
-        ],
-        (PhaseRequest::PhaseTwo, FailurePoint::PhaseTwoDriverWork) => vec![
-            Compensation::RestoreCapturedPhaseBackups,
-            Compensation::RetainPhaseTwoHandoffForRecovery,
-        ],
-        (PhaseRequest::PhaseThree, FailurePoint::PhaseThreeDriverWork)
-        | (PhaseRequest::PhaseThree, FailurePoint::FinalBenchmarkPersistence)
-        | (PhaseRequest::FinalBenchmark, FailurePoint::FinalBenchmarkPersistence) => vec![
-            Compensation::RestoreCapturedPhaseBackups,
-            Compensation::RetainPhaseThreeHandoffUntilCompletion,
-        ],
-        _ => vec![Compensation::NoneClaimed],
-    };
-    let retain_handoff = compensations.iter().any(|compensation| {
-        matches!(
-            compensation,
-            Compensation::RetainPhaseTwoHandoffForRecovery
-                | Compensation::RetainPhaseThreeHandoffUntilCompletion
-        )
-    });
-    RecoveryPlan {
-        retain_handoff,
-        compensations,
-    }
 }
 
 #[cfg(test)]

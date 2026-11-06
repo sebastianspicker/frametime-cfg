@@ -144,18 +144,9 @@ fn handle_min_max_info(window: HWND, lparam: LPARAM) -> LRESULT {
 }
 
 fn handle_key_down(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
     let Ok(key) = u32::try_from(wparam.0) else {
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     };
-    if ctrl && (0x31..=0x38).contains(&key) {
-        update_area(
-            window,
-            Area::ALL[usize::try_from(key - 0x31)
-                .expect("guarded navigation accelerator index fits in usize")],
-        );
-        return LRESULT(0);
-    }
     if key == VK_ESCAPE.0 as u32 {
         cancel(window);
         return LRESULT(0);

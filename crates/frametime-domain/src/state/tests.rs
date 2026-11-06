@@ -258,3 +258,10 @@ fn malformed_final_benchmark_is_preserved_and_fails_validation() {
     let value = serde_json::to_value(state).expect("state JSON");
     assert_eq!(value["finalBenchmark"]["receiptId"], false);
 }
+
+#[test]
+fn non_canonical_progress_keys_are_dropped() {
+    assert!(progress::valid_progress_key("P1:5"));
+    assert!(!progress::valid_progress_key("P1:05"));
+    assert!(!progress::valid_progress_key("P1:+5"));
+}

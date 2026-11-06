@@ -290,7 +290,7 @@ fn certificate_sha1_for_sha256(expected: &str) -> Result<String, String> {
     use windows::{
         Win32::Security::Cryptography::{
             CERT_SHA1_HASH_PROP_ID, CertCloseStore, CertEnumCertificatesInStore,
-            CertGetCertificateContextProperty, CertOpenSystemStoreW,
+            CertFreeCertificateContext, CertGetCertificateContextProperty, CertOpenSystemStoreW,
         },
         core::w,
     };
@@ -306,32 +306,51 @@ fn certificate_sha1_for_sha256(expected: &str) -> Result<String, String> {
                 break;
             }
             previous = Some(context.cast_const());
-            let encoded = unsafe {
-                std::slice::from_raw_parts(
-                    (*context).pbCertEncoded,
-                    usize::try_from((*context).cbCertEncoded)
-                        .map_err(|_| "certificate encoding is too large")?,
-                )
-            };
-            if frametime_domain::hex::lower_hex(Sha256::digest(encoded).as_slice()) != expected {
-                continue;
+            let found = (|| {
+                let encoded = unsafe {
+                    std::slice::from_raw_parts(
+                        (*context).pbCertEncoded,
+                        usize::try_from((*context).cbCertEncoded)
+                            .map_err(|_| "certificate encoding is too large")?,
+                    )
+                };
+                if frametime_domain::hex::lower_hex(Sha256::digest(encoded).as_slice()) != expected
+                {
+                    return Ok(None);
+                }
+                let mut bytes = 0_u32;
+                unsafe {
+                    CertGetCertificateContextProperty(
+                        context,
+                        CERT_SHA1_HASH_PROP_ID,
+                        None,
+                        &mut bytes,
+                    )
+                }
+                .map_err(|error| format!("read certificate SHA-1 size: {error}"))?;
+                let mut sha1 = vec![0_u8; bytes as usize];
+                unsafe {
+                    CertGetCertificateContextProperty(
+                        context,
+                        CERT_SHA1_HASH_PROP_ID,
+                        Some(sha1.as_mut_ptr().cast()),
+                        &mut bytes,
+                    )
+                }
+                .map_err(|error| format!("read certificate SHA-1: {error}"))?;
+                Ok::<_, String>(Some(
+                    sha1.iter().map(|byte| format!("{byte:02x}")).collect(),
+                ))
+            })();
+            match found {
+                Ok(None) => {}
+                // Only the continuing enumeration frees `previous`; free it on every return.
+                done => {
+                    // SAFETY: `context` came from the enumeration above and is not used again.
+                    let _ = unsafe { CertFreeCertificateContext(previous) };
+                    return done.map(|sha1: Option<String>| sha1.unwrap_or_default());
+                }
             }
-            let mut bytes = 0_u32;
-            unsafe {
-                CertGetCertificateContextProperty(context, CERT_SHA1_HASH_PROP_ID, None, &mut bytes)
-            }
-            .map_err(|error| format!("read certificate SHA-1 size: {error}"))?;
-            let mut sha1 = vec![0_u8; bytes as usize];
-            unsafe {
-                CertGetCertificateContextProperty(
-                    context,
-                    CERT_SHA1_HASH_PROP_ID,
-                    Some(sha1.as_mut_ptr().cast()),
-                    &mut bytes,
-                )
-            }
-            .map_err(|error| format!("read certificate SHA-1: {error}"))?;
-            return Ok(sha1.iter().map(|byte| format!("{byte:02x}")).collect());
         }
         Err(
             "the explicitly selected test certificate was not found in the current-user store"

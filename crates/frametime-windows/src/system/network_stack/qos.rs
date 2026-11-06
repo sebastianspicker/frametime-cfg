@@ -107,7 +107,8 @@ pub(super) fn restore_nla(captured: &NetworkStackNlaBackup) -> Result<(), String
             RegDeleteKeyExW(
                 HKEY_LOCAL_MACHINE,
                 PCWSTR(wide(QOS_NLA_KEY).as_ptr()),
-                KEY_SET_VALUE.0,
+                // Only registry-view flags belong here; 0 is the native 64-bit view.
+                0,
                 None,
             )
         }

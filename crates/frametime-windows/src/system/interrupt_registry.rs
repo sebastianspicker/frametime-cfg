@@ -20,9 +20,6 @@ pub(crate) trait InterruptRegistryStore: InterruptRegistryReader {
 
     fn key_exists(&self, key: &str) -> Result<bool, DeviceBindingError>;
 
-    /// Creates the missing levels of `key` below an existing `Device Parameters` key.
-    fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError>;
-
     /// Deletes `key` only when it has no subkeys and no values.
     fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError>;
 }
@@ -167,20 +164,6 @@ pub(crate) fn capture_nic_affinity_backups(
     capture_interrupt_backups(store, "P3:3", &[batch], timestamp)
 }
 
-pub(crate) fn apply_interrupt_changes(
-    store: &impl InterruptRegistryStore,
-    device: &PciDeviceBinding,
-    changes: &[InterruptRegistryChange],
-) -> Result<(), DeviceBindingError> {
-    for change in changes {
-        if policy_for_change(device, change)?.expected_step() == "P3:3" {
-            store.create_key_levels(&change.key)?;
-        }
-        store.write_interrupt_value(&change.key, change.name, &change.value)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn interrupt_changes_satisfied(
     store: &impl InterruptRegistryStore,
     device: &PciDeviceBinding,
@@ -216,48 +199,6 @@ pub(crate) fn reobserve_device(
             expected.instance_id.clone(),
         )),
     }
-}
-
-pub(crate) fn reobserve_msi_batches(
-    batches: &[MsiDeviceBatch],
-    observed: &[(PciDeviceClass, PciDeviceBinding)],
-) -> Result<(), DeviceBindingError> {
-    for batch in batches {
-        let current = reobserve_device(&batch.device, observed)?;
-        if !current
-            .class_guid
-            .eq_ignore_ascii_case(batch.device_class.class_guid())
-        {
-            return Err(DeviceBindingError::InvalidPciBinding(
-                "reobserved interrupt device changed class".into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn apply_msi_batches(
-    store: &impl InterruptRegistryStore,
-    batches: &[MsiDeviceBatch],
-    observed: &[(PciDeviceClass, PciDeviceBinding)],
-) -> Result<(), DeviceBindingError> {
-    reobserve_msi_batches(batches, observed)?;
-    for batch in batches {
-        apply_interrupt_changes(store, &batch.device, &batch.changes)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn verify_msi_batches(
-    store: &impl InterruptRegistryStore,
-    batches: &[MsiDeviceBatch],
-    observed: &[(PciDeviceClass, PciDeviceBinding)],
-) -> Result<(), DeviceBindingError> {
-    reobserve_msi_batches(batches, observed)?;
-    for batch in batches {
-        batch.validate_readback(store)?;
-    }
-    Ok(())
 }
 
 pub(crate) fn restore_interrupt_backup(
@@ -385,100 +326,6 @@ pub(crate) fn capture_native_nic_backups(
 }
 
 #[cfg(windows)]
-pub(crate) fn apply_native_msi_batches(batches: &[MsiDeviceBatch]) -> Result<(), String> {
-    let observed = enumerate_present_status_ok_pci(&WindowsSetupApiEnumerator)
-        .map_err(|error| error.to_string())?;
-    apply_msi_batches(&WindowsInterruptRegistry, batches, &observed)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn apply_native_msi_batches(batches: &[MsiDeviceBatch]) -> Result<(), String> {
-    apply_msi_batches(&UnavailableInterruptRegistry, batches, &[])
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-pub(crate) fn verify_native_msi_batches(batches: &[MsiDeviceBatch]) -> Result<(), String> {
-    let observed = enumerate_present_status_ok_pci(&WindowsSetupApiEnumerator)
-        .map_err(|error| error.to_string())?;
-    verify_msi_batches(&WindowsInterruptRegistry, batches, &observed)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn verify_native_msi_batches(batches: &[MsiDeviceBatch]) -> Result<(), String> {
-    verify_msi_batches(&UnavailableInterruptRegistry, batches, &[])
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-pub(crate) fn apply_native_nic_affinity(binding: &NicAffinityBinding) -> Result<(), String> {
-    let current = discover_native_nic_affinity()?;
-    if !same_nic_affinity_subject(binding, &current) {
-        return Err("P3:3 NIC or processor-topology evidence changed before apply".into());
-    }
-    apply_interrupt_changes(&WindowsInterruptRegistry, &binding.device, &binding.changes)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn apply_native_nic_affinity(binding: &NicAffinityBinding) -> Result<(), String> {
-    let current = discover_native_nic_affinity()?;
-    if !same_nic_affinity_subject(binding, &current) {
-        return Err("P3:3 NIC or processor-topology evidence changed before apply".into());
-    }
-    apply_interrupt_changes(
-        &UnavailableInterruptRegistry,
-        &binding.device,
-        &binding.changes,
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-pub(crate) fn verify_native_nic_affinity(binding: &NicAffinityBinding) -> Result<(), String> {
-    let current = discover_native_nic_affinity()?;
-    if !same_nic_affinity_subject(binding, &current) {
-        return Err("P3:3 NIC or processor-topology evidence changed before verification".into());
-    }
-    binding
-        .validate_readback(&WindowsInterruptRegistry)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(not(windows))]
-pub(crate) fn verify_native_nic_affinity(binding: &NicAffinityBinding) -> Result<(), String> {
-    let current = discover_native_nic_affinity()?;
-    if !same_nic_affinity_subject(binding, &current) {
-        return Err("P3:3 NIC or processor-topology evidence changed before verification".into());
-    }
-    binding
-        .validate_readback(&UnavailableInterruptRegistry)
-        .map_err(|error| error.to_string())
-}
-
-pub(crate) fn same_nic_affinity_subject(
-    left: &NicAffinityBinding,
-    right: &NicAffinityBinding,
-) -> bool {
-    left.device.same_pnp_device(&right.device)
-        && left
-            .adapter
-            .adapter_name
-            .eq_ignore_ascii_case(&right.adapter.adapter_name)
-        && left
-            .adapter
-            .interface_guid
-            .eq_ignore_ascii_case(&right.adapter.interface_guid)
-        && left.adapter.interface_luid == right.adapter.interface_luid
-        && left.adapter.interface_index == right.adapter.interface_index
-        && left.adapter.physical_address == right.adapter.physical_address
-        && left.final_logical_processor == right.final_logical_processor
-        && left.assignment_set_override == right.assignment_set_override
-}
-
-#[cfg(windows)]
 pub(crate) fn restore_native_interrupt_policy(entry: &BackupEntry) -> Result<(), String> {
     let BackupEntry::InterruptPolicy { backup } = entry else {
         return Err("interrupt restore received a different backup type".into());
@@ -539,12 +386,6 @@ impl InterruptRegistryStore for UnavailableInterruptRegistry {
         ))
     }
 
-    fn create_key_levels(&self, _: &str) -> Result<(), DeviceBindingError> {
-        Err(DeviceBindingError::PlatformAdapterUnavailable(
-            "interrupt registry",
-        ))
-    }
-
     fn delete_key_if_empty(&self, _: &str) -> Result<(), DeviceBindingError> {
         Err(DeviceBindingError::PlatformAdapterUnavailable(
             "interrupt registry",
@@ -600,13 +441,6 @@ mod created_key_tests {
             Ok(self.keys.borrow().contains(key))
         }
 
-        fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError> {
-            self.keys
-                .borrow_mut()
-                .extend(key_levels_below_parameters(key));
-            Ok(())
-        }
-
         fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError> {
             let occupied = self.values.borrow().contains_key(key)
                 || self
@@ -638,7 +472,10 @@ mod created_key_tests {
         store.keys.borrow_mut().insert(PARAMETERS.into());
         let created = missing_key_levels(&store, &key).unwrap();
         assert_eq!(created.len(), 2);
-        store.create_key_levels(&key).unwrap();
+        store
+            .keys
+            .borrow_mut()
+            .extend(key_levels_below_parameters(&key));
         store
             .write_interrupt_value(&key, "DevicePolicy", &InterruptRegistryValue::Dword(4))
             .unwrap();

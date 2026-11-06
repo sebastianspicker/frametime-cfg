@@ -146,3 +146,22 @@ pub(crate) fn read_json_trusted<T: serde::de::DeserializeOwned>(
         Err("the live backend is supported only on supported Windows x64".into())
     }
 }
+
+/// `Ok(None)` only when the file does not exist; any other failure is an error.
+pub(crate) fn read_json_if_present<T: serde::de::DeserializeOwned>(
+    trusted: &TrustedWorkDir,
+    name: &str,
+) -> Result<Option<T>, String> {
+    #[cfg(windows)]
+    {
+        super::json_windows::read_json_if_present(trusted, name)
+    }
+    #[cfg(not(windows))]
+    {
+        match std::fs::symlink_metadata(trusted.path().join(name)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(format!("inspect trusted suite file {name}: {error}")),
+            Ok(_) => read_json_trusted(trusted, name).map(Some),
+        }
+    }
+}

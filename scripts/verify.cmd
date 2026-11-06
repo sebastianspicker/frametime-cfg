@@ -20,6 +20,8 @@ if not "%~1"=="" exit /b 2
 cargo fmt --all --check || exit /b 1
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -W clippy::too_many_lines -W clippy::cognitive_complexity || exit /b 1
 cargo test --workspace --all-targets --all-features --locked || exit /b 1
+rem The shipped default feature set (no qualification-only code) is tested separately.
+cargo test -p frametime-windows -p frametime-app --locked || exit /b 1
 cargo run -p frametime-cli --locked -- dry-run all || exit /b 1
 rem An x64 host build already targets x86_64-pc-windows-msvc; other hosts check it explicitly.
 if /i not "%PROCESSOR_ARCHITECTURE%"=="AMD64" (

@@ -126,6 +126,8 @@ fn created_pagefile_token(
 ) -> Result<Option<CreatedPagefileToken>, String> {
     match (object_path, relative_path, mutation_intent) {
         (None, None, Some("update_pending")) if target_existed => Ok(None),
+        // Crash between disabling automatic management and `create` returning: nothing to delete.
+        (None, None, Some("create_pending")) if !target_existed => Ok(None),
         (Some(object_path), Some(relative_path), Some("created"))
             if !target_existed && !object_path.is_empty() && !relative_path.is_empty() =>
         {
@@ -189,6 +191,16 @@ fn restore_pagefile_settings<S: PagefileStore>(
             return Err("P1:8 created token sizes changed; refusing deletion".into());
         }
         store.delete(created)?;
+    } else if !target_existed
+        && live
+            .settings
+            .iter()
+            .any(|setting| setting.path.eq_ignore_ascii_case(target_path))
+    {
+        // create_pending: the file may or may not have been created; never delete it blindly.
+        return Err(
+            "P1:8 backup has no exact deletion authority; manual recovery is required".into(),
+        );
     }
     if target_existed {
         let target = before

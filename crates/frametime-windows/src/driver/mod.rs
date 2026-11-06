@@ -16,9 +16,8 @@ mod transaction;
 mod transaction_backend;
 
 pub use capability::{
-    DriverArtifactStore, NativeNvidiaArtifactStore, NativeNvidiaInstallerRunner,
-    NativeNvidiaSignatureVerifier, NativeSystem32ToolRunner, NvidiaArtifactAcquirer,
-    NvidiaArtifactLocation, NvidiaDownloadHost, NvidiaInstaller, NvidiaInstallerRunner,
+    DriverArtifactStore, NativeNvidiaArtifactStore, NativeNvidiaSignatureVerifier,
+    NativeSystem32ToolRunner, NvidiaArtifactAcquirer, NvidiaArtifactLocation, NvidiaDownloadHost,
     NvidiaSignatureVerifier, PnpUtilDriverRemoval, ProcessOutcome, System32ToolRunner,
     VerifiedDriverArtifact, WindowsDriverInspection, WindowsSafeModeInspection,
 };

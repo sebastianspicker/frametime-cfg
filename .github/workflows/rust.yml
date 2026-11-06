@@ -16,38 +16,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  classify:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')
-    name: Classify native Rust CI scope
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      full: ${{ steps.changes.outputs.full }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Test the change classifier
-        shell: bash
-        run: bash scripts/test-ci-classifier.sh
-      - name: Classify changed paths
-        id: changes
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: |
-          printf 'full=true\n' >> "$GITHUB_OUTPUT"
-          bash scripts/classify-ci-change.sh \
-            "$EVENT_NAME" "$BASE_SHA" "$HEAD_SHA" package-layout.txt \
-            >> "$GITHUB_OUTPUT"
-
   frametime-host:
     name: Frametime Rust host gates
-    needs: classify
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')) && always() && (needs.classify.result != 'success' || needs.classify.outputs.full != 'false') }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -84,8 +55,7 @@ jobs:
 
   frametime-windows:
     name: Frametime Rust Windows unsigned package gates
-    needs: classify
-    if: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')) && always() && (needs.classify.result != 'success' || needs.classify.outputs.full != 'false') }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:

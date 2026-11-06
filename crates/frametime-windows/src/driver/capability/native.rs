@@ -1,4 +1,4 @@
-use std::{ffi::c_void, mem::size_of};
+use std::{ffi::c_void, mem::size_of, os::windows::io::AsRawHandle};
 
 use crate::system::wide;
 use frametime_domain::driver::Sha256Digest;
@@ -6,7 +6,7 @@ use frametime_domain::hex::lower_hex;
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, HWND},
+        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, HWND, WAIT_TIMEOUT},
         Security::{
             Cryptography::{
                 CALG_SHA_256, CERT_CONTEXT, CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
@@ -27,6 +27,7 @@ use windows::{
             MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, OPEN_EXISTING,
             ReadFile, SetFilePointerEx, WriteFile,
         },
+        System::Threading::WaitForSingleObject,
     },
     core::PCWSTR,
 };
@@ -35,6 +36,8 @@ use super::{
     AdapterFailure, DRIVER_ARTIFACTS_LEAF, NvidiaArtifactLocation, NvidiaDownloadHost,
     VerifiedDriverArtifact, adapter,
 };
+
+const INSTALLER_TIMEOUT_MS: u32 = 1_800_000;
 
 mod certificates;
 use certificates::signer_from_verified_state;
@@ -118,10 +121,6 @@ impl RetainedArtifact {
         trust.dwStateAction = WTD_STATEACTION_CLOSE;
         close_trust_state(&mut trust, &mut action);
         result
-    }
-
-    pub(super) fn path(&self) -> &str {
-        &self.path
     }
 }
 
@@ -208,6 +207,7 @@ pub(super) fn launch_prepared_nvidia_package(
     expected: &frametime_domain::driver::SignedArtifactDescriptor,
     expected_package_sha256: &Sha256Digest,
     observed_at_utc: &str,
+    spawn: bool,
 ) -> Result<super::PreparedNvidiaLaunchEvidence, AdapterFailure> {
     let package = std::path::Path::new(crate::WINDOWS_WORK_DIR).join("driver-package");
     let manifest = super::super::package_builder::verify_prepared_nvidia_package(&package)
@@ -260,11 +260,30 @@ pub(super) fn launch_prepared_nvidia_package(
             "prepared setup.exe does not match the exact NVIDIA signer policy",
         ));
     }
-    let status = std::process::Command::new(&setup)
-        .current_dir(&package)
-        .args(["-s", "-noreboot"])
-        .status()
-        .map_err(|error| adapter("launch prepared NVIDIA installer", error.to_string()))?;
+    // A retry after a recorded successful install only re-verifies; it never relaunches.
+    let exit_code = if spawn {
+        let mut child = std::process::Command::new(&setup)
+            .current_dir(&package)
+            .args(["-s", "-noreboot"])
+            .spawn()
+            .map_err(|error| adapter("launch prepared NVIDIA installer", error.to_string()))?;
+        // SAFETY: the raw handle belongs to `child`, which outlives the wait.
+        let waited =
+            unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), INSTALLER_TIMEOUT_MS) };
+        if waited == WAIT_TIMEOUT {
+            // Deliberately not killed: aborting an installer mid-run can corrupt the driver.
+            return Err(adapter(
+                "wait for prepared NVIDIA installer",
+                "the NVIDIA installer is still running after 30 minutes; let it finish, wait until it has exited before rerunning this step, because a rerun launches it again",
+            ));
+        }
+        child
+            .wait()
+            .map_err(|error| adapter("wait for prepared NVIDIA installer", error.to_string()))?
+            .code()
+    } else {
+        None
+    };
     if file_id(retained.handle)? != retained.id
         || file_length(retained.handle)? != length
         || digest_handle(retained.handle)? != digest
@@ -277,9 +296,7 @@ pub(super) fn launch_prepared_nvidia_package(
     let thumbprint = Sha256Digest::parse(thumbprint.to_ascii_lowercase())
         .map_err(|error| adapter("record prepared NVIDIA installer", error.to_string()))?;
     Ok(super::PreparedNvidiaLaunchEvidence {
-        outcome: super::ProcessOutcome {
-            exit_code: status.code(),
-        },
+        outcome: super::ProcessOutcome { exit_code },
         artifact: frametime_domain::driver::ArtifactIdentity {
             artifact_id: expected.locator.artifact_id.clone(),
             artifact_file_name: "setup.exe".into(),
@@ -342,6 +359,12 @@ pub(super) fn acquire(
         NvidiaArtifactLocation::LocalLeaf(_) => open_retained(&path)?,
     };
     let _directory = directory;
+    // The guard closes the handle on every early return below.
+    let mut retained = RetainedArtifact {
+        handle,
+        path,
+        id: FILE_ID_INFO::default(),
+    };
     crate::trusted_work_dir::validate_descendant_handle(
         handle,
         &format!("{DRIVER_ARTIFACTS_LEAF}\\{leaf}"),
@@ -352,36 +375,18 @@ pub(super) fn acquire(
     let maximum = u64::try_from(maximum)
         .map_err(|_| adapter("acquire artifact", "maximum artifact size exceeds u64"))?;
     if length == 0 || length > maximum {
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
         return Err(adapter(
             "acquire artifact",
             "artifact length is outside the bounded policy",
         ));
     }
     let digest = digest_handle(handle)?;
-    let id = file_id(handle)?;
+    retained.id = file_id(handle)?;
     Ok(VerifiedDriverArtifact {
         protected_leaf: protected_leaf.into(),
         length,
         payload_sha256: digest,
-        retained: Some(RetainedArtifact { handle, path, id }),
-    })
-}
-
-pub(super) fn launch(
-    artifact: &VerifiedDriverArtifact,
-    argv: &[String],
-) -> Result<super::ProcessOutcome, AdapterFailure> {
-    artifact.revalidate()?;
-    let status = std::process::Command::new(artifact.retained()?.path())
-        .args(argv)
-        .status()
-        .map_err(|e| adapter("launch NVIDIA artifact", e.to_string()))?;
-    artifact.revalidate()?;
-    Ok(super::ProcessOutcome {
-        exit_code: status.code(),
+        retained: Some(retained),
     })
 }
 

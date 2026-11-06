@@ -100,7 +100,7 @@ pub(crate) fn hardware(outcome: HardwareDiagnosticOutcome) -> Result<(), String>
 pub(crate) fn command(outcome: CommandOutcome) -> Result<(), String> {
     match outcome {
         CommandOutcome::Run(summary) => render_run(summary),
-        CommandOutcome::Cleanup(summary) => cleanup(summary),
+        CommandOutcome::Cleanup(summary) => cleanup(summary)?,
         CommandOutcome::Verification(summary) => verification(*summary)?,
         CommandOutcome::BackupSummary(summary) => backup_summary(summary),
         CommandOutcome::Log(log) => print!("{}", log.text),
@@ -110,7 +110,7 @@ pub(crate) fn command(outcome: CommandOutcome) -> Result<(), String> {
 fn render_run(summary: RunSummary) {
     render_lines(&summary.messages);
 }
-fn cleanup(summary: CleanupSummary) {
+fn cleanup(summary: CleanupSummary) -> Result<(), String> {
     for result in &summary.report.action_results {
         let line = match &result.outcome {
             frametime_domain::cleanup::CleanupActionOutcome::Completed { affected_items } => {
@@ -136,11 +136,20 @@ fn cleanup(summary: CleanupSummary) {
     if summary.report.restart_required {
         println!("Restart required: yes (Winsock catalog reset).");
     }
+    if summary.report.is_complete() {
+        Ok(())
+    } else {
+        Err("cleanup was incomplete: see the FAILED and DEFERRED actions above".into())
+    }
 }
 fn verification(summary: VerificationSummary) -> Result<(), String> {
     let items = summary.report.items.iter().map(|item| serde_json::json!({ "status": item.status.label(), "name": item.name, "detail": item.detail })).collect::<Vec<_>>();
     println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "readOnly": true, "workDir": summary.work_dir, "state": summary.state, "progress": summary.progress, "items": items })).map_err(|error| error.to_string())?);
-    Ok(())
+    if summary.report.has_drift() {
+        Err("verification found missing or changed items".into())
+    } else {
+        Ok(())
+    }
 }
 fn backup_summary(summary: BackupSummary) {
     if summary.entries.is_empty() {
@@ -164,6 +173,29 @@ mod tests {
     #[test]
     fn renderer_accepts_a_typed_run_summary() {
         render_run(RunSummary::message("typed renderer input"));
+    }
+
+    #[test]
+    fn cleanup_with_a_failed_action_is_an_error_after_printing() {
+        use frametime_domain::cleanup::{
+            CleanupAction, CleanupActionOutcome, CleanupActionResult, CleanupReport,
+        };
+        let failed = CleanupReport {
+            action_results: vec![CleanupActionResult {
+                action: CleanupAction::ClearWindowsTemp,
+                outcome: CleanupActionOutcome::Failed {
+                    reason: "denied".into(),
+                },
+            }],
+            restart_required: false,
+        };
+        assert!(cleanup(CleanupSummary { report: failed }).is_err());
+        assert!(
+            cleanup(CleanupSummary {
+                report: CleanupReport::default()
+            })
+            .is_ok()
+        );
     }
 
     #[test]

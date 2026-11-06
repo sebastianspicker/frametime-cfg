@@ -38,10 +38,6 @@ impl InterruptRegistryStore for WindowsInterruptRegistry {
         windows_interrupt_registry::key_exists(key)
     }
 
-    fn create_key_levels(&self, key: &str) -> Result<(), DeviceBindingError> {
-        windows_interrupt_registry::create_key_levels(key)
-    }
-
     fn delete_key_if_empty(&self, key: &str) -> Result<(), DeviceBindingError> {
         windows_interrupt_registry::delete_key_if_empty(key)
     }
@@ -55,8 +51,8 @@ mod windows_interrupt_registry {
             Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR},
             System::Registry::{
                 HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_BINARY, REG_DWORD,
-                REG_OPTION_NON_VOLATILE, REG_VALUE_TYPE, RegCloseKey, RegCreateKeyExW,
-                RegDeleteKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegSetValueExW,
+                REG_VALUE_TYPE, RegCloseKey, RegDeleteKeyExW, RegDeleteValueW, RegOpenKeyExW,
+                RegQueryInfoKeyW, RegSetValueExW,
             },
         },
         core::PCWSTR,
@@ -186,43 +182,6 @@ mod windows_interrupt_registry {
             let _ = RegCloseKey(handle);
         }
         Ok(true)
-    }
-
-    pub(super) fn create_key_levels(key: &str) -> Result<(), DeviceBindingError> {
-        const PARAMETERS: &str = "\\Device Parameters";
-        let parameters_end = key
-            .find(PARAMETERS)
-            .map(|index| index + PARAMETERS.len())
-            .ok_or_else(|| {
-                DeviceBindingError::RegistryAccess("interrupt key has no Device Parameters".into())
-            })?;
-        if !key_exists(&key[..parameters_end])? {
-            return Err(DeviceBindingError::RegistryAccess(
-                "interrupt device registry key is absent".into(),
-            ));
-        }
-        let wide_key = wide(key);
-        let mut handle = HKEY::default();
-        let result = unsafe {
-            RegCreateKeyExW(
-                HKEY_LOCAL_MACHINE,
-                PCWSTR(wide_key.as_ptr()),
-                None,
-                PCWSTR::null(),
-                REG_OPTION_NON_VOLATILE,
-                KEY_SET_VALUE,
-                None,
-                &mut handle,
-                None,
-            )
-        };
-        if result.0 != 0 {
-            return Err(error("RegCreateKeyExW", result));
-        }
-        unsafe {
-            let _ = RegCloseKey(handle);
-        }
-        Ok(())
     }
 
     pub(super) fn delete_key_if_empty(key: &str) -> Result<(), DeviceBindingError> {

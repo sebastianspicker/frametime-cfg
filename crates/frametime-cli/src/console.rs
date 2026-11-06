@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(windows)]
 static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+static ENGINE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
 pub(crate) fn install_cancellation_handler() {
@@ -22,7 +24,10 @@ pub(crate) fn install_cancellation_handler() {
 
     unsafe extern "system" fn handler(control: u32) -> BOOL {
         use windows::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT};
-        if control == CTRL_BREAK_EVENT || control == CTRL_C_EVENT {
+        // Only the engine loop polls the flag; every other command must stay interruptible.
+        if (control == CTRL_BREAK_EVENT || control == CTRL_C_EVENT)
+            && ENGINE_ACTIVE.load(Ordering::SeqCst)
+        {
             CANCEL_REQUESTED.store(true, Ordering::SeqCst);
             BOOL(1)
         } else {
@@ -36,6 +41,14 @@ pub(crate) fn install_cancellation_handler() {
 
 #[cfg(not(windows))]
 pub(crate) const fn install_cancellation_handler() {}
+
+#[cfg(windows)]
+pub(crate) fn set_engine_active(active: bool) {
+    ENGINE_ACTIVE.store(active, Ordering::SeqCst);
+}
+
+#[cfg(not(windows))]
+pub(crate) const fn set_engine_active(_active: bool) {}
 
 #[cfg(windows)]
 pub(crate) fn cancellation_requested() -> bool {

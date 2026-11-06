@@ -107,9 +107,7 @@ fn prepare_baseline_benchmark_commit_inner(
             transaction_id: None,
             unknown: BTreeMap::new(),
         });
-        if next_history.len() > MAX_BENCHMARK_HISTORY {
-            next_history.drain(..next_history.len() - MAX_BENCHMARK_HISTORY);
-        }
+        trim_benchmark_history(&mut next_history);
     }
     let mut next_progress = progress.clone();
     next_progress.complete_step(PHASE_ONE_BASELINE_BENCHMARK, record_timestamp.clone());

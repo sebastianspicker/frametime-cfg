@@ -57,20 +57,8 @@ fn record(value: usize) -> BenchmarkRecord {
 }
 
 #[test]
-fn malformed_history_is_empty_and_append_retains_newest_200() {
+fn malformed_history_is_empty() {
     assert!(decode_benchmark_history(serde_json::Value::String("bad".into())).is_empty());
-    let mut history = Vec::new();
-    for value in 0..=MAX_BENCHMARK_HISTORY {
-        history = append_benchmark_record(&history, record(value));
-    }
-    assert_eq!(history.len(), MAX_BENCHMARK_HISTORY);
-    assert_eq!(history[0].avg_fps, 1.0);
-}
-
-#[test]
-fn append_is_pure_and_retains_unknown_fields() {
-    let result = append_benchmark_record(&[], record(1));
-    assert_eq!(result, [record(1)]);
 }
 
 #[test]
@@ -524,4 +512,25 @@ fn fps_capture_labels_are_trimmed_and_cannot_be_empty_or_reserved() {
     assert!(normalize_fps_capture_label("   ").is_err());
     assert!(normalize_fps_capture_label(BASELINE_BENCHMARK_LABEL).is_err());
     assert!(normalize_fps_capture_label(" After all optimizations ").is_err());
+}
+
+#[test]
+fn phase_three_advisory_counts_as_resolved() {
+    let mut progress = progress_before_final_benchmark();
+    progress.acknowledge_advisory(3, 7, "VBS/HVCI guidance".into());
+    assert!(!has_unresolved_phase_three_engine_steps(&progress));
+    assert!(final_benchmark_stage_is_ready(&progress));
+}
+
+#[test]
+fn trim_keeps_baseline_final_and_receipt_records() {
+    let mut history = vec![BenchmarkRecord {
+        label: BASELINE_BENCHMARK_LABEL.into(),
+        ..record(0)
+    }];
+    history.extend((1..=205).map(record));
+    trim_benchmark_history(&mut history);
+    assert_eq!(history.len(), MAX_BENCHMARK_HISTORY);
+    assert_eq!(history[0].label, BASELINE_BENCHMARK_LABEL);
+    assert_eq!(history[1].avg_fps, 7.0);
 }

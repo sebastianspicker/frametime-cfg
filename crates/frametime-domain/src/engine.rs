@@ -525,7 +525,7 @@ impl<B: Backend> Engine<B> {
                 .fail_irreversible_audit(&failed)
                 .map_err(|message| EngineError::AuditFailurePersist {
                     key: key.into(),
-                    message,
+                    message: format!("{message} (original failure: {error})"),
                 })?;
             report.events.push(Event::FailAudit(key.into()));
             return Err(error);

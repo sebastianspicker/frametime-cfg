@@ -82,7 +82,7 @@ pub(crate) fn property_bytes(
     Ok(Some((property_type.0, bytes)))
 }
 
-#[cfg(windows)]
+#[cfg(any(test, windows))]
 pub(crate) fn wide_values(bytes: &[u8], list: bool) -> Result<Vec<String>, String> {
     if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
         return Err("SetupAPI UTF-16 property has an invalid byte count".into());
@@ -104,6 +104,7 @@ pub(crate) fn wide_values(bytes: &[u8], list: bool) -> Result<Vec<String>, Strin
         }
         if start == index {
             if list && index + 1 == units.len() {
+                start = index + 1;
                 break;
             }
             return Err("SetupAPI UTF-16 property contains an empty value".into());
@@ -240,4 +241,25 @@ pub(crate) fn enumerate_chipset_driver_records() -> Result<Vec<RawChipsetDriverR
         }
     }
     Ok(records)
+}
+
+#[cfg(test)]
+mod wide_values_tests {
+    use super::wide_values;
+
+    fn bytes(text: &str) -> Vec<u8> {
+        text.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn list_terminator_is_accepted() {
+        assert_eq!(wide_values(&bytes("A\0B\0\0"), true).unwrap(), ["A", "B"]);
+    }
+
+    #[test]
+    fn single_string_rules() {
+        assert_eq!(wide_values(&bytes("A\0"), false).unwrap(), ["A"]);
+        assert!(wide_values(&bytes("A\0\0"), false).is_err());
+        assert!(wide_values(&bytes("\0"), true).is_err());
+    }
 }

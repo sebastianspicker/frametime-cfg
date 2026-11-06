@@ -167,36 +167,32 @@ impl<'a> VdfLexer<'a> {
     }
     fn quoted(&mut self) -> Result<String, SteamError> {
         self.offset += 1;
-        let mut result = String::new();
+        let mut result = Vec::new();
         while self.offset < self.source.len() {
             let byte = self.source[self.offset];
             self.offset += 1;
             match byte {
-                b'"' => return Ok(result),
-                b'\\' => {
-                    result.push(self.escaped_char()?);
+                b'"' => {
+                    return String::from_utf8(result)
+                        .map_err(|_| SteamError::InvalidVdf("invalid UTF-8 in VDF".into()));
                 }
+                b'\\' => result.push(self.escaped_byte()?),
                 0 => return Err(SteamError::InvalidVdf("NUL in VDF".into())),
-                value if value.is_ascii() => result.push(char::from(value)),
-                _ => {
-                    return Err(SteamError::InvalidVdf(
-                        "non-ASCII VDF text is unsupported".into(),
-                    ));
-                }
+                value => result.push(value),
             }
         }
         Err(SteamError::InvalidVdf("unclosed VDF string".into()))
     }
 
-    fn escaped_char(&mut self) -> Result<char, SteamError> {
+    fn escaped_byte(&mut self) -> Result<u8, SteamError> {
         let escaped = self
             .source
             .get(self.offset)
             .ok_or_else(|| SteamError::InvalidVdf("unclosed VDF string".into()))?;
         self.offset += 1;
         match escaped {
-            b'"' => Ok('"'),
-            b'\\' => Ok('\\'),
+            b'"' => Ok(b'"'),
+            b'\\' => Ok(b'\\'),
             _ => Err(SteamError::InvalidVdf("unsupported VDF escape".into())),
         }
     }
@@ -212,6 +208,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(paths, [r"C:\Steam", r"D:\Steam"]);
+    }
+    #[test]
+    fn accepts_non_ascii_paths_and_rejects_invalid_utf8() {
+        let paths =
+            library_paths_from_vdf(r#""libraryfolders" { "0" "D:\\Spiele\\Müller" }"#).unwrap();
+        assert_eq!(paths, [r"D:\Spiele\Müller"]);
+        let mut bytes = br#""a" { "0" ""#.to_vec();
+        bytes.extend([0xff, b'"', b' ', b'}']);
+        let lexer = VdfLexer {
+            source: &bytes,
+            offset: 0,
+        };
+        assert!(lexer.tokens().is_err());
     }
     #[test]
     fn recognizes_only_cs2_manifest() {

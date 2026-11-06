@@ -53,10 +53,10 @@ pub enum ValidationError {
 }
 
 fn require_text(value: &str, field: &'static str) -> Result<(), ValidationError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-        Err(ValidationError::Invalid { field })
-    } else {
+    if crate::validate::text_ok(value) {
         Ok(())
+    } else {
+        Err(ValidationError::Invalid { field })
     }
 }
 
@@ -284,11 +284,7 @@ pub struct Sha256Digest(String);
 impl Sha256Digest {
     pub fn parse(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
-        if value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
+        if crate::validate::is_lower_hex(&value, 64) {
             Ok(Self(value))
         } else {
             Err(ValidationError::Invalid { field: "sha256" })

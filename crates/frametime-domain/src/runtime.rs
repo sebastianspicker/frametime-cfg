@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::hex::lower_hex;
+use crate::validate::is_lower_hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -181,17 +182,11 @@ pub fn portable_payload_contract_hash() -> String {
 /// A runtime generation ID: exactly 32 lowercase hex digits.
 #[must_use]
 pub fn valid_generation_id(value: &str) -> bool {
-    value.len() == 32 && is_lower_hex(value)
+    is_lower_hex(value, 32)
 }
 
 pub(crate) fn valid_sha256(value: &str) -> bool {
-    value.len() == 64 && is_lower_hex(value)
-}
-
-fn is_lower_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    is_lower_hex(value, 64)
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {

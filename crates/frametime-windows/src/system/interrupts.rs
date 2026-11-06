@@ -78,13 +78,6 @@ impl MsiDeviceBatch {
             changes,
         })
     }
-
-    pub fn validate_readback(
-        &self,
-        registry: &impl InterruptRegistryReader,
-    ) -> Result<(), DeviceBindingError> {
-        validate_interrupt_readback(registry, &self.changes)
-    }
 }
 
 /// Builds one exact, deterministically ordered MSI batch per supported device.
@@ -187,13 +180,6 @@ impl NicAffinityBinding {
             changes,
         })
     }
-
-    pub fn validate_readback(
-        &self,
-        registry: &impl InterruptRegistryReader,
-    ) -> Result<(), DeviceBindingError> {
-        validate_interrupt_readback(registry, &self.changes)
-    }
 }
 
 pub fn discover_nic_affinity_binding(
@@ -205,25 +191,6 @@ pub fn discover_nic_affinity_binding(
     let adapter =
         resolve_active_physical_wired_adapter(network_enumerator.enumerate_network_adapters()?)?;
     NicAffinityBinding::resolve(adapter, &devices, &topology_provider.processor_topology()?)
-}
-
-pub fn validate_interrupt_readback(
-    registry: &impl InterruptRegistryReader,
-    changes: &[InterruptRegistryChange],
-) -> Result<(), DeviceBindingError> {
-    for change in changes {
-        if registry
-            .read_interrupt_value(&change.key, change.name)?
-            .as_ref()
-            != Some(&change.value)
-        {
-            return Err(DeviceBindingError::RegistryReadbackMismatch {
-                key: change.key.clone(),
-                name: change.name,
-            });
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn interrupt_parameters_key(device: &InterruptPciDeviceBinding) -> String {

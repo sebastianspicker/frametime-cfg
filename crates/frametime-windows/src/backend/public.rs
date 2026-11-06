@@ -114,9 +114,10 @@ pub fn run_network_stack_transaction(
     package: &AuthenticatedPackage,
 ) -> Result<frametime_domain::engine::RunReport, String> {
     let step = network_stack_step()?;
+    // The backend takes the work lock, so read state and progress only after it is held.
+    let backend = LiveBackend::from_package(package)?;
     let state = load_state()?;
     let progress = load_progress()?;
-    let backend = LiveBackend::from_package(package)?;
     let mut engine = frametime_domain::engine::Engine::new(backend, progress);
     engine
         .run_with_consent(&[step], state.profile, |_| true)
@@ -148,16 +149,13 @@ pub fn deploy_optional_cs2_cfgs(
         &mut files,
     )
     .map_err(|error| format!("capture optional CS2 CFG transaction: {error}"))?;
-    let backup_path = trusted.path().join(BACKUP_FILE);
-    let mut backup = if backup_path.exists() {
-        read_json_trusted(&trusted, BACKUP_FILE).map_err(|error| format!("read backup: {error}"))?
-    } else {
-        BackupFile {
+    let mut backup = read_json_if_present(&trusted, BACKUP_FILE)
+        .map_err(|error| format!("read backup: {error}"))?
+        .unwrap_or_else(|| BackupFile {
             entries: Vec::new(),
             created: timestamp(),
             unknown: BTreeMap::new(),
-        }
-    };
+        });
     backup.push_first_value(entry.clone());
     write_json_atomic_trusted(&trusted, BACKUP_FILE, &backup)
         .map_err(|error| format!("persist optional CS2 CFG backup: {error}"))?;

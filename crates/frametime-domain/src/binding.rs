@@ -44,11 +44,7 @@ pub struct BindingReceiptId(String);
 impl BindingReceiptId {
     pub fn parse(value: impl Into<String>) -> Result<Self, BindingError> {
         let value = value.into();
-        if value.len() == 64
-            && value
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        {
+        if crate::validate::is_lower_hex(&value, 64) {
             Ok(Self(value))
         } else {
             Err(BindingError::InvalidReceiptId)
@@ -213,10 +209,10 @@ fn require_schema(version: u8) -> Result<(), BindingError> {
 }
 
 fn require_text(value: &str, field: &'static str) -> Result<(), BindingError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-        Err(BindingError::InvalidText(field))
-    } else {
+    if crate::validate::text_ok(value) {
         Ok(())
+    } else {
+        Err(BindingError::InvalidText(field))
     }
 }
 

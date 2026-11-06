@@ -40,6 +40,13 @@ pub(super) fn install_selected_cs2_cfg(window: HWND) {
         return;
     };
     let asset = selected_cs2_cfg_asset(asset_control);
+    if !confirm(
+        window,
+        "Back up and install the selected packaged CS2 CFG? Existing files are backed up first.",
+        "Install CS2 CFG",
+    ) {
+        return;
+    }
     start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |_| {
         run_live_message(frametime_app::Command::Cs2Cfg {
             assets: vec![asset],
@@ -118,6 +125,13 @@ pub(super) fn configure_profile(window: HWND, profile: &str) {
         );
         return;
     };
+    if !confirm(
+        window,
+        "Save this profile as the preference used by later workflow runs?",
+        "Configure profile",
+    ) {
+        return;
+    }
     start_native_recovery(window, model::NativeAccess::ElevatedWrite, move |_| {
         run_live_message(frametime_app::Command::Configure { profile })
     });
@@ -222,10 +236,37 @@ fn start_verification(window: HWND) {
     start_native_recovery(window, model::NativeAccess::ReadOnly, |_| {
         frametime_app::run_live(frametime_app::Command::Verify)
             .map_err(|error| error.to_string())
-            .map(|_| {
-                "Read-only verification completed through the shared application service.".into()
+            .and_then(|outcome| match outcome {
+                frametime_app::CommandOutcome::Verification(summary)
+                    if summary.report.has_drift() =>
+                {
+                    Err(format!(
+                        "Verification found missing or changed items: {}",
+                        drifted_names(&summary.report)
+                    ))
+                }
+                _ => Ok(
+                    "Read-only verification completed through the shared application service."
+                        .into(),
+                ),
             })
     });
+}
+
+fn drifted_names(report: &frametime_domain::verification::VerificationReport) -> String {
+    use frametime_domain::verification::VerificationStatus;
+    report
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.status,
+                VerificationStatus::Changed | VerificationStatus::Missing
+            )
+        })
+        .map(|item| item.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn restore_all(window: HWND) {

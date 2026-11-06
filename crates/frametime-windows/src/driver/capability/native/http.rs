@@ -5,10 +5,10 @@ use windows::{
         Foundation::HANDLE,
         Networking::WinHttp::{
             INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-            WINHTTP_DISABLE_REDIRECTS, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen,
-            WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse,
-            WinHttpSendRequest, WinHttpSetOption,
+            WINHTTP_DISABLE_REDIRECTS, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_DISABLE_FEATURE,
+            WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle,
+            WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData,
+            WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption,
         },
     },
     core::PCWSTR,
@@ -104,8 +104,8 @@ fn send_and_verify_response(request: &Http) -> Result<(), AdapterFailure> {
     unsafe {
         WinHttpSetOption(
             Some(request.0),
-            WINHTTP_DISABLE_REDIRECTS,
-            Some(&[1, 0, 0, 0]),
+            WINHTTP_OPTION_DISABLE_FEATURE,
+            Some(&WINHTTP_DISABLE_REDIRECTS.to_le_bytes()),
         )
     }
     .map_err(|e| adapter("download NVIDIA artifact", e.to_string()))?;

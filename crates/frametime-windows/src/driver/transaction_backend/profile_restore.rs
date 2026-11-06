@@ -24,8 +24,6 @@ fn resume_action(stage: DriverTransactionV2Stage) -> Result<ResumeAction, String
 use std::path::Path;
 
 #[cfg(windows)]
-use crate::TrustedWorkDir;
-#[cfg(windows)]
 use crate::driver::drs_backend::persist_drs_original;
 #[cfg(windows)]
 use crate::driver::transaction::{load_profile_backup_at, persist_driver_transaction};
@@ -34,6 +32,8 @@ use crate::driver::{
     DriverTransaction, NativeNvapiDrs, apply_cs2_profile, capture_cs2_backup,
     load_driver_transaction_at, verify_cs2_profile,
 };
+#[cfg(windows)]
+use crate::{TrustedWorkDir, WorkLock};
 
 #[cfg(windows)]
 pub(super) fn complete_profile_restore(
@@ -149,6 +149,7 @@ fn verify_baseline(
 
 #[cfg(windows)]
 pub fn reconcile_nvidia_profiles(
+    _package: &crate::AuthenticatedPackage,
     accept_driver_incompatible_profile_items: bool,
     yes: bool,
 ) -> Result<DriverTransaction, String> {
@@ -159,6 +160,7 @@ pub fn reconcile_nvidia_profiles(
         );
     }
     let trusted = TrustedWorkDir::acquire_fixed()?;
+    let _lock = WorkLock::acquire(trusted.path())?;
     let mut transaction =
         load_driver_transaction_at(trusted.path())?.ok_or("no NVIDIA driver transaction exists")?;
     let lifecycle = transaction

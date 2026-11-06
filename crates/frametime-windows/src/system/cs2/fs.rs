@@ -123,12 +123,12 @@ impl Cs2ConfigFs for NativeCs2ConfigFs {
         let temporary = temporary_path(path);
         let result = (|| {
             self.validate_temporary(&temporary)?;
-            let mut output = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)?;
+            let mut output = open_temporary(&temporary)?;
             output.write_all(bytes)?;
             output.sync_all()?;
+            // Cleared before the checks below, which cannot open a delete-pending file.
+            set_delete_pending(&output, false)?;
+            drop(output);
             self.validate_target(path)?;
             self.validate_temporary(&temporary)?;
             replace_file(&temporary, path)?;
@@ -145,6 +145,55 @@ impl Cs2ConfigFs for NativeCs2ConfigFs {
         self.validate_target(path)?;
         fs::remove_file(path)
     }
+}
+
+/// Creates the temporary delete-pending, so a crash before the rename leaves no `.tmp` file.
+#[cfg(not(windows))]
+fn open_temporary(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_temporary(path: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{DELETE, FILE_GENERIC_WRITE};
+    let output = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .access_mode(FILE_GENERIC_WRITE.0 | DELETE.0)
+        .open(path)?;
+    set_delete_pending(&output, true)?;
+    Ok(output)
+}
+
+#[cfg(not(windows))]
+fn set_delete_pending(_: &fs::File, _: bool) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_delete_pending(file: &fs::File, delete: bool) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{
+            FILE_DISPOSITION_INFO, FileDispositionInfo, SetFileInformationByHandle,
+        },
+    };
+    let disposition = FILE_DISPOSITION_INFO { DeleteFile: delete };
+    // SAFETY: the handle is the open temporary and `disposition` lives for the call.
+    unsafe {
+        SetFileInformationByHandle(
+            HANDLE(file.as_raw_handle()),
+            FileDispositionInfo,
+            (&raw const disposition).cast(),
+            u32::try_from(size_of::<FILE_DISPOSITION_INFO>()).map_err(io::Error::other)?,
+        )
+    }
+    .map_err(io::Error::other)
 }
 
 fn trusted_directory(path: &Path) -> io::Result<()> {

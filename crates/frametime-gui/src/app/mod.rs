@@ -29,9 +29,7 @@ use windows::{
                 AdjustWindowRectExForDpi, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
                 GetDpiForWindow, SetProcessDpiAwarenessContext,
             },
-            Input::KeyboardAndMouse::{
-                EnableWindow, GetFocus, GetKeyState, SetFocus, VK_CONTROL, VK_ESCAPE, VK_F5, VK_F6,
-            },
+            Input::KeyboardAndMouse::{EnableWindow, GetFocus, SetFocus, VK_ESCAPE, VK_F5, VK_F6},
             Shell::{
                 IsUserAnAdmin, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
                 SHELLEXECUTEINFOW, ShellExecuteExW,

@@ -54,10 +54,8 @@ mod windows_ip_helper {
         let links = pci_links()?;
         let mut observations = BTreeMap::new();
         for adapter in adapters()? {
+            // Virtual adapters (WSL, Hyper-V, VPN, USB) have no PCI link; skip them.
             let Some(device) = links.get(&adapter.guid).cloned() else {
-                if adapter.is_wired && adapter.is_up {
-                    return Err(DeviceBindingError::NetworkAdapterDoesNotMatchPciIdentity);
-                }
                 continue;
             };
             let binding = CoreNetworkAdapterBinding {

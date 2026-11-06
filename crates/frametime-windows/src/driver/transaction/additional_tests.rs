@@ -303,3 +303,11 @@ fn v2_recovery_install_can_complete_after_original_authorization_expires() {
             .is_ok()
     );
 }
+
+#[test]
+fn recorded_installer_success_blocks_relaunch() {
+    let mut transaction = v2_transaction();
+    assert!(transaction.should_launch_installer());
+    transaction.installer_succeeded_at_utc = Some("2026-01-01T00:00:03Z".into());
+    assert!(!transaction.should_launch_installer());
+}

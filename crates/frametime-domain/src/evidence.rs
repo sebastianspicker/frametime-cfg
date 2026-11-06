@@ -348,19 +348,15 @@ fn validate_device_set(devices: &[PciDeviceBinding]) -> Result<(), EvidenceError
 }
 
 fn require_text(value: &str, field: &'static str) -> Result<(), EvidenceError> {
-    if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-        Err(EvidenceError::InvalidField(field))
-    } else {
+    if crate::validate::text_ok(value) {
         Ok(())
+    } else {
+        Err(EvidenceError::InvalidField(field))
     }
 }
 
 fn require_sha256(value: &str, field: &'static str) -> Result<(), EvidenceError> {
-    if value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
+    if crate::validate::is_lower_hex(value, 64) {
         Ok(())
     } else {
         Err(EvidenceError::InvalidField(field))

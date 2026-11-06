@@ -86,8 +86,8 @@ Windows persistence were not measured or qualified on this macOS host.
 The cache pin and source state described above are retained as historical
 verification evidence. The prepared workflow now uses the reviewed
 `actions/cache` v6.1.0 commit, and generic CI runs only for Dependabot-authored
-pull requests or manual dispatch. The classifier and every dependent
-`always()` job retain an explicit eligibility guard. Pages publication is manual
+pull requests or manual dispatch. Each CI job retains an explicit
+eligibility guard (the classifier was removed later). Pages publication is manual
 on `main` only; security-only scans remain independent.
 
 The grouped Cargo upgrade was validated on the actual Rust 1.96 compiler/Clippy

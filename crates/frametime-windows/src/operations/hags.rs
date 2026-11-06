@@ -81,12 +81,12 @@ pub(crate) fn hags_pending_verification(
 pub(crate) fn hags_pending_verification_items(
     trusted: &TrustedWorkDir,
 ) -> Result<Vec<VerificationItem>, String> {
-    let path = trusted.path().join(BACKUP_FILE);
-    if !path.exists() {
+    let Some(backup): Option<frametime_domain::backup::BackupFile> =
+        read_json_if_present(trusted, BACKUP_FILE)
+            .map_err(|error| format!("read P1:7 HAGS receipt: {error}"))?
+    else {
         return Ok(Vec::new());
-    }
-    let backup: frametime_domain::backup::BackupFile = read_json_trusted(trusted, BACKUP_FILE)
-        .map_err(|error| format!("read P1:7 HAGS receipt: {error}"))?;
+    };
     Ok(backup
         .entries
         .iter()

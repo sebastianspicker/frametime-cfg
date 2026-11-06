@@ -9,18 +9,21 @@ use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use windows::{
     Win32::{
-        Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE},
+        Foundation::{CloseHandle, ERROR_SHARING_VIOLATION, GENERIC_READ, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
             CREATE_NEW, CreateFileW, DELETE, FILE_BEGIN, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_FLAG_WRITE_THROUGH, FILE_READ_ATTRIBUTES, FILE_SHARE_MODE, FileDispositionInfo,
-            FileRenameInfoEx, FlushFileBuffers, GetFileSizeEx, OPEN_EXISTING, READ_CONTROL,
-            ReadFile, SetFileInformationByHandle, SetFilePointerEx, WriteFile,
+            FILE_FLAG_WRITE_THROUGH, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_MODE,
+            FILE_SHARE_READ, FileDispositionInfo, FileRenameInfoEx, FlushFileBuffers,
+            GetFileSizeEx, OPEN_EXISTING, READ_CONTROL, ReadFile, SetFileInformationByHandle,
+            SetFilePointerEx, WriteFile,
         },
         System::WindowsProgramming::FILE_RENAME_FLAG_REPLACE_IF_EXISTS,
     },
     core::PCWSTR,
 };
 
+use super::io_contract::is_missing_path_hresult;
+use super::io_windows::OpenError;
 use super::json_common as trusted_json_common;
 use crate::system::wide_path;
 use crate::{TrustedWorkDir, trusted_work_dir};
@@ -31,10 +34,23 @@ pub(super) fn read_json<T: DeserializeOwned>(
     trusted: &TrustedWorkDir,
     name: &str,
 ) -> Result<T, String> {
-    let file = open_existing_child(trusted, name)?;
+    read_json_if_present(trusted, name)?
+        .ok_or_else(|| format!("trusted suite file {name} does not exist"))
+}
+
+/// `Ok(None)` only when the file is missing; every other open or read error propagates.
+pub(super) fn read_json_if_present<T: DeserializeOwned>(
+    trusted: &TrustedWorkDir,
+    name: &str,
+) -> Result<Option<T>, String> {
+    let file = match open_existing_child(trusted, name) {
+        Ok(file) => file,
+        Err(OpenError::Missing(_)) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
     trusted_work_dir::validate_child_handle(file.raw(), name)?;
     let bytes = read_all(file.raw())?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    serde_json::from_slice(&bytes).map(Some).map_err(|error| {
         format!(
             "corrupt trusted suite file is retained in place; refusing unsafe corrupt-copy creation: {error}"
         )
@@ -142,25 +158,44 @@ impl Drop for TemporaryFile {
     }
 }
 
-fn open_existing_child(trusted: &TrustedWorkDir, name: &str) -> Result<FileHandle, String> {
+fn open_existing_child(trusted: &TrustedWorkDir, name: &str) -> Result<FileHandle, OpenError> {
     if !trusted_json_common::is_allowed_child(name) {
-        return Err("suite child identity is not allowlisted".into());
+        return Err("suite child identity is not allowlisted".to_owned().into());
     }
     let path = wide_path(&trusted.path().join(name));
     trusted_work_dir::validate_exact_security(trusted.root_handle())?;
-    // SAFETY: `path` is a NUL-terminated UTF-16 buffer kept alive for the call.
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(path.as_ptr()),
-            GENERIC_READ.0 | FILE_READ_ATTRIBUTES.0 | READ_CONTROL.0,
-            FILE_SHARE_MODE(0),
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_OPEN_REPARSE_POINT,
-            None,
-        )
+    // A writer briefly holds the just-renamed file exclusively while it verifies it.
+    let mut attempts = 0;
+    let handle = loop {
+        // SAFETY: `path` is a NUL-terminated UTF-16 buffer kept alive for the call.
+        let opened = unsafe {
+            CreateFileW(
+                PCWSTR(path.as_ptr()),
+                GENERIC_READ.0 | FILE_READ_ATTRIBUTES.0 | READ_CONTROL.0,
+                // Read-only: an atomic rename-over by a writer may replace the file; we keep the old content.
+                FILE_SHARE_READ | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT,
+                None,
+            )
+        };
+        match opened {
+            Err(error) if error.code() == ERROR_SHARING_VIOLATION.to_hresult() && attempts < 10 => {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            other => break other,
+        }
     }
-    .map_err(|error| format!("open trusted suite JSON handle: {error}"))?;
+    .map_err(|error| {
+        let message = format!("open trusted suite JSON handle: {error}");
+        if is_missing_path_hresult(error.code().0) {
+            OpenError::Missing(message)
+        } else {
+            OpenError::Failed(message)
+        }
+    })?;
     Ok(FileHandle(handle))
 }
 
@@ -182,6 +217,7 @@ fn create_temporary_child(trusted: &TrustedWorkDir, parent: &str) -> Result<Temp
                     | DELETE.0
                     | FILE_READ_ATTRIBUTES.0
                     | READ_CONTROL.0,
+                // Exclusive: the temp file is private until it is renamed into place.
                 FILE_SHARE_MODE(0),
                 Some(attributes.as_ptr()),
                 CREATE_NEW,

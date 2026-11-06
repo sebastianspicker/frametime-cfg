@@ -193,9 +193,13 @@ pub(crate) mod windows_setupapi {
                 if !is_pci_instance_id(&instance_id(set, data)?) {
                     return Ok(None);
                 }
+                // A network-class function without an NDIS instance id (WWAN, management) is not an adapter.
+                let Ok(net_cfg_instance_id) = driver_net_cfg_instance_id(set, data) else {
+                    return Ok(None);
+                };
                 Ok(Some((
                     binding(set, data, PciDeviceClass::Network)?,
-                    driver_net_cfg_instance_id(set, data)?,
+                    net_cfg_instance_id,
                 )))
             },
         )

@@ -8,10 +8,6 @@ pub struct PlannerBackend {
 impl PlannerBackend {
     #[must_use]
     pub const fn new(gpu_branch: u8) -> Self {
-        Self::new_with_profile(gpu_branch, Profile::Custom)
-    }
-    #[must_use]
-    pub const fn new_with_profile(gpu_branch: u8, _profile: Profile) -> Self {
         Self { gpu_branch }
     }
     pub(crate) fn key(operation: Operation) -> String {
@@ -53,16 +49,6 @@ impl Backend for PlannerBackend {
                 ) =>
             {
                 Ok(Inspection::Satisfied)
-            }
-            Capability::Supported
-                if matches!(
-                    descriptor.action,
-                    Action::ObserveConfigState
-                        | Action::ObserveGpuInventory
-                        | Action::ObserveChipsetDriver
-                ) =>
-            {
-                Ok(Inspection::NeedsApply)
             }
             Capability::Supported => Ok(Inspection::NeedsApply),
         }

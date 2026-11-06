@@ -53,7 +53,6 @@ pub enum DrsPreparation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrsApplyReport {
     pub backup: DrsBackup,
-    pub verified_settings: usize,
 }
 
 /// Failure that identifies the guarded DRS operation.
@@ -221,7 +220,6 @@ pub fn apply_cs2_profile<A: NvapiDrs>(
         verify_settings(api, session, &profile, &CS2_SETTINGS)?;
         Ok(DrsApplyReport {
             backup: backup.clone(),
-            verified_settings: CS2_SETTINGS.len(),
         })
     })
 }
@@ -230,9 +228,17 @@ pub fn apply_cs2_profile<A: NvapiDrs>(
 pub fn restore_cs2_profile<A: NvapiDrs>(api: &mut A, backup: &DrsBackup) -> Result<(), DrsError> {
     validate_backup(backup)?;
     with_session(api, |api, session| {
-        let profile = api
-            .find_profile_by_name(session, &backup.profile)?
-            .ok_or_else(|| DrsError::new("restore DRS", "captured profile no longer exists"))?;
+        let Some(profile) = api.find_profile_by_name(session, &backup.profile)? else {
+            // A created profile that is gone was already restored.
+            return if backup.profile_created {
+                Ok(())
+            } else {
+                Err(DrsError::new(
+                    "restore DRS",
+                    "captured profile no longer exists",
+                ))
+            };
+        };
         if backup.profile_created {
             api.delete_profile(session, &profile)?;
             api.save_settings(session)?;

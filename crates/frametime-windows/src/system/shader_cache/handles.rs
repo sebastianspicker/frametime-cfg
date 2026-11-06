@@ -106,7 +106,7 @@ pub(crate) struct ObservedNode {
     pub(crate) final_path: Vec<u16>,
 }
 
-/// A file left alone because another program holds it (or it is hard-linked).
+/// A file or directory left alone because another program holds it (or it is hard-linked).
 #[derive(Debug)]
 struct SkippedEntry {
     parent: usize,
@@ -267,7 +267,7 @@ impl CacheTree {
         Ok(())
     }
 
-    /// Leaves the file in place and keeps every ancestor directory, which would not be empty.
+    /// Leaves the entry in place and keeps every ancestor directory, which would not be empty.
     fn skip(&mut self, entry: SkippedEntry) {
         let mut ancestor = Some(entry.parent);
         while let Some(index) = ancestor {
@@ -517,8 +517,8 @@ fn open_root(path: &Path) -> Result<Option<OwnedHandle>, String> {
     }
 }
 
-/// `Ok(None)` for a file another program holds open (or denies delete access to);
-/// every other failure, and any directory failure, still aborts.
+/// `Ok(None)` for a file or directory another program holds open (a process's current
+/// directory, say) or denies delete access to; every other failure still aborts.
 fn open_by_id(root: HANDLE, id: i64, directory: bool) -> Result<Option<OwnedHandle>, String> {
     let descriptor = FILE_ID_DESCRIPTOR {
         dwSize: u32::try_from(size_of::<FILE_ID_DESCRIPTOR>())
@@ -543,7 +543,7 @@ fn open_by_id(root: HANDLE, id: i64, directory: bool) -> Result<Option<OwnedHand
         )
         .map(|handle| Some(OwnedHandle(handle)))
         .or_else(|error| {
-            if !directory && is_in_use(&error) {
+            if is_in_use(&error) {
                 Ok(None)
             } else {
                 Err(format!("open P1:3 cache entry by file ID: {error}"))
@@ -669,5 +669,30 @@ mod tests {
         assert!(!root.join("other.bin").exists());
         assert!(!root.join("sub").join("free.bin").exists());
         assert!(root.join("sub").join("held.bin").exists());
+    }
+
+    #[test]
+    fn a_directory_held_open_is_skipped_with_its_ancestors_and_the_rest_is_deleted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonical tempdir");
+        let root = std::path::PathBuf::from(root.to_string_lossy().trim_start_matches(r"\\?\"));
+        let held = root.join("outer").join("held");
+        std::fs::create_dir_all(&held).expect("held dir");
+        std::fs::write(held.join("inner.bin"), b"x").expect("inner");
+        std::fs::create_dir(root.join("free")).expect("free dir");
+        std::fs::write(root.join("free").join("a.bin"), b"x").expect("free file");
+        std::fs::write(root.join("outer").join("b.bin"), b"x").expect("sibling");
+        // A directory handle without FILE_SHARE_DELETE, like a process's current directory.
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ.0 | FILE_SHARE_WRITE.0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+            .open(&held)
+            .expect("held directory");
+        let outcome = delete_fixed_roots(std::slice::from_ref(&root)).expect("cleanup continues");
+        assert_eq!(outcome.skipped, 1);
+        assert!(!root.join("free").exists());
+        assert!(!root.join("outer").join("b.bin").exists());
+        assert!(held.join("inner.bin").exists());
     }
 }
