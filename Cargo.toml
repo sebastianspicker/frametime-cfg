@@ -23,7 +23,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["preserve_order"] }
 sha2 = "0.11.1"
 raw-cpuid = "11.6.0"
-sevenz-rust2 = { version = "=0.24.1", default-features = false, features = ["util"] }
+sevenz-rust2 = { version = "=0.24.2", default-features = false, features = ["util"] }
 thiserror = "2.0.17"
 toml = "1.1.8"
 tempfile = "3.24.0"
