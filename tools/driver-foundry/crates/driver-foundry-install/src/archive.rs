@@ -31,11 +31,11 @@ pub(crate) fn extract_zip(archive: &Path, dest: &Path) -> Result<(), InstallErro
             None => {
                 return Err(InstallError::Other(format!(
                     "zip entry {} has an unsafe path",
-                    file.name()
+                    String::from_utf8_lossy(file.name_raw())
                 )));
             }
         };
-        if file.name().ends_with('/') {
+        if file.is_dir() {
             fs::create_dir_all(&outpath)?;
         } else {
             if let Some(parent) = outpath.parent() {
@@ -53,7 +53,7 @@ pub(crate) fn extract_zip(archive: &Path, dest: &Path) -> Result<(), InstallErro
                 let _ = fs::remove_file(&outpath);
                 return Err(InstallError::Other(format!(
                     "zip extraction exceeded configured size limit at {}",
-                    file.name()
+                    String::from_utf8_lossy(file.name_raw())
                 )));
             }
             extracted_bytes = next_total;
@@ -73,7 +73,10 @@ fn validate_zip_entries<R: Read + io::Seek>(
             .by_index(index)
             .map_err(|error| InstallError::Other(format!("zip entry: {error}")))?;
         let safe_name = file.enclosed_name().ok_or_else(|| {
-            InstallError::Other(format!("zip entry {} has an unsafe path", file.name()))
+            InstallError::Other(format!(
+                "zip entry {} has an unsafe path",
+                String::from_utf8_lossy(file.name_raw())
+            ))
         })?;
         let normalized = safe_name
             .to_string_lossy()
@@ -82,7 +85,7 @@ fn validate_zip_entries<R: Read + io::Seek>(
         if !names.insert(normalized) {
             return Err(InstallError::Other(format!(
                 "zip contains duplicate or case-colliding entry: {}",
-                file.name()
+                String::from_utf8_lossy(file.name_raw())
             )));
         }
         expanded_bytes = check_zip_expansion_limits(entry_count, file.size(), expanded_bytes)?;
