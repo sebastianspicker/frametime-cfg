@@ -2,3 +2,9 @@
 # Rust unit-test modules live in sibling tests.rs files.
 exclude_paths:
   - "**/tests.rs"
+engines:
+  # Lizard's complexity/length metrics duplicate the Rust-aware Clippy gates
+  # (cognitive_complexity, too_many_lines, too_many_arguments) that CI already denies.
+  lizard:
+    exclude_paths:
+      - "**"
