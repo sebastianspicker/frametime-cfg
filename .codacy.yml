@@ -1,0 +1,4 @@
+---
+# Rust unit-test modules live in sibling tests.rs files.
+exclude_paths:
+  - "**/tests.rs"

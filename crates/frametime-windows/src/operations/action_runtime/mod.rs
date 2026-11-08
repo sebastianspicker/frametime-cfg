@@ -130,14 +130,15 @@ pub(crate) fn capture_actions(
     }
 }
 
-/// The value of the exact `safeboot` element; `safebootalternateshell` is a different element.
-fn safeboot_value(bcdedit_output: &str) -> Option<String> {
-    bcdedit_output.lines().find_map(|line| {
-        let line = line.trim();
-        let (name, value) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
-        name.eq_ignore_ascii_case("safeboot")
-            .then(|| value.trim().to_owned())
-    })
+/// The captured `safeboot` value, lowercase as `restore_boot` allowlists it.
+fn captured_safeboot(bcdedit_output: &str) -> Result<Option<String>, String> {
+    match crate::reboot::safeboot_evidence_from_bcd(bcdedit_output) {
+        crate::reboot::SafebootEvidence::Configured(value) => Ok(Some(value)),
+        crate::reboot::SafebootEvidence::Absent => Ok(None),
+        crate::reboot::SafebootEvidence::Unavailable => {
+            Err("unrecognized safeboot value; refusing to back it up".into())
+        }
+    }
 }
 
 pub(crate) fn capture_action(action: &Action, step: String) -> Result<BackupEntry, String> {
@@ -145,7 +146,7 @@ pub(crate) fn capture_action(action: &Action, step: String) -> Result<BackupEntr
         Action::Tool(command) if command.command == CommandName::Bcdedit => {
             let current =
                 CommandVector::new(CommandName::Bcdedit, &["/enum", "{current}"])?.run()?;
-            let safe_boot = safeboot_value(&current);
+            let safe_boot = captured_safeboot(&current)?;
             Ok(BackupEntry::Bootconfig {
                 step,
                 timestamp: timestamp(),
@@ -232,7 +233,10 @@ pub(crate) fn verify_tool(command: &CommandVector) -> Result<(), String> {
         {
             let current =
                 CommandVector::new(CommandName::Bcdedit, &["/enum", "{current}"])?.run()?;
-            if safeboot_value(&current).is_none() {
+            if matches!(
+                crate::reboot::safeboot_evidence_from_bcd(&current),
+                crate::reboot::SafebootEvidence::Absent
+            ) {
                 Ok(())
             } else {
                 Err("Safe Mode remains armed after deletion".into())
@@ -247,17 +251,18 @@ pub(crate) use verify::*;
 
 #[cfg(test)]
 mod safeboot_tests {
-    use super::safeboot_value;
+    use super::captured_safeboot;
 
     #[test]
     fn alternate_shell_is_not_safeboot() {
         let output = "identifier              {current}\nsafebootalternateshell  Yes\n";
-        assert_eq!(safeboot_value(output), None);
+        assert_eq!(captured_safeboot(output), Ok(None));
     }
 
     #[test]
-    fn exact_safeboot_is_read_case_insensitively() {
+    fn captured_safeboot_matches_the_restore_allowlist() {
+        // bcdedit prints `Minimal`; restore_boot only accepts lowercase values.
         let output = "identifier              {current}\nSafeBoot                Minimal\n";
-        assert_eq!(safeboot_value(output).as_deref(), Some("Minimal"));
+        assert_eq!(captured_safeboot(output), Ok(Some("minimal".into())));
     }
 }
